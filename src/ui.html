@@ -361,6 +361,31 @@ function vBots(){
 }
 
 // ----------------------------------------------------------------- Trades + performance
+// Time-of-day view (US Eastern): how reliable the 80% signal was by hour, and how your own trades did
+function hoursCard(){
+  var days=h('select',null,[3,7,14,30].map(function(d){var o=h('option',{value:d,text:'Last '+d+' days'});if(d===7)o.selected=true;return o})),
+      asset=h('select',null,[h('option',{value:'',text:'All assets'})].concat(CRYPTO.concat(METALS).map(function(a){return h('option',{value:a,text:a})}))),
+      body=h('div');
+  function hl(n){return (n%12===0?12:n%12)+(n<12?' AM':' PM')}
+  function load(){
+    api('/hours?days='+days.value+(asset.value?'&asset='+asset.value:'')).then(function(r){
+      body.textContent='';
+      var rows=r.hours.filter(function(x){return x.contracts>0||x.trades>0});
+      if(!rows.length){body.appendChild(h('div',{class:'mute',text:'Nothing recorded in this period yet. The bot records prices while it is running or the dashboard is open.'}));return}
+      var rated=r.hours.filter(function(x){return x.reached>=8&&x.settled>0}).map(function(x){return {hour:x.hour,rate:x.reversed/x.reached,n:x.reached}});
+      if(rated.length>=2){
+        rated.sort(function(a,b){return a.rate-b.rate});
+        var lo=rated[0],hi=rated[rated.length-1];
+        body.appendChild(h('p',{text:'Fewest reversals: '+hl(lo.hour)+' ('+(lo.rate*100).toFixed(0)+'% of '+lo.n+' times). Most reversals: '+hl(hi.hour)+' ('+(hi.rate*100).toFixed(0)+'% of '+hi.n+' times). Only hours with at least 8 cases are compared.'}));
+      }else body.appendChild(h('p',{class:'mute',text:'Not enough data yet to compare hours (needs at least 8 cases in an hour). Keep the bot or the dashboard running and check again.'}));
+      body.appendChild(h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['Hour (ET)','Contracts','Reached 80%+','Then lost','Lost %','Your trades','Win rate','P/L'].map(function(x){return h('th',{text:x})}))),
+        h('tbody',null,rows.map(function(x){return h('tr',null,h('td',{text:hl(x.hour)}),h('td',{text:x.contracts}),h('td',{text:x.reached}),h('td',{text:x.reversed}),h('td',{text:x.reached&&x.settled?(x.reversed/x.reached*100).toFixed(0)+'%':'—'}),h('td',{text:x.trades}),h('td',{text:x.wins+x.losses?(x.wins/(x.wins+x.losses)*100).toFixed(0)+'%':'—'}),h('td',{class:pnlCls(x.pnl),text:usd(x.pnl)}))})))));
+      body.appendChild(h('small',{text:r.contracts+' contracts and '+r.trades+' of your trades in this period. "Reached 80%+" = in the part of a contract the bot can trade (after 5 minutes, before the last 2), one side reached 80%. "Then lost" = that side lost at settlement. Small counts are mostly noise.'}));
+    }).catch(function(e){body.textContent=e.message})
+  }
+  days.addEventListener('change',load);asset.addEventListener('change',load);load();
+  return h('div',{class:'card'},h('h2',{text:'Time of day (US Eastern)'}),h('div',{class:'row'},days,asset),body);
+}
 function vTrades(){
   var root=$('#main');
   var sel=h('select',null,h('option',{value:'',text:'All bots'}));
@@ -368,7 +393,7 @@ function vTrades(){
   api('/bots').then(function(b){b.forEach(function(x){sel.appendChild(h('option',{value:x.id,text:x.name}))})});
   sel.addEventListener('change',loadPerf);
   root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('label',{text:'Performance for'}),sel));
-  root.appendChild(perf);root.appendChild(open);root.appendChild(hist);
+  root.appendChild(hoursCard());root.appendChild(perf);root.appendChild(open);root.appendChild(hist);
   function grp(title,g){return h('div',{class:'card'},h('h2',{text:title}),h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['','Trades','Wins','Losses','Win rate','P/L'].map(function(x){return h('th',{text:x})}))),h('tbody',null,g.length?g.map(function(x){return h('tr',null,h('td',{text:x.key}),h('td',{text:x.trades}),h('td',{text:x.wins}),h('td',{text:x.losses}),h('td',{text:x.winRate==null?'—':(x.winRate*100).toFixed(0)+'%'}),h('td',{class:pnlCls(x.pnl),text:usd(x.pnl)}))}):[h('tr',null,h('td',{colspan:6,class:'mute',text:'No data yet'}))]))))}
   function loadPerf(){api('/performance'+(sel.value?'?bot='+sel.value:'')).then(function(p){
     perf.textContent='';

@@ -334,6 +334,51 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const botId = url.searchParams.get("bot");
     return json(computePerformance(await closedPositions(env, botId)));
   }
+  // How the market and your trades behave by hour of day (US Eastern), from what this bot has recorded.
+  // "Reached 80%+" = in the tradeable part of a contract (after 5 min, before the last 2 min) either side reached 80%.
+  // "Reversed" = that side then LOST at settlement. A high reversal rate at some hours means the 80% signal was less reliable then.
+  if (path === "/api/hours" && m === "GET") {
+    const days = Math.min(Math.max(Number(url.searchParams.get("days") ?? 7) || 7, 1), 30);
+    const asset = (url.searchParams.get("asset") ?? "").toUpperCase();
+    const since = Date.now() - days * 86_400_000;
+    const etHour = (ms: number) => Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hourCycle: "h23" }).format(new Date(ms)));
+    const hours = Array.from({ length: 24 }, (_, hour) => ({ hour, contracts: 0, settled: 0, reached: 0, reversed: 0, trades: 0, wins: 0, losses: 0, pnl: 0 }));
+    const rows = (
+      await env.DB.prepare(
+        "SELECT m.open_ts, m.result, " +
+          "MAX(CASE WHEN o.ts >= m.open_ts + 300000 AND o.ts <= m.close_ts - 120000 THEN (o.yes_bid + o.yes_ask) / 2 END) hi, " +
+          "MIN(CASE WHEN o.ts >= m.open_ts + 300000 AND o.ts <= m.close_ts - 120000 THEN (o.yes_bid + o.yes_ask) / 2 END) lo, COUNT(*) n " +
+          "FROM markets m JOIN observations o ON o.ticker = m.ticker WHERE m.open_ts >= ?" +
+          (asset ? " AND m.asset = ?" : "") +
+          " GROUP BY m.ticker HAVING n >= 20",
+      )
+        .bind(...(asset ? [since, asset] : [since]))
+        .all<{ open_ts: number; result: string | null; hi: number | null; lo: number | null; n: number }>()
+    ).results;
+    for (const r of rows) {
+      const h = hours[etHour(r.open_ts)];
+      h.contracts++;
+      const settled = r.result === "yes" || r.result === "no";
+      if (settled) h.settled++;
+      const yesTouch = r.hi !== null && r.hi >= 0.8;
+      const noTouch = r.lo !== null && r.lo <= 0.2;
+      h.reached += (yesTouch ? 1 : 0) + (noTouch ? 1 : 0);
+      if (settled) h.reversed += (yesTouch && r.result === "no" ? 1 : 0) + (noTouch && r.result === "yes" ? 1 : 0);
+    }
+    const trades = (
+      await env.DB.prepare("SELECT opened_ts, realized_pnl, result FROM positions WHERE status != 'open' AND realized_pnl IS NOT NULL AND opened_ts >= ?" + (asset ? " AND asset = ?" : ""))
+        .bind(...(asset ? [since, asset] : [since]))
+        .all<{ opened_ts: number; realized_pnl: number; result: string }>()
+    ).results;
+    for (const t of trades) {
+      const h = hours[etHour(t.opened_ts)];
+      h.trades++;
+      if (t.result === "win") h.wins++;
+      if (t.result === "loss") h.losses++;
+      h.pnl += t.realized_pnl;
+    }
+    return json({ days, asset: asset || "ALL", tz: "America/New_York", contracts: rows.length, trades: trades.length, hours: hours.map((h) => ({ ...h, pnl: Math.round(h.pnl * 100) / 100 })) });
+  }
   if (path === "/api/logs" && m === "GET") {
     const kind = url.searchParams.get("kind");
     const lim = Math.min(Number(url.searchParams.get("limit") ?? 150), 500);

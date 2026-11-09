@@ -169,6 +169,11 @@ try {
   ok("no note is returned when no bot is picked", (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}`)).j.why === null);
   await quote([T("BTC"), T("SOL"), T("XRP")], 0.83, 0.85);
 
+  // ---- H2. time-of-day view
+  const hrs = (await api("/hours?days=7")).j;
+  ok("time-of-day view: 24 hours, counts every recorded contract and trade", hrs.hours?.length === 24 && hrs.contracts >= 1 && hrs.trades >= 4 && hrs.hours.reduce((s, x) => s + x.trades, 0) === hrs.trades, JSON.stringify(hrs).slice(0, 300));
+  ok("time-of-day view can be limited to one asset", (await api("/hours?days=7&asset=ETH")).j.asset === "ETH");
+
   // ---- I2. account + per-bot profit/loss summaries
   const acctSum = (await api("/account")).j;
   const perfAll = (await api("/performance")).j;
