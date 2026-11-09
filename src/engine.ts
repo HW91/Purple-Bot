@@ -104,6 +104,7 @@ export class Engine extends DurableObject<Env> {
   private lastReason = new Map<string, { reason: string; ts: number; up: number; down: number }>();
   private lastAlert = new Map<string, number>();
   private settleChecked = new Map<string, number>();
+  private entered = new Set<string>(); // "botId|ticker" of contracts a bot has already entered
   private notes = new Map<string, { botId: string; ticker: string; samples: number; counts: Record<string, number>; texts: Record<string, string>; last: number; dirty: boolean }>();
 
   private reconciled = false;
@@ -234,6 +235,7 @@ export class Engine extends DurableObject<Env> {
     const seen = new Set<string>();
     for (const r of rows) {
       seen.add(r.id);
+      this.entered.add(`${r.bot_id}|${r.ticker}`);
       const cached = this.posCache.get(r.id);
       // keep in-memory extremes (they're ahead of D1 between flushes)
       this.posCache.set(r.id, cached && this.dirtyPos.has(r.id) ? { ...r, fav_max: cached.fav_max, fav_min: cached.fav_min, prob_before_close: cached.prob_before_close } : r);
@@ -603,6 +605,7 @@ export class Engine extends DurableObject<Env> {
     const m = this.currentMarket(bot.config.tradeAsset, now);
     if (!m || now - m.openTs < bot.config.timeDelaySec * 1000) return;
     const key = `${bot.id}|${m.ticker}`;
+    if (this.entered.has(key)) return; // once it has entered, only what held it back BEFORE the entry is worth explaining
     const n = this.notes.get(key) ?? { botId: bot.id, ticker: m.ticker, samples: 0, counts: {}, texts: {}, last: 0, dirty: false };
     if (now - n.last < 1000) return;
     n.last = now;
@@ -713,6 +716,7 @@ export class Engine extends DurableObject<Env> {
         this.env.DB.prepare("UPDATE orders SET position_id = ? WHERE id = ?").bind(pos.id, orderId),
       ]);
       this.posCache.set(pos.id, pos);
+      this.entered.add(`${bot.id}|${t.ticker}`);
       this.balance = null; // balance changed
       await log(this.env, "info", "order", `ENTERED ${t.asset} ${t.outcome.toUpperCase()} x${fill}${status === "partially_filled" ? ` (partial, wanted ${t.count})` : ""} @ ${ourPrice.toFixed(3)} fee $${fee.toFixed(3)} — ${d.reason}`, bot.id, { orderId: res.orderId });
       if (bot.config.notify === "immediate") {
