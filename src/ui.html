@@ -6,8 +6,8 @@
 <title>Purple Bot</title>
 <style>
 /* Muted, professional palette. Bright red/green are kept only for prices, profit/loss and the chart lines. */
-:root{--bg:#f4f5f7;--card:#fff;--text:#1f2430;--mute:#667085;--line:#e1e4ea;--accent:#475569;--btn:#3d4657;--btn-text:#fff;--green:#16a34a;--red:#dc2626;--amber:#a8782f;--g-btn:#4d7a5a;--a-btn:#8a6d3b;--r-btn:#9b4d4d}
-@media (prefers-color-scheme:dark){:root{--bg:#12151c;--card:#1a1e27;--text:#e6e9ef;--mute:#98a1b3;--line:#2a303c;--accent:#9aa5b8;--btn:#4a5367;--btn-text:#f1f5f9;--green:#4ade80;--red:#f87171;--amber:#c9a76b;--g-btn:#8fbf9d;--a-btn:#c9a76b;--r-btn:#d99a9a}}
+:root{--bg:#f4f5f7;--card:#fff;--text:#1f2430;--mute:#667085;--line:#e1e4ea;--accent:#475569;--btn:#3d4657;--btn-text:#fff;--green:#16a34a;--red:#dc2626;--amber:#a8782f;--g-btn:#4d7a5a;--a-btn:#8a6d3b;--r-btn:#9b4d4d;--start:#1f2430}
+@media (prefers-color-scheme:dark){:root{--bg:#12151c;--card:#1a1e27;--text:#e6e9ef;--mute:#98a1b3;--line:#2a303c;--accent:#9aa5b8;--btn:#4a5367;--btn-text:#f1f5f9;--green:#4ade80;--red:#f87171;--amber:#c9a76b;--g-btn:#8fbf9d;--a-btn:#c9a76b;--r-btn:#d99a9a;--start:#fff}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
 header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
@@ -30,7 +30,7 @@ textarea{width:100%}
 label{display:block;font-size:12.5px;color:var(--mute);margin-bottom:2px}
 button.btn{background:var(--btn);color:var(--btn-text);border:1px solid var(--btn);border-radius:8px;padding:7px 13px;cursor:pointer}
 button.btn.gray{background:transparent;color:var(--text);border-color:var(--line)}
-button.btn.green{background:transparent;color:var(--g-btn);border-color:var(--g-btn)}
+button.btn.green{background:transparent;color:var(--start);border-color:var(--start)}
 button.btn.amber{background:transparent;color:var(--a-btn);border-color:var(--a-btn)}
 button.btn.red{background:transparent;color:var(--r-btn);border-color:var(--r-btn)}
 button.btn:hover:not(:disabled){filter:brightness(1.1)}
@@ -389,10 +389,13 @@ function vTrades(){
 // ----------------------------------------------------------------- Charts
 function vCharts(){
   var root=$('#main');
-  var asset=h('select'),period=h('select'),info=h('div',{class:'row'}),canvas=h('canvas'),tip=h('div',{class:'mute',text:'Hover or tap the chart to inspect a data point.'});
+  var botSel=h('select'),asset=h('select'),period=h('select'),info=h('div',{class:'row'}),canvas=h('canvas'),tip=h('div',{class:'mute',text:'Hover or tap the chart to inspect a data point.'});
   var all=CRYPTO.concat(METALS);all.forEach(function(a){asset.appendChild(h('option',{value:a,text:a}))});
-  root.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('div',null,h('label',{text:'Asset'}),asset),h('div',null,h('label',{text:'Contract period (current or past)'}),period)),info,canvas,tip));
-  var data=null;
+  root.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('div',null,h('label',{text:'Bot'}),botSel),h('div',null,h('label',{text:'Asset'}),asset),h('div',null,h('label',{text:'Contract period (current or past)'}),period)),info,canvas,tip));
+  var data=null,chartBots=[];
+  function curBot(){return chartBots.find(function(b){return b.id===botSel.value})||null}
+  // picking a bot shows the asset that bot trades (its Time Delay line is drawn too)
+  botSel.addEventListener('change',function(){var b=curBot();if(b)asset.value=b.config.tradeAsset;loadPeriods()});
   asset.addEventListener('change',loadPeriods);period.addEventListener('change',loadChart);
   function loadPeriods(){api('/chart/periods?asset='+asset.value).then(function(p){period.textContent='';if(!p.length)period.appendChild(h('option',{value:'',text:'No recorded contracts yet — the bot records them while it runs or the dashboard is open'}));p.forEach(function(x){period.appendChild(h('option',{value:x.ticker,text:new Date(x.open_ts).toLocaleString()+' → '+hm(x.close_ts)+(x.result?' ('+x.result.toUpperCase()+')':'')}))});loadChart()})}
   function loadChart(){if(!period.value){data=null;draw();return}api('/chart?ticker='+encodeURIComponent(period.value)).then(function(d){data=d;draw()})}
@@ -408,6 +411,15 @@ function vCharts(){
     function X(ts){return g.l+pw*(ts-t0)/(t1-t0)}function Y(p){return g.t+ph*(1-p)}
     c.fillText(hm(t0)+' (open)',g.l,g.h-6);var lab=hm(t1)+' (expires)';c.fillText(lab,g.w-g.r-c.measureText(lab).width,g.h-6);
     c.strokeStyle=css('--accent');c.setLineDash([4,4]);[t0,t1].forEach(function(t){c.beginPath();c.moveTo(X(t),g.t);c.lineTo(X(t),g.t+ph);c.stroke()});c.setLineDash([]);
+    // Time Delay line: where this bot is allowed to start entering (open time + the bot's Time Delay)
+    var tb=curBot();
+    if(tb&&tb.config.timeDelaySec>0&&t0+tb.config.timeDelaySec*1000<t1){
+      var td=t0+tb.config.timeDelaySec*1000;
+      c.strokeStyle=css('--amber');c.lineWidth=1.5;c.setLineDash([2,3]);c.beginPath();c.moveTo(X(td),g.t);c.lineTo(X(td),g.t+ph);c.stroke();c.setLineDash([]);c.lineWidth=1;
+      var mins=tb.config.timeDelaySec/60,tl='Trading starts ('+(mins%1?mins.toFixed(1):mins)+' min)';
+      c.fillStyle=css('--amber');var tw=c.measureText(tl).width;
+      c.fillText(tl,X(td)+tw+8>g.w-g.r?X(td)-tw-4:X(td)+4,g.t+26);c.fillStyle=css('--mute');
+    }
     function line(key,color){c.strokeStyle=color;c.lineWidth=2;c.beginPath();var first=true;data.points.forEach(function(p){var v=key==='yes'?p.yes:1-p.yes;if(first){c.moveTo(X(p.ts),Y(v));first=false}else c.lineTo(X(p.ts),Y(v))});c.stroke();c.lineWidth=1}
     line('yes',css('--green'));line('no',css('--red'));
     data.trades.forEach(function(t){c.fillStyle=css('--accent');c.beginPath();c.arc(X(t.opened_ts),g.t+6,4,0,7);c.fill()});
@@ -418,7 +430,14 @@ function vCharts(){
   function hover(e){if(!data)return;var r=canvas.getBoundingClientRect();var x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;var pw=r.width-44-10;var ts=data.market.open_ts+(x-44)/pw*(data.market.close_ts-data.market.open_ts);draw(ts)}
   canvas.addEventListener('mousemove',hover);canvas.addEventListener('touchstart',hover);canvas.addEventListener('touchmove',hover);
   window.addEventListener('resize',function(){draw()});
-  loadPeriods();
+  // open on the asset the (first running, else first) bot trades
+  api('/bots').then(function(bs){
+    chartBots=bs;
+    bs.forEach(function(b){botSel.appendChild(h('option',{value:b.id,text:b.name}))});
+    var pick=bs.find(function(b){return b.enabled})||bs[0];
+    if(pick){botSel.value=pick.id;asset.value=pick.config.tradeAsset}
+    loadPeriods();
+  }).catch(function(){loadPeriods()});
   pollTimer=setInterval(function(){if(period.selectedIndex===0)loadChart()},10000);
 }
 
