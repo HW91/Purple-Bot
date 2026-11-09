@@ -43,21 +43,16 @@ people's keys without written approval from Kalshi.
 
 ## One-time setup
 1. `npm install`
-2. Create the database and paste the printed id into `wrangler.jsonc` (`database_id`):
-   ```bash
-   npx wrangler d1 create purple-bot-db
-   ```
-3. Apply the schema:
-   ```bash
-   npm run migrate:remote
-   ```
+2. Database: the deploy workflow finds or creates the D1 database `purple-bot-db` automatically
+   (`scripts/ensure-d1.mjs`) and applies the schema. To do it by hand instead:
+   `npx wrangler d1 create purple-bot-db`, paste the id into `wrangler.jsonc`, then `npm run migrate:remote`.
 4. Set three secrets:
    ```bash
    npx wrangler secret put DASHBOARD_PASSWORD   # the password you'll type to sign in
    npx wrangler secret put SESSION_SECRET       # any long random string
    npx wrangler secret put ENCRYPTION_KEY       # base64 of 32 random bytes: openssl rand -base64 32
    ```
-5. Deploy: `npm run deploy` (or push — `.github/workflows/deploy.yml` deploys `master` and `claude/**`;
+5. Deploy: `npm run deploy` (or just push — `.github/workflows/deploy.yml` finds/creates the database, applies migrations and deploys `master` and `claude/**`;
    add repo secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`).
 6. Open the Worker's URL, sign in, **Settings → Kalshi connection**: paste (or upload) your production API Key ID and
    private key. The key is checked against your real account before it is saved, then encrypted.
