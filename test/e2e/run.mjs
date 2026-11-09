@@ -16,9 +16,10 @@ const startedAt = Date.now();
 const mock = await startMock(KP);
 fs.writeFileSync(root + ".dev.vars", `DASHBOARD_PASSWORD=pw-test\nSESSION_SECRET=${crypto.randomBytes(24).toString("hex")}\nENCRYPTION_KEY=${crypto.randomBytes(32).toString("base64")}\n`);
 execSync(`npx wrangler d1 migrations apply purple-bot-db --local --persist-to ${persist}`, { cwd: root, stdio: "ignore" });
-const dev = spawn("npx", ["wrangler", "dev", "-c", "wrangler.jsonc", "-c", "test/e2e/coach/wrangler.jsonc", "--port", String(WP), "--persist-to", persist, "--var", `KALSHI_BASE:http://127.0.0.1:${KP}/trade-api/v2`, "--var", `KALSHI_WS:http://127.0.0.1:${KP}/trade-api/ws/v2`], { cwd: root });
+const dev = spawn("npx", ["wrangler", "dev", "-c", "wrangler.jsonc", "-c", "test/e2e/coach/wrangler.jsonc", "--port", String(WP), "--persist-to", persist, "--var", `KALSHI_BASE:http://127.0.0.1:${KP}/trade-api/v2`, "--var", `KALSHI_WS:http://127.0.0.1:${KP}/trade-api/ws/v2`], { cwd: root, detached: true });
 let devLog = ""; dev.stdout.on("data", (d) => (devLog += d)); dev.stderr.on("data", (d) => (devLog += d));
-const cleanup = () => { try { dev.kill("SIGKILL"); } catch {} mock.close(); try { fs.unlinkSync(root + ".dev.vars"); } catch {} };
+// kill the whole process group (npx -> wrangler -> workerd) so no stale server is left on the port for the next run
+const cleanup = () => { try { process.kill(-dev.pid, "SIGKILL"); } catch {} try { dev.kill("SIGKILL"); } catch {} mock.close(); try { fs.unlinkSync(root + ".dev.vars"); } catch {} };
 process.on("exit", cleanup);
 
 const base = `http://127.0.0.1:${WP}`;
