@@ -234,7 +234,7 @@ function vBots(){
       var inp={};
       function num(k,mult,step){return inp[k]=h('input',{type:'number',step:step||'any',value:+(cfg[k]*(mult||1)).toFixed(4),style:'width:110px'})}
       function chk(k){return inp[k]=h('input',{type:'checkbox'});}
-      var assets=(s==='crypto'?CRYPTO:METALS).map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=cfg.assets.indexOf(a)>=0;if(s==='metals'&&(a==='GOLD'||a==='SILVER')){cb.checked=true;cb.disabled=true}return h('label',{class:'chk'},cb,a)});
+      var assets=(s==='crypto'?CRYPTO:METALS).map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=cfg.assets.indexOf(a)>=0;return h('label',{class:'chk'},cb,a)});
       var tradeSel=h('select',null,(s==='crypto'?CRYPTO:METALS).map(function(a){var op=h('option',{value:a,text:a});if(cfg.tradeAsset===a)op.selected=true;return op}));
       var sl=chk('stopLossOn');sl.checked=cfg.stopLossOn;var tp=chk('takeProfitOn');tp.checked=cfg.takeProfitOn;
       var nt=h('select',null,['immediate','hourly','daily','off'].map(function(o){var op=h('option',{value:o,text:o});if(cfg.notify===o)op.selected=true;return op}));
@@ -243,7 +243,7 @@ function vBots(){
         field('Name',name),
         field('Asset to trade',tradeSel,'The only asset this bot buys. The other checked assets only confirm the direction.'),
         field('Probability threshold (%)',num('probThreshold',100,1)),
-        s==='crypto'?field('Assets that must agree (of those selected)',num('agreeCount',1,1)):h('div',{class:'mute',text:'Gold and silver must both agree (fixed).'}),
+        s==='crypto'?field('Assets that must agree (of those selected)',num('agreeCount',1,1)):h('div',{class:'mute',text:'Every checked metal must lean the same direction before the bot trades.'}),
         field('Time Delay after open (seconds, 0–'+((cfg.durationMin-1)*60)+')',num('timeDelaySec',1,1)),
         field('Minimum time remaining (seconds)',num('minRemainingSec',1,1)),
         field('Trade amount ($)',num('tradeAmount'),'Smallest: $1 (the bot buys whole contracts; one costs up to $0.99 plus fees). Kalshi sets no fixed largest amount. Your balance, your daily limits, and how many contracts are available at your price limit it.'),

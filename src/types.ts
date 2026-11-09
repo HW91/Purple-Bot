@@ -124,9 +124,6 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
   const assets = (Array.isArray(input.assets) ? input.assets : d.assets).map((a) => String(a).toUpperCase());
   for (const a of assets) if (!universe.includes(a)) throw new Error(`Asset ${a} is not valid for the ${strategy} strategy`);
   const uniq = [...new Set(assets)];
-  if (strategy === "metals" && !(uniq.includes("GOLD") && uniq.includes("SILVER"))) {
-    throw new Error("The metals strategy always needs both GOLD and SILVER selected");
-  }
   if (uniq.length === 0) throw new Error("Select at least one asset");
   const tradeAsset = String(input.tradeAsset ?? (strategy === "metals" ? "GOLD" : uniq.includes("BTC") ? "BTC" : uniq[0])).toUpperCase();
   if (!uniq.includes(tradeAsset)) throw new Error(`The asset to trade (${tradeAsset}) must also be one of the selected assets`);
@@ -154,7 +151,7 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
       ? (input.notify as NotifyMode)
       : d.notify,
   };
-  if (strategy === "metals") cfg.agreeCount = 2; // gold + silver, fixed
+  if (strategy === "metals") cfg.agreeCount = cfg.assets.length; // every checked metal must agree
   if (!(cfg.probThreshold > 0.5 && cfg.probThreshold < 1)) throw new Error("Probability threshold must be between 50% and 100%");
   if (cfg.timeDelaySec < 0 || cfg.timeDelaySec > (cfg.durationMin - 1) * 60) {
     throw new Error(`Time Delay must be between 0 and ${cfg.durationMin - 1} minutes for ${cfg.durationMin}-minute contracts`);

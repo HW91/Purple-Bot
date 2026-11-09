@@ -146,7 +146,8 @@ describe("risk", () => {
 
 describe("config validation + day boundary", () => {
   it("rejects unsafe values", () => {
-    expect(() => validateBotConfig({ strategy: "metals", assets: ["GOLD", "PLATINUM"] })).toThrow(/GOLD and SILVER/);
+    expect(validateBotConfig({ strategy: "metals", assets: ["GOLD", "PLATINUM"], tradeAsset: "GOLD" }).agreeCount).toBe(2);
+    expect(() => validateBotConfig({ strategy: "metals", assets: ["GOLD", "SILVER"], tradeAsset: "PLATINUM" })).toThrow(/must also be one of/);
     expect(() => validateBotConfig({ strategy: "crypto", timeDelaySec: 15 * 60 })).toThrow(/Time Delay/);
     expect(() => validateBotConfig({ strategy: "crypto", agreeCount: 12 })).toThrow(/agreement/);
     expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0 })).toThrow(/Trade amount/);

@@ -12,7 +12,7 @@ people's keys without written approval from Kalshi.
 - **Shared live feed:** one authenticated Kalshi WebSocket (ticker channel) for every bot. No polling loops.
   If the socket drops it reconnects, records the gap in `data_gaps`, and uses slow REST polling meanwhile
   (positions stay managed; **new entries are blocked** because order-book depth is unknown).
-- **Strategies:** crypto (N of the selected assets agree) and metals (gold **and** silver agree), with
+- **Strategies:** crypto (N of the selected assets agree) and metals (every checked metal must agree; gold + silver by default), with
   probability threshold, per-bot Time Delay, minimum time remaining, spread/liquidity check.
 - **Orders:** every order is IMMEDIATE-OR-CANCEL, so nothing can rest unnoticed. Closing orders are also
   reduce-only. Entry, partial fill, fill, cancel and reject are recorded separately; an accepted order is never

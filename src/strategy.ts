@@ -62,11 +62,14 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
 
   let direction: Direction | null = null;
   if (cfg.strategy === "metals") {
-    const g = dirs.get("GOLD");
-    const s = dirs.get("SILVER");
-    if (!g || !s) return { ok: false, reason: `Gold and silver must both have live prices${missing.includes("GOLD") || missing.includes("SILVER") ? " (missing: " + missing.filter((a) => a === "GOLD" || a === "SILVER").join(", ") + ")" : ""} and lean one way`, ...base };
-    if (g !== s) return { ok: false, reason: "Gold and silver disagree on direction", ...base };
-    direction = g;
+    // Every checked metal must have a live price and lean the same way before the bot may trade.
+    const noLean = cfg.assets.filter((a) => !dirs.get(a));
+    if (noLean.length) return { ok: false, reason: `Every checked metal needs a live price and a clear lean (not ready: ${noLean.join(", ")})`, ...base };
+    const first = dirs.get(cfg.assets[0])!;
+    if (!cfg.assets.every((a) => dirs.get(a) === first)) {
+      return { ok: false, reason: `Checked metals disagree on direction (${cfg.assets.map((a) => `${a} ${dirs.get(a)}`).join(", ")})`, ...base };
+    }
+    direction = first;
   } else {
     if (up >= cfg.agreeCount && up >= down) direction = "up";
     else if (down >= cfg.agreeCount) direction = "down";
