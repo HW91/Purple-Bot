@@ -101,6 +101,12 @@ try {
   const nOrders = (await mockState()).orders.length; await sleep(8000);
   ok("a stopped bot places no further orders", (await mockState()).orders.length === nOrders);
 
+  // ---- H. settlement of the ETH contract (held to expiry, no forced close)
+  await sleep(Math.max(0, 158000 - (Date.now() - startedAt)));
+  await fetch(`http://127.0.0.1:${KP}/_settle`, { method: "POST", body: JSON.stringify({ ticker: T("ETH"), result: "yes" }) });
+  const settled = await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === bots2), 90000);
+  ok("ETH position held to expiry and settled as a win", !!settled && settled.close_reason === "settled" && settled.result === "win" && Math.abs(settled.realized_pnl - 0.65) < 0.011 && settled.exit_prob === 1, JSON.stringify(settled));
+
   // ---- G. emergency shutdown
   const dup2 = (await api(`/bots/${bot1}/duplicate`, "POST")).j.id;
   await api(`/bots/${dup2}/start`, "POST");
@@ -109,12 +115,6 @@ try {
   ok("emergency shutdown turns ALL bots off", em.status === 200 && (await api("/bots")).j.every((b) => !b.enabled));
   const eclosed = await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === dup2), 40000);
   ok("…and closes open positions (emergency)", !!eclosed && eclosed.close_reason === "emergency", JSON.stringify(eclosed));
-
-  // ---- H. settlement of the ETH contract (held to expiry, no forced close)
-  await sleep(Math.max(0, 158000 - (Date.now() - startedAt)));
-  await fetch(`http://127.0.0.1:${KP}/_settle`, { method: "POST", body: JSON.stringify({ ticker: T("ETH"), result: "yes" }) });
-  const settled = await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === bots2), 90000);
-  ok("ETH position held to expiry and settled as a win", !!settled && settled.close_reason === "settled" && settled.result === "win" && Math.abs(settled.realized_pnl - 0.65) < 0.011 && settled.exit_prob === 1, JSON.stringify(settled));
 
   // ---- I. performance, logs, emails, AI, chat, backtest
   const perf = (await api("/performance")).j;
