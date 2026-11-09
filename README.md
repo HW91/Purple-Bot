@@ -53,7 +53,7 @@ people's keys without written approval from Kalshi.
    npx wrangler secret put ENCRYPTION_KEY       # base64 of 32 random bytes: openssl rand -base64 32
    ```
 5. Deploy: `npm run deploy` (or just push — `.github/workflows/deploy.yml` finds/creates the database, applies migrations and deploys `master` and `claude/**`;
-   add repo secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`).
+   add repo secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; the token needs Workers and D1 edit permission).
 6. Open the Worker's URL, sign in, **Settings → Kalshi connection**: paste (or upload) your production API Key ID and
    private key. The key is checked against your real account before it is saved, then encrypted.
 7. **Settings → Market series → "Find 15-minute series"** and correct any asset whose series name is wrong.
