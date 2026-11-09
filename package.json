@@ -1,0 +1,21 @@
+{
+  "name": "purple-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "migrate:remote": "wrangler d1 migrations apply purple-bot-db --remote",
+    "migrate:local": "wrangler d1 migrations apply purple-bot-db --local"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261104.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^4.0.0",
+    "ws": "^8.22.2"
+  }
+}

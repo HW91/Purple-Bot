@@ -1,0 +1,28 @@
+{
+  "name": "purple-bot",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-07-18",
+  // D1 database. Create it once with: npx wrangler d1 create purple-bot-db
+  // then paste the printed database_id below.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "purple-bot-db",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // One Durable Object holds the shared Kalshi WebSocket and runs every bot.
+  "durable_objects": {
+    "bindings": [{ "name": "ENGINE", "class_name": "Engine" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Engine"] }],
+  // Same private worker-to-worker link the recruiting software uses to reach
+  // the business coach (email + AI). No public URL and no extra secret.
+  "services": [{ "binding": "COACH", "service": "recruiter-coach-worker" }],
+  "vars": {
+    "KALSHI_BASE": "https://external-api.kalshi.com/trade-api/v2",
+    "KALSHI_WS": "https://external-api-ws.kalshi.com/trade-api/ws/v2"
+  },
+  "observability": { "enabled": true }
+}
