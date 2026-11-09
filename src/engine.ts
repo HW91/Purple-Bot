@@ -189,8 +189,12 @@ export class Engine extends DurableObject<Env> {
       await this.discoverIfNeeded();
       if (!this.ws) await this.openSocket();
       if (!this.ws || this.restFallback) await this.restPoll();
+      else await this.refreshQuietQuotes();
       if (!this.reconciled || now - this.lastReconcile > 300_000) await this.reconcile();
       await this.refreshBalanceIfStale();
+      // Check entries on the clock too, not only when a price message arrives: the Time Delay can
+      // pass, or a quiet market can sit still, with no new message to trigger a check.
+      await this.evaluateAllEntries();
       await this.flush();
       await this.checkSettlements();
       await this.processCloseRequests();
@@ -201,6 +205,13 @@ export class Engine extends DurableObject<Env> {
       if (wanted && this.client) {
         let next = Date.now() + TICK_MS;
         for (const m of this.markets.values()) if (m.closeTs + 1500 > Date.now() && m.closeTs + 1500 < next) next = m.closeTs + 1500;
+        // wake exactly when an enabled bot's Time Delay ends
+        for (const b of this.bots) {
+          if (!b.enabled) continue;
+          const cm = this.currentMarket(b.config.tradeAsset);
+          const t = cm ? cm.openTs + b.config.timeDelaySec * 1000 + 300 : 0;
+          if (t > Date.now() && t < next) next = t;
+        }
         try {
           await this.ctx.storage.setAlarm(next);
         } catch (e) {
@@ -534,6 +545,38 @@ export class Engine extends DurableObject<Env> {
       const market = this.currentMarket(asset, now);
       return { asset, market, quote: market ? this.quotes.get(market.ticker) ?? null : null };
     });
+  }
+
+  /** Quiet markets send no ticker messages. While the socket is healthy, confirm their price over REST so "no news" is not mistaken for "stale". */
+  private async refreshQuietQuotes(): Promise<void> {
+    const now = Date.now();
+    for (const asset of this.trackedAssets()) {
+      const m = this.currentMarket(asset, now);
+      const q = m ? this.quotes.get(m.ticker) : undefined;
+      if (!m || !q || now - q.ts < 20_000) continue;
+      try {
+        const km = await this.client!.market(m.ticker);
+        const bid = num(km.yes_bid_dollars);
+        const ask = num(km.yes_ask_dollars);
+        if (!(bid > 0 && ask > 0)) continue;
+        // sizes are only kept when the price is unchanged; otherwise entries wait for the next live update
+        const same = Math.abs(bid - q.yesBid) < 1e-9 && Math.abs(ask - q.yesAsk) < 1e-9;
+        await this.onQuote({ ...q, yesBid: bid, yesAsk: ask, last: num(km.last_price_dollars, q.last), yesBidSize: same ? q.yesBidSize : 0, yesAskSize: same ? q.yesAskSize : 0, ts: now });
+      } catch (e) {
+        if (e instanceof KalshiAuthError) throw e;
+      }
+    }
+  }
+
+  /** Evaluate every enabled bot against the latest prices (used on the alarm clock). */
+  private async evaluateAllEntries(): Promise<void> {
+    const now = Date.now();
+    for (const bot of this.bots) {
+      if (!bot.enabled) continue;
+      const d = evaluateEntry(bot.config, this.viewsFor(bot, now), now);
+      this.noteReason(bot, d, now);
+      if (d.ok && d.trade) await this.attemptEntry(bot, d, now);
+    }
   }
 
   private async checkEntries(q: Quote): Promise<void> {
