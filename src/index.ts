@@ -350,7 +350,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
           "MIN(CASE WHEN o.ts >= m.open_ts + 300000 AND o.ts <= m.close_ts - 120000 THEN (o.yes_bid + o.yes_ask) / 2 END) lo, COUNT(*) n " +
           "FROM markets m JOIN observations o ON o.ticker = m.ticker WHERE m.open_ts >= ?" +
           (asset ? " AND m.asset = ?" : "") +
-          " GROUP BY m.ticker HAVING n >= 20",
+          " GROUP BY m.ticker HAVING n >= 3",
       )
         .bind(...(asset ? [since, asset] : [since]))
         .all<{ open_ts: number; result: string | null; hi: number | null; lo: number | null; n: number }>()
