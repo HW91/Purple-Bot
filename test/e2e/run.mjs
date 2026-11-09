@@ -142,6 +142,10 @@ try {
   ok("conversation can be deleted", del.status === 200 && (await api("/chat")).j.length === 0);
   const bt = await api("/backtest", "POST", { botId: bot1, fromTs: Date.now() - 86400000, toTs: Date.now() + 3600000, variants: [{ label: "85%", overrides: { probThreshold: 0.85 } }] });
   ok("backtest runs on recorded data, saved separately, no live orders", bt.status === 200 && bt.j.reports.length === 2 && (await api("/backtests")).j.length === 1);
+  const filt = (await api(`/chart/periods?asset=BTC&bot=${bot1}`)).j;
+  const btcRow = filt.find((x) => x.ticker === T("BTC"));
+  ok("contract list says how the chosen bot did (trades, open trades, profit/loss) for the Winners / Losers / No trade filter", !!btcRow && btcRow.trades >= 1 && typeof btcRow.pnl === "number" && typeof btcRow.open_trades === "number", JSON.stringify(btcRow));
+  ok("a bot that never traded shows no trades on that contract", (await api(`/chart/periods?asset=BTC&bot=${hourlyBot}`)).j.find((x) => x.ticker === T("BTC"))?.trades === 0);
   const markets = (await api("/chart/periods?asset=BTC")).j;
   const chart = markets.length ? (await api(`/chart?ticker=${encodeURIComponent(markets[0].ticker)}`)).j : null;
   ok("probability observations were saved to D1 and are chartable", !!chart && chart.points.length > 0 && chart.points.every((p) => p.yes > 0 && p.yes < 1), JSON.stringify(chart).slice(0, 200));

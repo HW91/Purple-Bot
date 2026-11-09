@@ -400,7 +400,20 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
   // ---------------- charts
   if (path === "/api/chart/periods" && m === "GET") {
     const asset = (url.searchParams.get("asset") ?? "").toUpperCase();
-    const rows = (await env.DB.prepare("SELECT ticker, title, open_ts, close_ts, result FROM markets WHERE asset=? ORDER BY close_ts DESC LIMIT 96").bind(asset).all()).results;
+    // each contract also says whether the chosen bot traded it and how that trade ended (for the Winners / Losers / No trade filter)
+    const bot = url.searchParams.get("bot");
+    const bf = bot ? " AND p.bot_id = ?" : "";
+    const rows = (
+      await env.DB.prepare(
+        "SELECT m.ticker, m.title, m.open_ts, m.close_ts, m.result, " +
+          `(SELECT COUNT(*) FROM positions p WHERE p.ticker = m.ticker${bf}) trades, ` +
+          `(SELECT COUNT(*) FROM positions p WHERE p.ticker = m.ticker AND p.status = 'open'${bf}) open_trades, ` +
+          `(SELECT COALESCE(SUM(p.realized_pnl), 0) FROM positions p WHERE p.ticker = m.ticker AND p.status != 'open'${bf}) pnl ` +
+          "FROM markets m WHERE m.asset = ? ORDER BY m.close_ts DESC LIMIT 300",
+      )
+        .bind(...(bot ? [bot, bot, bot, asset] : [asset]))
+        .all()
+    ).results;
     return json(rows);
   }
   if (path === "/api/chart" && m === "GET") {
