@@ -12,7 +12,13 @@ const find = () => {
   return list.find((d) => d.name === NAME)?.uuid;
 };
 
-let id = find();
+let id;
+try {
+  id = find();
+} catch (e) {
+  console.error("\nCould not talk to Cloudflare. Check the GitHub secrets CLOUDFLARE_API_TOKEN (needs Workers + D1 edit permission) and CLOUDFLARE_ACCOUNT_ID (the 32-character Account ID).");
+  throw e;
+}
 if (!id) {
   console.log(`Creating D1 database ${NAME}…`);
   run(["d1", "create", NAME]);
