@@ -12,6 +12,9 @@ export interface Env {
   ENCRYPTION_KEY: string;
 }
 
+/** Smallest trade amount the bot accepts. It trades whole contracts (one costs up to $0.99 + fees). Kalshi itself publishes no minimum dollar amount. */
+export const MIN_TRADE_AMOUNT = 1;
+
 export type Strategy = "crypto" | "metals";
 export type NotifyMode = "immediate" | "hourly" | "daily" | "off";
 
@@ -155,6 +158,9 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     throw new Error(`Directional agreement must be between 1 and the number of selected assets (${cfg.assets.length})`);
   }
   if (cfg.minRemainingSec < 0 || cfg.minRemainingSec >= cfg.durationMin * 60) throw new Error("Minimum remaining time is out of range");
+  if (cfg.tradeAmount < MIN_TRADE_AMOUNT) {
+    throw new Error(`Trade amount must be at least $${MIN_TRADE_AMOUNT}: the bot buys whole contracts, and one contract costs up to 99 cents plus fees`);
+  }
   for (const [k, v] of [
     ["Trade amount", cfg.tradeAmount],
     ["Max simultaneous positions", cfg.maxPositions],

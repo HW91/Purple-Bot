@@ -133,6 +133,8 @@ describe("config validation + day boundary", () => {
     expect(() => validateBotConfig({ strategy: "crypto", timeDelaySec: 15 * 60 })).toThrow(/Time Delay/);
     expect(() => validateBotConfig({ strategy: "crypto", agreeCount: 12 })).toThrow(/agreement/);
     expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0 })).toThrow(/Trade amount/);
+    expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0.5 })).toThrow(/at least/);
+    expect(validateBotConfig({ strategy: "crypto", tradeAmount: 1 }).tradeAmount).toBe(1);
     expect(() => validateBotConfig({ strategy: "crypto", assets: ["BTC", "FOO"] })).toThrow(/not valid/);
   });
   it("accepts defaults from the plan", () => {

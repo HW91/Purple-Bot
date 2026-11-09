@@ -225,7 +225,7 @@ function vBots(){
       h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}})),
       h('div',{class:'mute',text:'Prob ≥ '+pct(b.config.probThreshold)+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')})));
   })})}
-  function field(label,input){return h('div',null,h('label',{text:label}),input)}
+  function field(label,input,hint){return h('div',null,h('label',{text:label}),input,hint?h('small',{text:hint,style:'display:block;margin-top:2px'}):null)}
   function editBot(b,strategy){
     var s=b?b.strategy:strategy;var c=b?b.config:settings&&settings.defaults?settings.defaults[s]:null;
     function go2(){
@@ -244,7 +244,7 @@ function vBots(){
         s==='crypto'?field('Assets that must agree (of those selected)',num('agreeCount',1,1)):h('div',{class:'mute',text:'Gold and silver must both agree (fixed).'}),
         field('Time Delay after open (seconds, 0–'+((cfg.durationMin-1)*60)+')',num('timeDelaySec',1,1)),
         field('Minimum time remaining (seconds)',num('minRemainingSec',1,1)),
-        field('Trade amount ($)',num('tradeAmount')),
+        field('Trade amount ($)',num('tradeAmount'),'Smallest: $1 (the bot buys whole contracts; one costs up to $0.99 plus fees). Kalshi sets no fixed largest amount. Your balance, your daily limits, and how many contracts are available at your price limit it.'),
         field('Max simultaneous positions',num('maxPositions',1,1)),
         field('Max trades per hour',num('maxTradesPerHour',1,1)),
         field('Daily loss limit ($)',num('dailyLossLimit')),
