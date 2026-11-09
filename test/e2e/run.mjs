@@ -123,8 +123,13 @@ try {
   const logs = (await api("/logs?limit=300")).j;
   ok("control events + orders are logged", logs.some((l) => l.kind === "control" && /START BOT/.test(l.message)) && logs.some((l) => l.kind === "order" && /ENTERED/.test(l.message)) && logs.some((l) => /EMERGENCY/.test(l.message)));
   ok("signal reasons recorded (why entered / skipped)", logs.some((l) => l.kind === "signal"));
+  const ov = await api("/analyze", "POST");
+  ok("daily overview (today so far) runs on demand, sends the day's measured data, and keeps the AI's real answer", ov.status === 200 && ov.j.ai === true && /^Overview for today so far/.test(ov.j.text) && /\[has:blockedBy,stopLossTakeProfitHindsight,reliability,byEntryHour\]/.test(ov.j.text), JSON.stringify(ov.j).slice(0, 300));
   const analyses = (await api("/analyses")).j;
-  ok("hourly AI analysis ran once a bot was started and kept the AI's real answer", analyses.length >= 1 && analyses[0].text === "MOCK AI ANSWER", JSON.stringify(analyses).slice(0, 200));
+  ok("the overview is saved and listed", analyses.length >= 1 && /MOCK AI ANSWER/.test(analyses[0].text));
+  ok("the overview can't be spammed", (await api("/analyze", "POST")).status === 429);
+  const hourlyBot = (await api("/bots", "POST", { name: "old hourly", config: { strategy: "crypto", notify: "hourly" } })).j.id;
+  ok("a bot saved with the old 'hourly' email choice becomes 'daily'", (await api("/bots")).j.find((b) => b.id === hourlyBot).config.notify === "daily");
   const chat = await api("/chat", "POST", { message: "Why was the last trade a loss?", botId: bot1 });
   ok("AI chat answers via the coach worker and is saved", chat.status === 200 && chat.j.answer === "MOCK AI ANSWER" && (await api(`/chat/${chat.j.convId}`)).j.length === 2, JSON.stringify(chat.j));
   const chatFail = await api("/chat", "POST", { message: "FAIL_AI please", botId: bot1 });

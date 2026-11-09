@@ -25,12 +25,15 @@ people's keys without written approval from Kalshi.
   with Kalshi's real positions before the first order and every 5 minutes, and an unclear order result (network
   error) blocks new orders until reconciled.
 - **Dashboard:** live probabilities, bot controls, positions, trades, performance metrics, charts (YES green / NO red,
-  0–100%, contract open/expiry lines, hover inspection, past contract periods), hourly AI analysis, AI chat with saved
+  0–100%, contract open/expiry lines, hover inspection, past contract periods), daily AI overview, AI chat with saved
   conversations, backtesting, settings, logs, emergency shutdown.
 - **Email:** critical alerts (auth errors, failed/incomplete orders, emergency shutdown, serious errors) always send
-  immediately. Everything else follows each bot's setting: immediate / hourly / daily / off. No market-open/closed emails.
-- **AI is advisory only.** The hourly analysis runs at most once an hour, only while a bot is on (or traded in the last
-  hour) and at least one tracked market is open; the chat only calls AI when you send a message.
+  immediately. Everything else follows each bot's setting: immediate / daily / off (the old "hourly" choice became "daily"). No market-open/closed emails.
+- **AI is advisory only.** One AI overview is written per day, after midnight US Eastern, for the day that ended (and only if
+  something happened that day). It does NOT recap trades: it reports what blocked trades (share of tradeable time), how stop loss
+  and take profit did in hindsight (held-to-settlement versus actual), how often an 80% side then lost versus the previous
+  7-day average (by hour), entry-hour patterns, and at most three settings worth testing, each with its sample size. The AI tab
+  has a button to run it for "today so far" (limited to once a minute). The chat only calls AI when you send a message.
 
 ## Definitions (so nothing is ambiguous)
 - **YES probability** = midpoint of the best YES bid and ask. **NO** = 1 − YES.

@@ -5,6 +5,7 @@ import { deleteSetting, getAccountLimits, getCreds, getSetting, loadBots, log, r
 import { askAI } from "./notify";
 import { computePerformance } from "./stats";
 import { dayStartMs } from "./strategy";
+import { etDateString, runOverview } from "./analysis";
 import { simulate, type Obs, type SimMarket } from "./backtest";
 import { DEFAULT_ACCOUNT_LIMITS, defaultBotConfig, validateBotConfig, type Env } from "./types";
 import { UI_HTML } from "./ui";
@@ -384,6 +385,15 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const lim = Math.min(Number(url.searchParams.get("limit") ?? 150), 500);
     const st = kind ? env.DB.prepare("SELECT * FROM logs WHERE kind=? ORDER BY id DESC LIMIT ?").bind(kind, lim) : env.DB.prepare("SELECT * FROM logs ORDER BY id DESC LIMIT ?").bind(lim);
     return json((await st.all()).results);
+  }
+  // Overview for today so far, only when YOU press the button (the scheduled one runs once, after midnight Eastern)
+  if (path === "/api/analyze" && m === "POST") {
+    const last = Number((await getSetting(env, "last_manual_overview_ts")) ?? 0);
+    if (Date.now() - last < 60_000) return err("An overview was just run. Wait a minute and try again.", 429);
+    await setSetting(env, "last_manual_overview_ts", String(Date.now()));
+    const now = Date.now();
+    const o = await runOverview(env, dayStartMs(now), now, `today so far (${etDateString(now)})`);
+    return json({ ok: true, ai: o.ai, text: o.text });
   }
   if (path === "/api/analyses" && m === "GET") return json((await env.DB.prepare("SELECT id, ts, text FROM analyses ORDER BY id DESC LIMIT 24").all()).results);
 

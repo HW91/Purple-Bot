@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
+import { hindsightFor, etDateString } from "../src/analysis";
 
 const OPEN = 1_000_000_000_000;
 const mk = (asset: string): MarketInfo => ({ ticker: `KX${asset}15M-T`, asset, series: `KX${asset}15M`, title: "", openTs: OPEN, closeTs: OPEN + 15 * 60_000, status: "open" });
@@ -160,6 +161,27 @@ describe("risk", () => {
     expect(checkRisk(cfg, acct, { ...ok, botInvestedToday: 48 }, 4)).toMatch(/investment/);
     expect(checkRisk(cfg, acct, { ...ok, accountInvestedToday: 98 }, 4)).toMatch(/Account daily investment/);
     expect(checkRisk(cfg, acct, { ...ok, balance: 3 }, 4)).toMatch(/Balance/);
+  });
+});
+
+describe("overview helpers", () => {
+  it("hindsight: what holding would have made versus what the early exit made", () => {
+    const rows = [
+      // stopped out, but the side finished winning: holding 5 contracts bought at 0.85 would have paid 5 - 4.25 - 0.1 = +0.65
+      { close_reason: "stop_loss", outcome: "yes" as const, entry_qty: 5, entry_cost: 4.25, entry_fee: 0.1, realized_pnl: -2.95, result: "yes" },
+      // stopped out and it kept losing: holding would have lost the whole cost + fee
+      { close_reason: "stop_loss", outcome: "yes" as const, entry_qty: 5, entry_cost: 4.25, entry_fee: 0.1, realized_pnl: -1.0, result: "no" },
+      // result not known yet: counted as a trade, not in the comparison
+      { close_reason: "take_profit", outcome: "no" as const, entry_qty: 2, entry_cost: 1.6, entry_fee: 0.04, realized_pnl: 0.3, result: null },
+    ];
+    const h = hindsightFor(rows);
+    expect(h.stop_loss).toEqual({ trades: 2, resolved: 2, wouldHaveWon: 1, realized: -3.95, ifHeld: -3.7 });
+    expect(h.take_profit.trades).toBe(1);
+    expect(h.take_profit.resolved).toBe(0);
+  });
+  it("Eastern date string follows New York, not UTC", () => {
+    expect(etDateString(Date.UTC(2026, 5, 15, 3, 30, 0))).toBe("2026-06-14"); // 11:30 PM EDT the day before
+    expect(etDateString(Date.UTC(2026, 5, 15, 5, 0, 0))).toBe("2026-06-15");
   });
 });
 

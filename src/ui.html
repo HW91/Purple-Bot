@@ -324,7 +324,7 @@ function vBots(){
       var assets=(s==='crypto'?CRYPTO:METALS).map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=cfg.assets.indexOf(a)>=0;return h('label',{class:'chk'},cb,a)});
       var tradeSel=h('select',null,(s==='crypto'?CRYPTO:METALS).map(function(a){var op=h('option',{value:a,text:a});if(cfg.tradeAsset===a)op.selected=true;return op}));
       var sl=chk('stopLossOn');sl.checked=cfg.stopLossOn;var tp=chk('takeProfitOn');tp.checked=cfg.takeProfitOn;
-      var nt=h('select',null,['immediate','hourly','daily','off'].map(function(o){var op=h('option',{value:o,text:o});if(cfg.notify===o)op.selected=true;return op}));
+      var nt=h('select',null,['immediate','daily','off'].map(function(o){var op=h('option',{value:o,text:o});if(cfg.notify===o)op.selected=true;return op}));
       f.appendChild(h('h2',{text:(b?'Edit ':'New ')+s+' bot'}));
       f.appendChild(h('div',{class:'grid'},
         field('Name',name),
@@ -486,10 +486,16 @@ function vAI(){
   var botSel=h('select',null,h('option',{value:'',text:'Whole account'}));
   var cur=null;
   api('/bots').then(function(b){b.forEach(function(x){botSel.appendChild(h('option',{value:x.id,text:x.name}))})});
-  root.appendChild(h('div',{class:'card'},h('h2',{text:'Hourly AI analysis (advisory only)'}),ana));
+  var runBtn=h('button',{class:'btn gray',text:'Run overview for today so far',onclick:function(){
+    runBtn.disabled=true;runBtn.textContent='Running… (can take up to a minute)';
+    act('/analyze',{method:'POST'}).then(function(){loadAna()}).catch(function(){}).then(function(){runBtn.disabled=false;runBtn.textContent='Run overview for today so far'});
+  }});
+  root.appendChild(h('div',{class:'card'},h('h2',{text:'Daily overview (AI, advisory only)'}),
+    h('p',{class:'mute',text:'Written once a day, after midnight Eastern, for the day that just ended. It skips trade-by-trade recaps and looks at what is hard to see by eye: what blocked trades, whether stop loss and take profit helped in hindsight, which hours were reliable, and what is worth testing.'}),runBtn,ana));
   var box=h('div',{class:'card'},h('h2',{text:'AI chat'}),h('div',{class:'row'},h('button',{class:'btn gray',text:'New chat',onclick:function(){cur=null;thread.textContent='';loadConvs()}}),h('label',{class:'chk',text:'About: '},botSel)),convs,thread,input,h('p',null,h('button',{class:'btn',text:'Send',onclick:send}),h('small',{text:'  The AI explains and recommends. It cannot change settings, start/stop bots, or place orders — you apply any change yourself.'})));
   root.appendChild(box);
-  api('/analyses').then(function(a){ana.textContent='';if(!a.length)ana.appendChild(h('div',{class:'mute',text:'No analysis yet. It runs at most once an hour, only while bots are active and relevant markets are open.'}));a.forEach(function(x,i){ana.appendChild(h('details',{open:i===0},h('summary',{text:when(x.ts)}),h('div',{class:'msg',text:x.text})))})});
+  function loadAna(){api('/analyses').then(function(a){ana.textContent='';if(!a.length)ana.appendChild(h('div',{class:'mute',text:'No overview yet. The first one is written after midnight Eastern, or press the button to run one for today so far.'}));a.forEach(function(x,i){ana.appendChild(h('details',{open:i===0},h('summary',{text:when(x.ts)}),h('div',{class:'msg',text:x.text})))})})}
+  loadAna();
   function loadConvs(){api('/chat').then(function(c){convs.textContent='';c.forEach(function(x){convs.appendChild(h('div',{class:'row'},h('a',{href:'#',text:x.title,onclick:function(e){e.preventDefault();open(x.id)}}),h('small',{text:when(x.updated_ts)}),h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete this conversation?'))act('/chat/'+x.id,{method:'DELETE'}).then(function(){if(cur===x.id){cur=null;thread.textContent=''}loadConvs()})}})))})})}
   function open(id){cur=id;api('/chat/'+id).then(function(m){thread.textContent='';m.forEach(function(x){thread.appendChild(h('div',{class:'msg '+x.role,text:x.content}))})})}
   function send(){var t=input.value.trim();if(!t)return;input.value='';thread.appendChild(h('div',{class:'msg user',text:t}));var wait=h('div',{class:'msg mute',text:'Thinking…'});thread.appendChild(wait);
@@ -542,7 +548,7 @@ function vSettings(){
         h('button',{class:'btn gray',text:'Test connection',disabled:!s.kalshiConnected,onclick:function(){act('/kalshi/test',{method:'POST'}).then(function(r){toast('Works. Balance '+usd(r.balance)+', portfolio '+usd(r.portfolioValue))})}}),
         h('button',{class:'btn gray',text:'Disconnect',disabled:!s.kalshiConnected,onclick:function(){if(confirm('Remove the stored Kalshi key?'))act('/kalshi/disconnect',{method:'POST'},'Disconnected').then(vSettingsReload)}}))));
     var em=h('input',{type:'email',style:'width:320px',value:s.notifyEmail});
-    root.appendChild(h('div',{class:'card'},h('h2',{text:'Email notifications'}),h('label',{text:'Send reports and alerts to'}),em,h('p',{class:'mute',text:'Critical alerts (login/key errors, failed or incomplete orders, emergency shutdown, serious errors) are always sent immediately. Each bot chooses immediate / hourly / daily / off for everything else.'}),h('button',{class:'btn',text:'Save',onclick:function(){act('/settings',{method:'POST',body:{notifyEmail:em.value}},'Saved')}})));
+    root.appendChild(h('div',{class:'card'},h('h2',{text:'Email notifications'}),h('label',{text:'Send reports and alerts to'}),em,h('p',{class:'mute',text:'Critical alerts (login/key errors, failed or incomplete orders, emergency shutdown, serious errors) are always sent immediately. Each bot chooses immediate / daily / off for everything else. The daily email carries the AI overview of the day.'}),h('button',{class:'btn',text:'Save',onclick:function(){act('/settings',{method:'POST',body:{notifyEmail:em.value}},'Saved')}})));
     var L=s.accountLimits,ll=h('input',{type:'number',value:L.dailyLossLimit}),li=h('input',{type:'number',value:L.dailyInvestLimit}),lp=h('input',{type:'number',value:L.maxPositions});
     root.appendChild(h('div',{class:'card'},h('h2',{text:'Account-wide limits (all bots combined)'}),h('div',{class:'grid'},h('div',null,h('label',{text:'Daily loss limit ($)'}),ll),h('div',null,h('label',{text:'Daily investment limit ($)'}),li),h('div',null,h('label',{text:'Max simultaneous positions'}),lp)),h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){act('/settings',{method:'POST',body:{accountLimits:{dailyLossLimit:+ll.value,dailyInvestLimit:+li.value,maxPositions:+lp.value}}},'Saved')}}))));
     var sm=s.seriesMap||{},ins={};var all=CRYPTO.concat(METALS);var found=h('div');

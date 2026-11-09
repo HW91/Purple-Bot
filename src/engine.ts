@@ -9,8 +9,8 @@ import { DurableObject } from "cloudflare:workers";
 import { KalshiAuthError, KalshiClient, KalshiHttpError, num, type KalshiMarket } from "./kalshi";
 import { authHeaders, importSigningKey, type SigningKey } from "./kalshi-auth";
 import { getAccountLimits, getCreds, getSetting, isBotEnabled, loadBots, log, openPositions, setSetting, type PositionRow } from "./db";
-import { askAI, emailShell, esc, sendEmail } from "./notify";
-import { computePerformance } from "./stats";
+import { emailShell, esc, sendEmail } from "./notify";
+import { etDateString, overviewEmail, runOverview } from "./analysis";
 import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
 
@@ -200,7 +200,7 @@ export class Engine extends DurableObject<Env> {
       await this.flush();
       await this.checkSettlements();
       await this.processCloseRequests();
-      await this.hourlyJobs();
+      await this.dailyJobs();
     } catch (e) {
       await this.handleError("alarm", e);
     } finally {
@@ -999,77 +999,25 @@ export class Engine extends DurableObject<Env> {
     }
   }
 
-  // ---------------------------------------------------------------- hourly analysis + summaries
+  // ---------------------------------------------------------------- daily overview
 
-  private async hourlyJobs(): Promise<void> {
+  /** Once a new US-Eastern day starts, review the day that just ended (no trade-by-trade recap; see analysis.ts). */
+  private async dailyJobs(): Promise<void> {
     const now = Date.now();
-    const lastAnalysis = Number((await getSetting(this.env, "last_analysis_ts")) ?? 0);
-    if (now - lastAnalysis >= 3_600_000) {
-      const openAssets = this.trackedAssets().filter((a) => this.currentMarket(a, now));
-      const recent = await this.env.DB.prepare("SELECT COUNT(*) c FROM positions WHERE opened_ts >= ? OR closed_ts >= ?").bind(now - 3_600_000, now - 3_600_000).first<{ c: number }>();
-      // All relevant markets closed -> skip (and keep waiting so it resumes when they reopen).
-      if (openAssets.length > 0 && (this.bots.some((b) => b.enabled) || (recent?.c ?? 0) > 0)) {
-        await setSetting(this.env, "last_analysis_ts", String(now)); // set first: a crash can never cause a retry loop
-        await this.runHourlyAnalysis(openAssets, now);
-      }
+    const today = etDateString(now);
+    const last = await getSetting(this.env, "last_overview_date");
+    if (!last) {
+      await setSetting(this.env, "last_overview_date", today); // first run: start counting from today
+      return;
     }
-    const today = new Date(dayStartMs(now) + 6 * 3_600_000).toISOString().slice(0, 10);
-    const lastDaily = await getSetting(this.env, "last_daily_date");
-    if (lastDaily && lastDaily !== today && this.bots.some((b) => b.config.notify === "daily")) {
-      await setSetting(this.env, "last_daily_date", today);
-      await this.sendDailySummary(now);
-    } else if (!lastDaily) {
-      await setSetting(this.env, "last_daily_date", today);
-    } else if (lastDaily !== today) {
-      await setSetting(this.env, "last_daily_date", today);
-    }
-  }
-
-  private async runHourlyAnalysis(openAssets: string[], now: number): Promise<void> {
-    const rows = (await this.env.DB.prepare("SELECT * FROM positions WHERE status != 'open' ORDER BY closed_ts DESC LIMIT 500").all<PositionRow>()).results ?? [];
-    const relevant = rows.filter((r) => openAssets.includes(r.asset));
-    const hour = relevant.filter((r) => (r.closed_ts ?? 0) >= now - 3_600_000);
-    const day = relevant.filter((r) => (r.closed_ts ?? 0) >= dayStartMs(now));
-    const perf = { lastHour: computePerformance(hour), today: computePerformance(day), recentAll: computePerformance(relevant) };
-    const unreal = [...this.posCache.values()].map((p) => ({ asset: p.asset, outcome: p.outcome, qty: p.open_qty, unrealized: this.unrealizedOf(p) }));
-    const ranges = (
-      await this.env.DB.prepare("SELECT ticker, COUNT(*) n, MIN((yes_bid+yes_ask)/2) lo, MAX((yes_bid+yes_ask)/2) hi FROM observations WHERE ts >= ? GROUP BY ticker").bind(now - 3_600_000).all<{ ticker: string; n: number; lo: number; hi: number }>()
-    ).results;
-    const trades = relevant.slice(0, 15).map((r) => ({ asset: r.asset, side: r.outcome, entryProb: r.entry_prob, favMax: r.fav_max, favMin: r.fav_min, exitProb: r.exit_prob, pnl: r.realized_pnl, result: r.result, how: r.close_reason, agree: r.agree_count }));
-    const stats = { openAssets, perf, openPositions: unreal, probabilityRangesLastHour: ranges, recentTrades: trades, bots: this.bots.map((b) => ({ name: b.name, enabled: b.enabled, config: b.config })), balance: this.balance?.value ?? null };
-    const prompt =
-      "You are the advisory analyst for an automated Kalshi trading bot. You are ADVISORY ONLY: you cannot change settings, start or stop bots, or place orders, and you must not claim you did. " +
-      "Using ONLY the measured data below, write a concise hourly review: results, what drove wins and losses, patterns by asset / probability range / entry probability / YES vs NO / directional agreement, probability peaks and troughs, and any suggested setting adjustments. " +
-      "Label every statement as either MEASURED (directly in the data) or ESTIMATE/HYPOTHESIS (your inference, including any estimated impact of a change). Do not invent numbers or trades; if a sample is small, say so. Data gaps are real gaps, never fill them in.\n\nDATA:\n" +
-      JSON.stringify(stats).slice(0, 14_000);
-    const text = (await askAI(this.env, prompt)) ?? "AI analysis was unavailable this hour (the AI call failed). The measured numbers below are still accurate.";
-    await this.env.DB.prepare("INSERT INTO analyses (ts, stats, text) VALUES (?,?,?)").bind(now, JSON.stringify(stats).slice(0, 60_000), text).run();
-    await log(this.env, "info", "system", "Hourly AI analysis saved");
-    if (this.bots.some((b) => b.config.notify === "hourly")) {
-      const h = perf.lastHour;
-      const acct = this.balance ? `Account balance $${this.balance.value.toFixed(2)}, portfolio value $${this.balance.portfolio.toFixed(2)}.` : "";
-      const grp = (g: { key: string; trades: number; wins: number; losses: number; pnl: number }[]) => g.map((x) => `${esc(x.key)}: ${x.trades} trades, ${x.wins}W/${x.losses}L, $${x.pnl.toFixed(2)}`).join("<br>") || "none";
-      const p = perf.recentAll;
-      const html = emailShell(
-        "Hourly report",
-        `<p><b>Last hour (open markets only):</b> ${h.trades} trades, ${h.wins} wins, ${h.losses} losses${h.winRate !== null ? `, win rate ${(h.winRate * 100).toFixed(0)}%` : ""}, realized P/L $${h.pnl.toFixed(2)}. Today: $${perf.today.pnl.toFixed(2)}. Open positions' unrealized P/L: $${unreal.reduce((a, u) => a + (u.unrealized ?? 0), 0).toFixed(2)}. ${acct}</p>` +
-          `<p><b>By asset</b><br>${grp(p.byAsset)}</p>` +
-          `<p><b>Probability metrics (recent trades)</b><br>Avg entry prob winners ${fmtP(p.avgEntryProbWinners)}, losers ${fmtP(p.avgEntryProbLosers)}; highest opposing prob in losers ${fmtP(p.highestOpposingProbInLosers)}; lowest favorable prob in winners ${fmtP(p.lowestFavorableProbInWinners)}.</p>` +
-          `<h3>AI analysis (advisory)</h3><div style="white-space:pre-wrap">${esc(text)}</div>`,
-      );
-      await sendEmail(this.env, "Purple Bot hourly report", html);
-    }
-  }
-
-  private async sendDailySummary(now: number): Promise<void> {
-    const start = dayStartMs(now - 12 * 3_600_000);
-    const rows = (await this.env.DB.prepare("SELECT * FROM positions WHERE status != 'open' AND closed_ts >= ? AND closed_ts < ?").bind(start, dayStartMs(now)).all<PositionRow>()).results ?? [];
-    const p = computePerformance(rows);
-    await sendEmail(
-      this.env,
-      "Purple Bot daily summary",
-      emailShell("Daily summary", `<p>${p.trades} trades, ${p.wins} wins, ${p.losses} losses${p.winRate !== null ? `, win rate ${(p.winRate * 100).toFixed(0)}%` : ""}. Realized P/L after fees: <b>$${p.pnl.toFixed(2)}</b>.</p><p>${p.byAsset.map((g) => `${esc(g.key)}: ${g.trades} trades, $${g.pnl.toFixed(2)}`).join("<br>")}</p>`),
-    );
+    if (last === today) return;
+    await setSetting(this.env, "last_overview_date", today); // set first: a crash can never cause a retry loop
+    const end = dayStartMs(now);
+    const start = dayStartMs(end - 3_600_000);
+    const active = await this.env.DB.prepare("SELECT (SELECT COUNT(*) FROM positions WHERE opened_ts >= ?1 AND opened_ts < ?2) + (SELECT COUNT(*) FROM contract_notes WHERE updated_ts >= ?1 AND updated_ts < ?2) c").bind(start, end).first<{ c: number }>();
+    if ((active?.c ?? 0) === 0) return; // nothing happened that day
+    const o = await runOverview(this.env, start, end, etDateString(start));
+    if (this.bots.some((b) => b.config.notify === "daily")) await sendEmail(this.env, `Purple Bot daily overview: ${etDateString(start)}`, overviewEmail(o));
   }
 
   private unrealizedOf(p: PositionRow): number | null {

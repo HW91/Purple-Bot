@@ -16,7 +16,7 @@ export interface Env {
 export const MIN_TRADE_AMOUNT = 1;
 
 export type Strategy = "crypto" | "metals";
-export type NotifyMode = "immediate" | "hourly" | "daily" | "off";
+export type NotifyMode = "immediate" | "daily" | "off";
 
 export interface BotConfig {
   strategy: Strategy;
@@ -150,9 +150,8 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     takeProfitOn: bool(input.takeProfitOn, d.takeProfitOn),
     takeProfit: num(input.takeProfit, d.takeProfit),
     maxSpread: num(input.maxSpread, d.maxSpread),
-    notify: (["immediate", "hourly", "daily", "off"] as const).includes(input.notify as NotifyMode)
-      ? (input.notify as NotifyMode)
-      : d.notify,
+    // the old "hourly" choice no longer exists (the AI overview is daily now), so saved hourly bots become daily
+    notify: (input.notify as string) === "hourly" ? "daily" : (["immediate", "daily", "off"] as const).includes(input.notify as NotifyMode) ? (input.notify as NotifyMode) : d.notify,
   };
   if (strategy === "metals") cfg.agreeCount = cfg.assets.length; // every checked metal must agree
   if (!(cfg.probThreshold > 0.5 && cfg.probThreshold < 1)) throw new Error("Probability threshold must be between 50% and 100%");
