@@ -132,6 +132,49 @@ try {
   const chart = markets.length ? (await api(`/chart?ticker=${encodeURIComponent(markets[0].ticker)}`)).j : null;
   ok("probability observations were saved to D1 and are chartable", !!chart && chart.points.length > 0 && chart.points.every((p) => p.yes > 0 && p.yes < 1), JSON.stringify(chart).slice(0, 200));
 
+  // ---- I2. account + per-bot profit/loss summaries
+  const acctSum = (await api("/account")).j;
+  const perfAll = (await api("/performance")).j;
+  ok("account summary: all-time P/L and trade count match the performance numbers", acctSum.all.trades === perfAll.trades && Math.abs(acctSum.all.pnl - perfAll.pnl) < 0.011 && acctSum.limits.dailyLossLimit > 0, JSON.stringify(acctSum).slice(0, 300));
+  const botSum = (await api(`/bots/${bot1}/summary`)).j;
+  ok("per-bot summary returns that bot's own numbers and trades", botSum.bot?.id === bot1 && botSum.all.trades >= 1 && botSum.closed.every((p) => p.bot_id === bot1), JSON.stringify(botSum).slice(0, 300));
+  ok("per-bot totals add up to the account total", Math.abs(((await api("/bots")).j.reduce((s, b) => s + b.perf.pnl, 0)) - acctSum.all.pnl) < 0.011);
+
+  // ---- I3. the real dashboard page in a real browser: account card, tap into a bot
+  try {
+    const { createRequire } = await import("node:module");
+    const { chromium } = createRequire(import.meta.url)("playwright");
+    const browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 420, height: 900 } });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await page.goto(base + "/");
+    await page.fill("#pw", "pw-test");
+    await page.click("#pwEye");
+    ok("eye icon shows the typed password", (await page.getAttribute("#pw", "type")) === "text");
+    await page.click("#loginBtn");
+    await page.waitForSelector("text=Account", { timeout: 15000 });
+    await page.waitForSelector("text=Profit/loss today", { timeout: 15000 });
+    ok("dashboard shows the Account card with balance and profit/loss", (await page.textContent("#main")).includes("Cash balance") && (await page.textContent("#main")).includes("All time"));
+    await page.screenshot({ path: "/tmp/claude-0/-home-user/82a96742-dc5a-5f59-b9da-e70bb4f29f5a/scratchpad/dash.png", fullPage: true });
+    await page.click("button.link >> nth=0");
+    await page.waitForSelector("text=Profit / loss — this bot only", { timeout: 15000 });
+    ok("tapping a bot opens its own profit/loss page", true);
+    await page.screenshot({ path: "/tmp/claude-0/-home-user/82a96742-dc5a-5f59-b9da-e70bb4f29f5a/scratchpad/bot.png", fullPage: true });
+    await page.reload();
+    await page.waitForSelector("text=Profit / loss — this bot only", { timeout: 15000 });
+    ok("refresh keeps you on the same bot page", true);
+    await page.click("text=← Back to Dashboard");
+    await page.click("nav >> text=Settings");
+    await page.reload();
+    await page.waitForSelector("text=Kalshi connection", { timeout: 15000 });
+    ok("refresh keeps you on the Settings tab", true);
+    ok("no JavaScript errors in the page", errors.length === 0, errors.join(" | "));
+    await browser.close();
+  } catch (e) {
+    ok("browser check of the dashboard", false, String(e?.stack || e));
+  }
+
   // ---- J. delete rules + disconnect rules
   ok("cannot delete a bot while ON", await (async () => { await api(`/bots/${bot1}/start`, "POST"); const r = await api(`/bots/${bot1}`, "DELETE"); await api(`/bots/${bot1}/stop`, "POST"); return r.status === 409; })());
   ok("badAuth count on fake exchange only came from the deliberately wrong key", (await mockState()).badAuth === 1, String((await mockState()).badAuth));

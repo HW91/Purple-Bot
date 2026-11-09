@@ -4,6 +4,7 @@ import { b64encode, encryptSecret, importSigningKey } from "./kalshi-auth";
 import { deleteSetting, getAccountLimits, getCreds, getSetting, loadBots, log, rowToBot, setSetting, type PositionRow } from "./db";
 import { askAI } from "./notify";
 import { computePerformance } from "./stats";
+import { dayStartMs } from "./strategy";
 import { simulate, type Obs, type SimMarket } from "./backtest";
 import { DEFAULT_ACCOUNT_LIMITS, defaultBotConfig, validateBotConfig, type Env } from "./types";
 import { UI_HTML } from "./ui";
@@ -83,6 +84,33 @@ async function closedPositions(env: Env, botId?: string | null, limit = 2000): P
   const sql = botId ? "SELECT * FROM positions WHERE status != 'open' AND bot_id = ? ORDER BY closed_ts DESC LIMIT ?" : "SELECT * FROM positions WHERE status != 'open' ORDER BY closed_ts DESC LIMIT ?";
   const st = botId ? env.DB.prepare(sql).bind(botId, limit) : env.DB.prepare(sql).bind(limit);
   return (await st.all<PositionRow>()).results ?? [];
+}
+
+/** Profit/loss totals (realized, after fees) from closed positions since `since`, for the whole account or one bot. */
+async function plAgg(env: Env, since: number, botId?: string): Promise<{ trades: number; wins: number; losses: number; pnl: number; fees: number; winRate: number | null }> {
+  const sql =
+    "SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN result='win' THEN 1 ELSE 0 END),0) w, COALESCE(SUM(CASE WHEN result='loss' THEN 1 ELSE 0 END),0) l, " +
+    "COALESCE(SUM(realized_pnl),0) pnl, COALESCE(SUM(entry_fee+exit_fee),0) fees FROM positions WHERE status != 'open' AND realized_pnl IS NOT NULL AND closed_ts >= ?" +
+    (botId ? " AND bot_id = ?" : "");
+  const r = await (botId ? env.DB.prepare(sql).bind(since, botId) : env.DB.prepare(sql).bind(since)).first<{ n: number; w: number; l: number; pnl: number; fees: number }>();
+  const w = r?.w ?? 0;
+  const l = r?.l ?? 0;
+  return { trades: r?.n ?? 0, wins: w, losses: l, pnl: Math.round((r?.pnl ?? 0) * 100) / 100, fees: Math.round((r?.fees ?? 0) * 100) / 100, winRate: w + l ? w / (w + l) : null };
+}
+
+async function plSummary(env: Env, botId?: string) {
+  const now = Date.now();
+  const day = dayStartMs(now);
+  const where = botId ? " AND bot_id = ?" : "";
+  const bind = (sql: string, ...b: unknown[]) => (botId ? env.DB.prepare(sql).bind(...b, botId) : env.DB.prepare(sql).bind(...b));
+  const [today, week, all, open, invested] = await Promise.all([
+    plAgg(env, day, botId),
+    plAgg(env, now - 7 * 86_400_000, botId),
+    plAgg(env, 0, botId),
+    bind("SELECT COUNT(*) c, COALESCE(SUM(entry_cost),0) cost FROM positions WHERE status='open'" + where).first<{ c: number; cost: number }>(),
+    bind("SELECT COALESCE(SUM(entry_cost+entry_fee),0) c FROM positions WHERE opened_ts >= ?" + where, day).first<{ c: number }>(),
+  ]);
+  return { today, week, all, openCount: open?.c ?? 0, openExposure: Math.round((open?.cost ?? 0) * 100) / 100, investedToday: Math.round((invested?.c ?? 0) * 100) / 100 };
 }
 
 // ------------------------------------------------------------------ router
@@ -283,6 +311,16 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     await log(env, "warn", "control", "STOP AND CLOSE ALL POSITIONS pressed", id);
     const n = await engine(env).closeAll(id, "manual_close");
     return json({ ok: true, closing: n });
+  }
+
+  // ---------------- profit / loss summaries
+  if (path === "/api/account" && m === "GET") return json({ ...(await plSummary(env)), limits: await getAccountLimits(env) });
+  if ((g = path.match(/^\/api\/bots\/([\w-]+)\/summary$/)) && m === "GET") {
+    const id = g[1];
+    const row = await env.DB.prepare("SELECT id, name, strategy, config, enabled FROM bots WHERE id=?").bind(id).first<{ id: string; name: string; strategy: string; config: string; enabled: number }>();
+    if (!row) return err("Bot not found", 404);
+    const closed = (await env.DB.prepare("SELECT * FROM positions WHERE status != 'open' AND bot_id = ? ORDER BY closed_ts DESC LIMIT 50").bind(id).all()).results;
+    return json({ bot: rowToBot(row), ...(await plSummary(env, id)), closed });
   }
 
   // ---------------- trades / performance / logs

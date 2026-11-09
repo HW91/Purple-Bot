@@ -44,6 +44,9 @@ canvas{width:100%;height:320px;background:var(--bg);border:1px solid var(--line)
 .login{max-width:340px;margin:12vh auto}
 small{color:var(--mute)}
 .hidden{display:none}
+.tile{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px}
+.tile .big{font-size:20px;font-weight:600;margin-top:2px}
+.link{background:none;border:0;padding:0;color:var(--accent);font:inherit;font-weight:700;font-size:16px;cursor:pointer;text-align:left}
 .chk{display:inline-flex;gap:4px;align-items:center;margin:2px 8px 2px 0;font-size:13px;color:var(--text)}
 </style>
 </head>
@@ -116,7 +119,12 @@ var tab=(function(){var t='';try{t=decodeURIComponent((location.hash||'').slice(
 var live=null,pollTimer=null,settings=null,botsCache=[];
 
 function showLogin(){$('#app').classList.add('hidden');$('#login').classList.remove('hidden');if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
-function showApp(){$('#login').classList.add('hidden');$('#app').classList.remove('hidden');buildNav();go(tab)}
+function showApp(){
+  $('#login').classList.add('hidden');$('#app').classList.remove('hidden');buildNav();
+  var m=(location.hash||'').match(/^#Bot\/(.+)$/);  // refresh while viewing one bot stays on that bot
+  if(m){var id='';try{id=decodeURIComponent(m[1])}catch(e){}if(id){tab='Dashboard';buildNav();openBot(id);return}}
+  go(tab);
+}
 var EYE='<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
 var EYE_OFF='<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 (function(){
@@ -159,11 +167,36 @@ function updateHeader(){
 // ----------------------------------------------------------------- Dashboard
 function vDash(){
   var root=$('#main');
-  var lastBots=0;
+  var lastBots=0,lastAcct=0,acctData=null;
   var banner=h('div'),acct=h('div'),mk=h('div'),bt=h('div'),pos=h('div');
-  root.appendChild(banner);root.appendChild(mk);root.appendChild(bt);root.appendChild(pos);
+  root.appendChild(banner);root.appendChild(acct);root.appendChild(mk);root.appendChild(bt);root.appendChild(pos);
+  function drawAcct(){
+    acct.textContent='';
+    var a=acctData;
+    var unreal=live.positions.reduce(function(s,p){return s+(p.unrealized||0)},0);
+    var total=(live.balance!=null&&live.portfolioValue!=null)?live.balance+live.portfolioValue:null;
+    var tiles=[tile('Cash balance',usd(live.balance)),tile('Portfolio value',usd(live.portfolioValue)),tile('Account total',usd(total))];
+    if(a){
+      var lossToday=Math.max(0,-a.today.pnl);
+      tiles=tiles.concat([
+        tile('Profit/loss today',usd(a.today.pnl),pnlCls(a.today.pnl)),
+        tile('Last 7 days',usd(a.week.pnl),pnlCls(a.week.pnl)),
+        tile('All time',usd(a.all.pnl),pnlCls(a.all.pnl)),
+        tile('Open positions (unrealized)',usd(unreal),pnlCls(unreal)),
+        tile('Win rate (all time)',a.all.winRate==null?'—':(a.all.winRate*100).toFixed(0)+'%  ('+a.all.wins+'W / '+a.all.losses+'L)'),
+        tile('Trades today / all time',a.today.trades+' / '+a.all.trades),
+        tile('Fees paid (all time)',usd(a.all.fees)),
+        tile('Open now',a.openCount+' · '+usd(a.openExposure)+' at risk'),
+        tile('Invested today',usd(a.investedToday)+' of '+usd(a.limits.dailyInvestLimit)),
+        tile('Loss today',usd(lossToday)+' of '+usd(a.limits.dailyLossLimit)+' limit')
+      ]);
+    }
+    acct.appendChild(h('div',{class:'card'},h('h2',{text:'Account'}),h('div',{class:'grid'},tiles),h('small',{text:'Balance and portfolio come straight from Kalshi. Profit/loss is from this bot\'s own closed trades, after fees. Tap a bot below to see its own numbers.'})));
+  }
   function draw(){
     if(!live)return;
+    drawAcct();
+    if(!acctData||Date.now()-lastAcct>30000){lastAcct=Date.now();api('/account').then(function(a){acctData=a;drawAcct()}).catch(function(){})}
     banner.textContent='';
     if(!live.credentialsOk)banner.appendChild(h('div',{class:'banner bad',text:'Kalshi is not connected (or the key was rejected'+(live.authError?': '+live.authError:'')+'). Go to Settings.'}));
     if(live.reconcileProblem)banner.appendChild(h('div',{class:'banner bad'},['New orders are blocked: '+live.reconcileProblem+' ',h('button',{class:'btn gray',text:'Reconcile now',onclick:function(){act('/reconcile',{method:'POST'},'Checked')}})]));
@@ -187,13 +220,11 @@ function vDash(){
       bots.forEach(function(b){
         var st=live.bots.find(function(x){return x.id===b.id})||{reason:'',up:0,down:0};
         bt.appendChild(h('div',{class:'card'},
-          h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:b.strategy}),
+          h('div',{class:'row'},h('button',{class:'link',text:b.name+' ›',title:'See this bot\'s profit/loss',onclick:function(){openBot(b.id)}}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:b.strategy+' · trades '+b.config.tradeAsset}),
             h('span',{style:'flex:1'}),
-            h('button',{class:'btn green',disabled:b.enabled,text:'Start Bot',onclick:function(){act('/bots/'+b.id+'/start',{method:'POST'},'Bot started').then(function(){lastBots=0;refresh()})}}),
-            h('button',{class:'btn amber',disabled:!b.enabled,text:'Stop — No New Trades',onclick:function(){act('/bots/'+b.id+'/stop',{method:'POST'},'Stopped: no new trades').then(function(){lastBots=0;refresh()})}}),
-            h('button',{class:'btn red',text:'Stop and Close All Positions',onclick:function(){if(confirm('Stop this bot and try to close all of its open positions?'))act('/bots/'+b.id+'/stop-close',{method:'POST'},'Closing positions…').then(function(){lastBots=0;refresh()})}})),
+            botButtons(b,function(){lastBots=0;refresh()})),
           h('div',{class:'mute',text:'Signal: '+st.reason+(b.strategy==='crypto'?'  (up '+st.up+' / down '+st.down+', need '+b.config.agreeCount+')':'')}),
-          h('div',{class:'mute',text:'Trades '+b.perf.trades+' · wins '+b.perf.wins+' · losses '+b.perf.losses+' · P/L '+usd(b.perf.pnl)})));
+          h('div',{class:'mute',text:'Tap the bot name to see its profit/loss.'})));
       });
       if(!bots.length)bt.appendChild(h('div',{class:'card mute',text:'No bots yet — open the Bots tab to create one (bots always start OFF).'}));
     }
@@ -206,6 +237,58 @@ function vDash(){
   }
   function refresh(){return api('/live').then(function(l){live=l;updateHeader();draw()}).catch(function(){})}
   refresh();pollTimer=setInterval(refresh,5000);
+}
+function tile(label,value,cls){return h('div',{class:'tile'},h('small',{text:label}),h('div',{class:'big '+(cls||''),text:value}))}
+function botButtons(b,after){
+  return [
+    h('button',{class:'btn green',disabled:b.enabled,text:'Start Bot',onclick:function(){act('/bots/'+b.id+'/start',{method:'POST'},'Bot started').then(after)}}),
+    h('button',{class:'btn amber',disabled:!b.enabled,text:'Stop — No New Trades',onclick:function(){act('/bots/'+b.id+'/stop',{method:'POST'},'Stopped: no new trades').then(after)}}),
+    h('button',{class:'btn red',text:'Stop and Close All Positions',onclick:function(){if(confirm('Stop this bot and try to close all of its open positions?'))act('/bots/'+b.id+'/stop-close',{method:'POST'},'Closing positions…').then(after)}})
+  ];
+}
+function closedTable(rows){
+  if(!rows.length)return h('div',{class:'mute',text:'No completed trades yet'});
+  return h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['Closed','Asset','Side','Qty','Entry','Entry prob','Exit prob','Fav min / max','How','Result','P/L'].map(function(x){return h('th',{text:x})}))),
+    h('tbody',null,rows.map(function(p){return h('tr',null,h('td',{text:when(p.closed_ts)}),h('td',{text:p.asset}),h('td',{text:p.outcome.toUpperCase()}),h('td',{text:p.entry_qty}),h('td',{text:p.avg_entry!=null?p.avg_entry.toFixed(3):'—'}),h('td',{text:pct(p.entry_prob)}),h('td',{text:pct(p.exit_prob)}),h('td',{text:pct(p.fav_min)+' / '+pct(p.fav_max)}),h('td',{text:p.close_reason||''}),h('td',{text:p.result||''}),h('td',{class:pnlCls(p.realized_pnl),text:usd(p.realized_pnl)}))}))));
+}
+
+// one bot's own profit/loss page (opened by tapping the bot's name on the Dashboard)
+function openBot(id){
+  if(pollTimer){clearInterval(pollTimer);pollTimer=null}
+  try{history.replaceState(null,'','#Bot/'+encodeURIComponent(id))}catch(e){}
+  var root=$('#main');root.textContent='';
+  root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn gray',text:'← Back to Dashboard',onclick:function(){go('Dashboard')}})));
+  var body=h('div');root.appendChild(body);
+  function load(){
+    Promise.all([api('/bots/'+id+'/summary'),api('/live')]).then(function(r){
+      var s=r[0];live=r[1];updateHeader();
+      var b=s.bot,cfg=b.config;
+      var mine=live.positions.filter(function(p){return p.bot_id===id});
+      var unreal=mine.reduce(function(t,p){return t+(p.unrealized||0)},0);
+      var st=live.bots.find(function(x){return x.id===id})||{reason:''};
+      var lossToday=Math.max(0,-s.today.pnl);
+      body.textContent='';
+      body.appendChild(h('div',{class:'card'},
+        h('div',{class:'row'},h('h2',{text:b.name,style:'margin:0'}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:cfg.strategy+' · trades '+cfg.tradeAsset+' · confirmed by '+cfg.assets.join(', ')})),
+        h('div',{class:'row',style:'margin-top:10px'},botButtons(b,load)),
+        h('div',{class:'mute',style:'margin-top:8px',text:'Signal: '+st.reason})));
+      body.appendChild(h('div',{class:'card'},h('h2',{text:'Profit / loss — this bot only'}),h('div',{class:'grid'},[
+        tile('Profit/loss today',usd(s.today.pnl),pnlCls(s.today.pnl)),
+        tile('Last 7 days',usd(s.week.pnl),pnlCls(s.week.pnl)),
+        tile('All time',usd(s.all.pnl),pnlCls(s.all.pnl)),
+        tile('Open positions (unrealized)',usd(unreal),pnlCls(unreal)),
+        tile('Win rate (all time)',s.all.winRate==null?'—':(s.all.winRate*100).toFixed(0)+'%  ('+s.all.wins+'W / '+s.all.losses+'L)'),
+        tile('Trades today / all time',s.today.trades+' / '+s.all.trades),
+        tile('Fees paid (all time)',usd(s.all.fees)),
+        tile('Open now',s.openCount+' · '+usd(s.openExposure)+' at risk'),
+        tile('Invested today',usd(s.investedToday)+' of '+usd(cfg.dailyInvestLimit)),
+        tile('Loss today',usd(lossToday)+' of '+usd(cfg.dailyLossLimit)+' limit')]),
+        h('small',{text:'After fees, from this bot\'s own closed trades.'})));
+      body.appendChild(h('div',{class:'card'},h('h2',{text:'Open positions'}),posTable(mine)));
+      body.appendChild(h('div',{class:'card'},h('h2',{text:'Completed trades (latest 50)'}),closedTable(s.closed)));
+    }).catch(function(e){body.textContent='';body.appendChild(h('div',{class:'banner bad',text:e.message}))});
+  }
+  load();pollTimer=setInterval(load,10000);
 }
 function posTable(list){
   if(!list.length)return h('div',{class:'mute',text:'None'});
