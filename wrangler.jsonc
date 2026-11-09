@@ -2,6 +2,8 @@
   "name": "purple-bot",
   "main": "src/index.ts",
   "compatibility_date": "2025-07-18",
+  // Keep anything you add in the Cloudflare dashboard (secrets and variables) when GitHub deploys.
+  "keep_vars": true,
   // D1 database. Create it once with: npx wrangler d1 create purple-bot-db
   // then paste the printed database_id below.
   "d1_databases": [
