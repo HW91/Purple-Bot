@@ -23,7 +23,8 @@ export interface BotConfig {
   assets: string[]; // compared for direction agreement (confirmation only)
   tradeAsset: string; // the ONE asset this bot actually trades; must be one of `assets`
   durationMin: number;
-  probThreshold: number; // 0..1
+  probThreshold: number; // 0..1, minimum probability to enter
+  probMax: number; // 0..1, do NOT enter above this probability (1 = no upper limit)
   agreeCount: number; // crypto: how many selected assets must agree
   timeDelaySec: number; // from contract open
   minRemainingSec: number; // "sufficient time remains"
@@ -94,6 +95,7 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     tradeAsset: strategy === "crypto" ? "BTC" : "GOLD",
     durationMin: 15,
     probThreshold: 0.8,
+    probMax: 1,
     agreeCount: strategy === "crypto" ? 7 : 2,
     timeDelaySec: 300,
     minRemainingSec: 120,
@@ -134,6 +136,7 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     tradeAsset,
     durationMin: Math.max(1, Math.round(num(input.durationMin, d.durationMin))),
     probThreshold: num(input.probThreshold, d.probThreshold),
+    probMax: num(input.probMax, d.probMax),
     agreeCount: Math.round(num(input.agreeCount, d.agreeCount)),
     timeDelaySec: Math.round(num(input.timeDelaySec, d.timeDelaySec)),
     minRemainingSec: Math.round(num(input.minRemainingSec, d.minRemainingSec)),
@@ -153,6 +156,7 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
   };
   if (strategy === "metals") cfg.agreeCount = cfg.assets.length; // every checked metal must agree
   if (!(cfg.probThreshold > 0.5 && cfg.probThreshold < 1)) throw new Error("Probability threshold must be between 50% and 100%");
+  if (!(cfg.probMax > cfg.probThreshold && cfg.probMax <= 1)) throw new Error("Maximum probability must be above the minimum probability and no more than 100%");
   if (cfg.timeDelaySec < 0 || cfg.timeDelaySec > (cfg.durationMin - 1) * 60) {
     throw new Error(`Time Delay must be between 0 and ${cfg.durationMin - 1} minutes for ${cfg.durationMin}-minute contracts`);
   }

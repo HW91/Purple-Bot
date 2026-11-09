@@ -46,6 +46,23 @@ describe("crypto entry", () => {
     expect(d2.trade!.asset).toBe("SOL");
   });
 
+  it("does not enter above the maximum probability, or when the price paid is above it", () => {
+    const capped = { ...cfg, probMax: 0.9 };
+    // BTC at 93% is inside the market's lean but above the 90% maximum
+    const high = ASSETS.map((a) => view(a, a === "BTC" ? 0.92 : 0.6, a === "BTC" ? 0.94 : 0.62, now));
+    const d = evaluateEntry(capped, high, now);
+    expect(d.ok).toBe(false);
+    expect(d.code).toBe("above_max");
+    expect(d.reason).toMatch(/maximum/);
+    // probability 89% (inside) but the ask is 92c: the price paid is above the cap
+    const edge = ASSETS.map((a) => view(a, a === "BTC" ? 0.86 : 0.6, a === "BTC" ? 0.92 : 0.62, now));
+    expect(evaluateEntry({ ...cfg, probMax: 0.9, maxSpread: 0.1 }, edge, now).code).toBe("above_max");
+    // inside the range it still trades; no limit (default) is unchanged
+    const ok = ASSETS.map((a) => view(a, a === "BTC" ? 0.84 : 0.6, a === "BTC" ? 0.86 : 0.62, now));
+    expect(evaluateEntry(capped, ok, now).ok).toBe(true);
+    expect(evaluateEntry(cfg, high, now).ok).toBe(true);
+  });
+
   it("waits for the Time Delay and gives the reason", () => {
     const early = OPEN + 2 * 60_000;
     const views = ASSETS.map((a) => view(a, 0.83, 0.85, early));
@@ -154,6 +171,9 @@ describe("config validation + day boundary", () => {
     expect(() => validateBotConfig({ strategy: "crypto", agreeCount: 12 })).toThrow(/agreement/);
     expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0 })).toThrow(/Trade amount/);
     expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0.5 })).toThrow(/at least/);
+    expect(() => validateBotConfig({ strategy: "crypto", probThreshold: 0.8, probMax: 0.8 })).toThrow(/Maximum probability/);
+    expect(validateBotConfig({ strategy: "crypto", probMax: 0.9 }).probMax).toBe(0.9);
+    expect(validateBotConfig({ strategy: "crypto" }).probMax).toBe(1);
     expect(validateBotConfig({ strategy: "crypto", tradeAmount: 1 }).tradeAmount).toBe(1);
     expect(() => validateBotConfig({ strategy: "crypto", assets: ["BTC", "FOO"] })).toThrow(/not valid/);
   });

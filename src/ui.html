@@ -310,7 +310,7 @@ function vBots(){
       h('button',{class:'btn gray',text:'Edit',onclick:function(){editBot(b)}}),
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
       h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}})),
-      h('div',{class:'mute',text:'Prob ≥ '+pct(b.config.probThreshold)+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')})));
+      h('div',{class:'mute',text:'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')})));
   })})}
   function field(label,input,hint){return h('div',null,h('label',{text:label}),input,hint?h('small',{text:hint,style:'display:block;margin-top:2px'}):null)}
   function editBot(b,strategy){
@@ -330,6 +330,7 @@ function vBots(){
         field('Name',name),
         field('Asset to trade',tradeSel,'The only asset this bot buys. The other checked assets only confirm the direction.'),
         field('Probability threshold (%)',num('probThreshold',100,1)),
+        field('Maximum probability to enter (%)',num('probMax',100,1),'Skips the trade if the probability, or the price you would pay, is above this. 100 means no limit.'),
         s==='crypto'?field('Assets that must agree (of those selected)',num('agreeCount',1,1)):h('div',{class:'mute',text:'Every checked metal must lean the same direction before the bot trades.'}),
         field('Time Delay after open (seconds, 0–'+((cfg.durationMin-1)*60)+')',num('timeDelaySec',1,1)),
         field('Minimum time remaining (seconds)',num('minRemainingSec',1,1)),
@@ -345,7 +346,7 @@ function vBots(){
       f.appendChild(h('div',{style:'margin-top:10px'},h('label',{text:'Assets'}),assets));
       f.appendChild(h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){
         var out={strategy:s,durationMin:cfg.durationMin};
-        ['probThreshold'].forEach(function(k){out[k]=+inp[k].value/100});
+        ['probThreshold','probMax'].forEach(function(k){out[k]=+inp[k].value/100});
         ['agreeCount','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
         out.tradeAsset=tradeSel.value;
         out.stopLossOn=sl.checked;out.takeProfitOn=tp.checked;out.notify=nt.value;

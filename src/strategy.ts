@@ -24,7 +24,7 @@ export interface AssetView {
 }
 
 /** Machine-readable version of the reason, used to summarise why a contract had no trade. */
-export type EntryCode = "ok" | "no_data" | "disagree" | "agreement" | "trade_asset_direction" | "threshold" | "delay" | "time_left" | "spread" | "price" | "size" | "liquidity" | "risk";
+export type EntryCode = "ok" | "above_max" | "no_data" | "disagree" | "agreement" | "trade_asset_direction" | "threshold" | "delay" | "time_left" | "spread" | "price" | "size" | "liquidity" | "risk";
 
 export interface EntryDecision {
   ok: boolean;
@@ -82,17 +82,21 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
   const outcome: "yes" | "no" = direction === "up" ? "yes" : "no";
 
   // The bot trades ONE chosen asset. The other assets only confirm the direction above; they are never traded.
-  const cands = fresh.filter((v) => v.asset === cfg.tradeAsset && dirs.get(v.asset) === direction && favorableProb(outcome, yesProb(v.quote!)) >= cfg.probThreshold);
+  // Entry only inside the chosen probability range: at least the minimum, and not above the maximum.
+  const inRange = (p: number) => p >= cfg.probThreshold && p <= cfg.probMax + 1e-9;
+  const cands = fresh.filter((v) => v.asset === cfg.tradeAsset && dirs.get(v.asset) === direction && inRange(favorableProb(outcome, yesProb(v.quote!))));
   if (cands.length === 0) {
     const tv = fresh.find((v) => v.asset === cfg.tradeAsset);
     if (!tv) return { ok: false, code: "no_data", reason: `No live data for ${cfg.tradeAsset}, the asset this bot trades`, ...base };
     const own = favorableProb(outcome, yesProb(tv.quote!));
     return {
       ok: false,
-      code: dirs.get(tv.asset) === direction ? "threshold" : "trade_asset_direction",
+      code: dirs.get(tv.asset) === direction ? (own > cfg.probMax ? "above_max" : "threshold") : "trade_asset_direction",
       reason:
         dirs.get(tv.asset) === direction
-          ? `Direction is ${direction}, but ${cfg.tradeAsset} ${outcome.toUpperCase()} probability ${pct(own)} is below ${pct(cfg.probThreshold)}`
+          ? own > cfg.probMax
+            ? `${cfg.tradeAsset} ${outcome.toUpperCase()} probability ${pct(own)} is above your ${pct(cfg.probMax)} maximum, so no trade`
+            : `Direction is ${direction}, but ${cfg.tradeAsset} ${outcome.toUpperCase()} probability ${pct(own)} is below ${pct(cfg.probThreshold)}`
           : `Direction is ${direction}, but ${cfg.tradeAsset} itself is not leaning ${direction}`,
       ...base,
     };
@@ -125,6 +129,12 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
     if (!(costPerContract > 0.01 && costPerContract < 0.99)) {
       lastWhy = `${v.asset} price ${costPerContract.toFixed(2)} is too extreme to trade`;
       lastCode = "price";
+      continue;
+    }
+    // The price actually paid per contract must also stay under the maximum (the ask can sit above the midpoint probability).
+    if (costPerContract > cfg.probMax + 1e-9) {
+      lastWhy = `${v.asset} would cost ${pct(costPerContract)} per contract, above your ${pct(cfg.probMax)} maximum`;
+      lastCode = "above_max";
       continue;
     }
     const count = Math.floor(cfg.tradeAmount / costPerContract);
