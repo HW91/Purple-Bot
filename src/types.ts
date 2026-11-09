@@ -20,7 +20,8 @@ export type NotifyMode = "immediate" | "hourly" | "daily" | "off";
 
 export interface BotConfig {
   strategy: Strategy;
-  assets: string[];
+  assets: string[]; // compared for direction agreement (confirmation only)
+  tradeAsset: string; // the ONE asset this bot actually trades; must be one of `assets`
   durationMin: number;
   probThreshold: number; // 0..1
   agreeCount: number; // crypto: how many selected assets must agree
@@ -90,6 +91,7 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
   return {
     strategy,
     assets: strategy === "crypto" ? [...DEFAULT_CRYPTO_ASSETS] : ["GOLD", "SILVER"],
+    tradeAsset: strategy === "crypto" ? "BTC" : "GOLD",
     durationMin: 15,
     probThreshold: 0.8,
     agreeCount: strategy === "crypto" ? 7 : 2,
@@ -126,10 +128,13 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     throw new Error("The metals strategy always needs both GOLD and SILVER selected");
   }
   if (uniq.length === 0) throw new Error("Select at least one asset");
+  const tradeAsset = String(input.tradeAsset ?? (strategy === "metals" ? "GOLD" : uniq.includes("BTC") ? "BTC" : uniq[0])).toUpperCase();
+  if (!uniq.includes(tradeAsset)) throw new Error(`The asset to trade (${tradeAsset}) must also be one of the selected assets`);
 
   const cfg: BotConfig = {
     strategy,
     assets: uniq,
+    tradeAsset,
     durationMin: Math.max(1, Math.round(num(input.durationMin, d.durationMin))),
     probThreshold: num(input.probThreshold, d.probThreshold),
     agreeCount: Math.round(num(input.agreeCount, d.agreeCount)),

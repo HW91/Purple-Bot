@@ -34,6 +34,18 @@ describe("crypto entry", () => {
     expect(d.trade!.prob).toBeCloseTo(0.84, 10);
   });
 
+  it("trades only the chosen asset, even when another asset has the higher probability", () => {
+    // BTC (the chosen asset) at 70% is below the threshold; SOL at 95% must NOT be traded instead.
+    const views = ASSETS.map((a, i) => (a === "BTC" ? view(a, 0.69, 0.71, now) : a === "SOL" ? view(a, 0.94, 0.96, now) : view(a, 0.6, 0.62, now)));
+    const d = evaluateEntry(cfg, views, now);
+    expect(d.ok).toBe(false);
+    expect(d.reason).toMatch(/BTC/);
+    // and with a different chosen asset it trades that one
+    const d2 = evaluateEntry({ ...cfg, tradeAsset: "SOL" }, views, now);
+    expect(d2.ok).toBe(true);
+    expect(d2.trade!.asset).toBe("SOL");
+  });
+
   it("waits for the Time Delay and gives the reason", () => {
     const early = OPEN + 2 * 60_000;
     const views = ASSETS.map((a) => view(a, 0.83, 0.85, early));
@@ -77,6 +89,11 @@ describe("metals entry", () => {
     const ok = evaluateEntry(cfg, [view("GOLD", 0.83, 0.85, now), view("SILVER", 0.6, 0.62, now)], now);
     expect(ok.ok).toBe(true);
     expect(ok.trade!.asset).toBe("GOLD");
+  });
+  it("trades the chosen metal; the other one only confirms", () => {
+    const d = evaluateEntry({ ...cfg, tradeAsset: "SILVER" }, [view("GOLD", 0.9, 0.92, now), view("SILVER", 0.83, 0.85, now)], now);
+    expect(d.ok).toBe(true);
+    expect(d.trade!.asset).toBe("SILVER");
   });
   it("other metals cannot stand in for gold or silver", () => {
     const d = evaluateEntry({ ...cfg, assets: ["GOLD", "SILVER", "PLATINUM"] }, [view("PLATINUM", 0.9, 0.92, now), view("GOLD", 0.83, 0.85, now)], now);

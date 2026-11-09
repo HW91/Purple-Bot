@@ -74,13 +74,20 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
   }
   const outcome: "yes" | "no" = direction === "up" ? "yes" : "no";
 
-  // Candidates: selected assets in the agreed direction whose own probability clears the threshold.
-  const cands = fresh
-    .filter((v) => dirs.get(v.asset) === direction && favorableProb(outcome, yesProb(v.quote!)) >= cfg.probThreshold)
-    .sort((a, b) => favorableProb(outcome, yesProb(b.quote!)) - favorableProb(outcome, yesProb(a.quote!)));
+  // The bot trades ONE chosen asset. The other assets only confirm the direction above; they are never traded.
+  const cands = fresh.filter((v) => v.asset === cfg.tradeAsset && dirs.get(v.asset) === direction && favorableProb(outcome, yesProb(v.quote!)) >= cfg.probThreshold);
   if (cands.length === 0) {
-    const best = Math.max(...fresh.map((v) => favorableProb(outcome, yesProb(v.quote!))));
-    return { ok: false, reason: `Direction is ${direction}, but no asset has ${outcome.toUpperCase()} probability >= ${pct(cfg.probThreshold)} (best is ${pct(best)})`, ...base };
+    const tv = fresh.find((v) => v.asset === cfg.tradeAsset);
+    if (!tv) return { ok: false, reason: `No live data for ${cfg.tradeAsset}, the asset this bot trades`, ...base };
+    const own = favorableProb(outcome, yesProb(tv.quote!));
+    return {
+      ok: false,
+      reason:
+        dirs.get(tv.asset) === direction
+          ? `Direction is ${direction}, but ${cfg.tradeAsset} ${outcome.toUpperCase()} probability ${pct(own)} is below ${pct(cfg.probThreshold)}`
+          : `Direction is ${direction}, but ${cfg.tradeAsset} itself is not leaning ${direction}`,
+      ...base,
+    };
   }
 
   let lastWhy = "";
