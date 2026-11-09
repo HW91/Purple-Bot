@@ -140,6 +140,7 @@ function updateHeader(){
 // ----------------------------------------------------------------- Dashboard
 function vDash(){
   var root=$('#main');
+  var lastBots=0;
   var banner=h('div'),acct=h('div'),mk=h('div'),bt=h('div'),pos=h('div');
   root.appendChild(banner);root.appendChild(mk);root.appendChild(bt);root.appendChild(pos);
   function draw(){
@@ -162,28 +163,30 @@ function vDash(){
     mk.textContent='';
     mk.appendChild(h('div',{class:'card'},h('h2',{text:'Live markets'}),h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['Asset','YES (up)','NO (down)','Bid / Ask','Contract','Update'].map(function(x){return h('th',{text:x})}))),h('tbody',null,rows.length?rows:[h('tr',null,h('td',{colspan:6,class:'mute',text:'No assets tracked yet. Create a bot, then Start it (or just open this page after creating one).'}))])))));
     // bots
-    bt.textContent='';
-    api('/bots').then(function(bots){
-      botsCache=bots;bt.textContent='';
+    function renderBots(bots){
+      bt.textContent='';
       bots.forEach(function(b){
         var st=live.bots.find(function(x){return x.id===b.id})||{reason:'',up:0,down:0};
         bt.appendChild(h('div',{class:'card'},
           h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:b.strategy}),
             h('span',{style:'flex:1'}),
-            h('button',{class:'btn green',disabled:b.enabled,text:'Start Bot',onclick:function(){act('/bots/'+b.id+'/start',{method:'POST'},'Bot started').then(refresh)}}),
-            h('button',{class:'btn amber',disabled:!b.enabled,text:'Stop — No New Trades',onclick:function(){act('/bots/'+b.id+'/stop',{method:'POST'},'Stopped: no new trades').then(refresh)}}),
-            h('button',{class:'btn red',text:'Stop and Close All Positions',onclick:function(){if(confirm('Stop this bot and try to close all of its open positions?'))act('/bots/'+b.id+'/stop-close',{method:'POST'},'Closing positions…').then(refresh)}})),
+            h('button',{class:'btn green',disabled:b.enabled,text:'Start Bot',onclick:function(){act('/bots/'+b.id+'/start',{method:'POST'},'Bot started').then(function(){lastBots=0;refresh()})}}),
+            h('button',{class:'btn amber',disabled:!b.enabled,text:'Stop — No New Trades',onclick:function(){act('/bots/'+b.id+'/stop',{method:'POST'},'Stopped: no new trades').then(function(){lastBots=0;refresh()})}}),
+            h('button',{class:'btn red',text:'Stop and Close All Positions',onclick:function(){if(confirm('Stop this bot and try to close all of its open positions?'))act('/bots/'+b.id+'/stop-close',{method:'POST'},'Closing positions…').then(function(){lastBots=0;refresh()})}})),
           h('div',{class:'mute',text:'Signal: '+st.reason+(b.strategy==='crypto'?'  (up '+st.up+' / down '+st.down+', need '+b.config.agreeCount+')':'')}),
           h('div',{class:'mute',text:'Trades '+b.perf.trades+' · wins '+b.perf.wins+' · losses '+b.perf.losses+' · P/L '+usd(b.perf.pnl)})));
       });
       if(!bots.length)bt.appendChild(h('div',{class:'card mute',text:'No bots yet — open the Bots tab to create one (bots always start OFF).'}));
-    });
+    }
+    // the bot list (with its performance math) only needs a fresh fetch every 30s or after you press something
+    if(botsCache.length&&Date.now()-lastBots<30000)renderBots(botsCache);
+    else api('/bots').then(function(b){lastBots=Date.now();botsCache=b;renderBots(b)});
     // positions
     pos.textContent='';
     pos.appendChild(h('div',{class:'card'},h('h2',{text:'Open positions'}),posTable(live.positions)));
   }
   function refresh(){return api('/live').then(function(l){live=l;updateHeader();draw()}).catch(function(){})}
-  refresh();pollTimer=setInterval(refresh,4000);
+  refresh();pollTimer=setInterval(refresh,5000);
 }
 function posTable(list){
   if(!list.length)return h('div',{class:'mute',text:'None'});
