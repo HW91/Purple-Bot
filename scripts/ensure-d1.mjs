@@ -6,7 +6,9 @@ import fs from "node:fs";
 const NAME = "purple-bot-db";
 const run = (args) => execFileSync("npx", ["wrangler", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
 const find = () => {
-  const list = JSON.parse(run(["d1", "list", "--json"]));
+  const out = run(["d1", "list", "--json"]);
+  // wrangler may print a banner line before the JSON, so take just the [...] part
+  const list = JSON.parse(out.slice(out.indexOf("["), out.lastIndexOf("]") + 1));
   return list.find((d) => d.name === NAME)?.uuid;
 };
 
