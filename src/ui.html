@@ -111,7 +111,9 @@ function toast(msg,bad){var d=h('div',{class:'banner'+(bad?' bad':''),text:msg})
 function act(p,opts,okMsg){return api(p,opts).then(function(r){if(okMsg)toast(okMsg);return r}).catch(function(e){toast(e.message,true);throw e})}
 
 var TABS=['Dashboard','Bots','Trades','Charts','AI','Backtest','Settings','Logs'];
-var tab='Dashboard',live=null,pollTimer=null,settings=null,botsCache=[];
+// remember the current tab in the address bar (#Settings etc.) so a refresh stays where you were
+var tab=(function(){var t='';try{t=decodeURIComponent((location.hash||'').slice(1))}catch(e){}return TABS.indexOf(t)>=0?t:'Dashboard'})();
+var live=null,pollTimer=null,settings=null,botsCache=[];
 
 function showLogin(){$('#app').classList.add('hidden');$('#login').classList.remove('hidden');if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
 function showApp(){$('#login').classList.add('hidden');$('#app').classList.remove('hidden');buildNav();go(tab)}
@@ -137,7 +139,7 @@ function buildNav(){
   var n=$('#nav');n.textContent='';
   TABS.forEach(function(t){n.appendChild(h('button',{class:t===tab?'on':'',text:t,onclick:function(){go(t)}}))});
 }
-function go(t){tab=t;buildNav();if(pollTimer){clearInterval(pollTimer);pollTimer=null}
+function go(t){tab=t;try{history.replaceState(null,'','#'+encodeURIComponent(t))}catch(e){}buildNav();if(pollTimer){clearInterval(pollTimer);pollTimer=null}
   var v={Dashboard:vDash,Bots:vBots,Trades:vTrades,Charts:vCharts,AI:vAI,Backtest:vBacktest,Settings:vSettings,Logs:vLogs}[t];
   $('#main').textContent='';v();}
 
