@@ -51,7 +51,10 @@ small{color:var(--mute)}
 <div id="login" class="login hidden card">
   <h2>Purple Bot</h2>
   <label>Password</label>
-  <input id="pw" type="password" style="width:100%" autocomplete="current-password">
+  <div style="position:relative">
+    <input id="pw" type="password" style="width:100%;padding-right:46px" autocomplete="current-password">
+    <button type="button" id="pwEye" aria-label="Show password" title="Show password" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:0;padding:6px 8px;cursor:pointer;color:var(--mute);line-height:0"></button>
+  </div>
   <p><button class="btn" id="loginBtn">Sign in</button> <span id="loginErr" class="r"></span></p>
 </div>
 
@@ -112,6 +115,20 @@ var tab='Dashboard',live=null,pollTimer=null,settings=null,botsCache=[];
 
 function showLogin(){$('#app').classList.add('hidden');$('#login').classList.remove('hidden');if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
 function showApp(){$('#login').classList.add('hidden');$('#app').classList.remove('hidden');buildNav();go(tab)}
+var EYE='<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+var EYE_OFF='<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+(function(){
+  var pw=$('#pw'),eye=$('#pwEye');
+  eye.innerHTML=EYE;
+  eye.addEventListener('click',function(){
+    var show=pw.type==='password';
+    pw.type=show?'text':'password';
+    eye.innerHTML=show?EYE_OFF:EYE;
+    eye.setAttribute('aria-label',show?'Hide password':'Show password');
+    eye.title=show?'Hide password':'Show password';
+    pw.focus();
+  });
+})();
 $('#loginBtn').addEventListener('click',doLogin);
 $('#pw').addEventListener('keydown',function(e){if(e.key==='Enter')doLogin()});
 function doLogin(){api('/login',{method:'POST',body:{password:$('#pw').value}}).then(function(){$('#pw').value='';showApp()}).catch(function(e){$('#loginErr').textContent=e.message})}
