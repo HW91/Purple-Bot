@@ -419,7 +419,7 @@ function vCharts(){
     }
     function line(key,color){c.strokeStyle=color;c.lineWidth=2;c.beginPath();var first=true;data.points.forEach(function(p){var v=key==='yes'?p.yes:1-p.yes;if(first){c.moveTo(X(p.ts),Y(v));first=false}else c.lineTo(X(p.ts),Y(v))});c.stroke();c.lineWidth=1}
     line('yes',css('--green'));line('no',css('--red'));
-    data.trades.forEach(function(t){c.fillStyle=css('--accent');c.beginPath();c.arc(X(t.opened_ts),g.t+6,4,0,7);c.fill()});
+    data.trades.forEach(function(t){c.fillStyle=css('--accent');c.beginPath();c.arc(X(t.opened_ts),t.avg_entry!=null?Y(t.avg_entry):g.t+6,4,0,7);c.fill()});
     var last=data.points[data.points.length-1];
     info.textContent='';if(last){info.appendChild(h('span',{class:'g',text:'YES '+pct(last.yes)}));info.appendChild(h('span',{class:'r',text:'NO '+pct(1-last.yes)}));info.appendChild(h('span',{class:'mute',text:data.points.length+' recorded points · '+data.market.title}))}
     if(hoverTs){var best=null;data.points.forEach(function(p){if(!best||Math.abs(p.ts-hoverTs)<Math.abs(best.ts-hoverTs))best=p});if(best){c.strokeStyle=css('--text');c.beginPath();c.moveTo(X(best.ts),g.t);c.lineTo(X(best.ts),g.t+ph);c.stroke();tip.textContent=new Date(best.ts).toLocaleTimeString()+' — YES '+pct(best.yes)+' (bid '+best.bid.toFixed(2)+' / ask '+best.ask.toFixed(2)+') · NO '+pct(1-best.yes)}}
