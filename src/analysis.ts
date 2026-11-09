@@ -108,8 +108,10 @@ export interface DayStats {
 
 const hourLabel = (n: number) => `${n % 12 === 0 ? 12 : n % 12} ${n < 12 ? "AM" : "PM"}`;
 
-export async function buildDayStats(env: Env, start: number, end: number, label: string): Promise<DayStats> {
-  const closed = (await env.DB.prepare("SELECT * FROM positions WHERE status != 'open' AND closed_ts >= ? AND closed_ts < ?").bind(start, end).all<PositionRow>()).results ?? [];
+export async function buildDayStats(env: Env, start: number, end: number, label: string, botId?: string | null): Promise<DayStats> {
+  const bf = (col: string) => (botId ? ` AND ${col} = ?` : "");
+  const bb = (...a: unknown[]) => (botId ? [...a, botId] : a);
+  const closed = (await env.DB.prepare("SELECT * FROM positions WHERE status != 'open' AND closed_ts >= ? AND closed_ts < ?" + bf("bot_id")).bind(...bb(start, end)).all<PositionRow>()).results ?? [];
   const perf = computePerformance(closed);
 
   const hours = new Map<number, { trades: number; wins: number; losses: number; pnl: number }>();
@@ -125,13 +127,13 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
   const early = (
     await env.DB.prepare(
       "SELECT p.close_reason, p.outcome, p.entry_qty, p.entry_cost, p.entry_fee, p.realized_pnl, m.result FROM positions p JOIN markets m ON m.ticker = p.ticker " +
-        "WHERE p.status != 'open' AND p.closed_ts >= ? AND p.closed_ts < ? AND p.close_reason IN ('stop_loss','take_profit')",
+        "WHERE p.status != 'open' AND p.closed_ts >= ? AND p.closed_ts < ? AND p.close_reason IN ('stop_loss','take_profit')" + bf("p.bot_id"),
     )
-      .bind(start, end)
+      .bind(...bb(start, end))
       .all<HindsightRow>()
   ).results;
 
-  const notes = (await env.DB.prepare("SELECT bot_id, ticker, samples, counts, texts FROM contract_notes WHERE updated_ts >= ? AND updated_ts < ?").bind(start, end).all<{ bot_id: string; ticker: string; samples: number; counts: string; texts: string }>()).results;
+  const notes = (await env.DB.prepare("SELECT bot_id, ticker, samples, counts, texts FROM contract_notes WHERE updated_ts >= ? AND updated_ts < ?" + bf("bot_id")).bind(...bb(start, end)).all<{ bot_id: string; ticker: string; samples: number; counts: string; texts: string }>()).results;
   const traded = new Set(closed.map((p) => `${p.bot_id}|${p.ticker}`));
   const totals: Record<string, number> = {};
   const examples: Record<string, string> = {};
@@ -156,7 +158,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
   const day = await reliability(env, start, end);
   const prev = await reliability(env, start - 7 * 86_400_000, start);
   const prevDays = 7;
-  const bots = ((await env.DB.prepare("SELECT name, config, enabled FROM bots").all<{ name: string; config: string; enabled: number }>()).results ?? []).map((b) => {
+  const bots = ((await env.DB.prepare("SELECT name, config, enabled FROM bots" + (botId ? " WHERE id = ?" : "")).bind(...(botId ? [botId] : [])).all<{ name: string; config: string; enabled: number }>()).results ?? []).map((b) => {
     const c = JSON.parse(b.config);
     return {
       name: b.name,
@@ -170,7 +172,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
       takeProfit: c.takeProfitOn ? `$${c.takeProfit}` : "off",
     };
   });
-  const open = await env.DB.prepare("SELECT COUNT(*) c FROM positions WHERE status='open'").first<{ c: number }>();
+  const open = await env.DB.prepare("SELECT COUNT(*) c FROM positions WHERE status='open'" + bf("bot_id")).bind(...bb()).first<{ c: number }>();
 
   return {
     label,

@@ -18,6 +18,12 @@ export default {
         const keys = ["blockedBy", "stopLossTakeProfitHindsight", "reliability", "byEntryHour"].filter((k) => b.message.includes(k));
         return Response.json({ reply: "MOCK AI ANSWER [has:" + keys.join(",") + "]", tip: null, threadId: "t", model: "gemini-3.5-flash" });
       }
+      // the dashboard chat: report whether the strategy data reached the AI
+      if (/inside a personal Kalshi trading-bot dashboard/.test(b.message) && /ECHO_DATA/.test(b.message)) {
+        const keys = ["strategyStats", "stopLossTakeProfitHindsight", "blockedBy", "byEntryHour", "recentTrades", "latestDailyOverview"].filter((k) => b.message.includes('"' + k + '"'));
+        const trades = (b.message.match(/"asset":"[A-Z]+","side"/g) || []).length;
+        return Response.json({ reply: "MOCK CHAT [has:" + keys.join(",") + "] trades:" + trades, tip: null, threadId: "t", model: "gemini-3.5-flash" });
+      }
       // same shape as the real business coach (handleChat returns `reply`, not `response`)
       if (/FAIL_AI/.test(b.message)) return Response.json({ reply: "I'm having trouble connecting right now. Please try again in a moment.", tip: null, threadId: "t", model: "gemini-3.5-flash" });
       return Response.json({ reply: "MOCK AI ANSWER", tip: null, threadId: "t", model: "gemini-3.5-flash" });

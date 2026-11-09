@@ -5,7 +5,7 @@ import { deleteSetting, getAccountLimits, getCreds, getSetting, loadBots, log, r
 import { askAI } from "./notify";
 import { computePerformance } from "./stats";
 import { dayStartMs } from "./strategy";
-import { etDateString, runOverview } from "./analysis";
+import { buildDayStats, etDateString, runOverview } from "./analysis";
 import { simulate, type Obs, type SimMarket } from "./backtest";
 import { DEFAULT_ACCOUNT_LIMITS, defaultBotConfig, validateBotConfig, type Env } from "./types";
 import { UI_HTML } from "./ui";
@@ -455,6 +455,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const prompt =
       "You are the assistant inside a personal Kalshi trading-bot dashboard. You are ADVISORY ONLY: you can explain and recommend, but you cannot change settings, start/stop bots, place orders, close positions or override risk limits, and you must never say you did. " +
       "If you recommend a setting change, say the owner must apply it themselves in the bot's settings. Answer only from the data below; separate MEASURED facts from ESTIMATES; if the data does not say, say you do not know. Be short and plain.\n\n" +
+      "How to read the data: strategyStats covers the last 14 days. Inside it, stopLossTakeProfitHindsight compares trades that exited early (stop loss or take profit) with what holding to settlement would have paid (hindsight only; it ignores the risk the exit removed). blockedBy is what kept the bots from trading and the share of tradeable time. reliability is how often a side that reached 80% then lost at settlement. byEntryHour is results by entry hour in US Eastern. performance is by asset, probability range, YES/NO and how trades ended. recentTrades lists up to the last 100 closed trades, newest first. Always say how many trades a conclusion rests on.\n\n" +
       `DATA (JSON):\n${context}\n\nCONVERSATION SO FAR:\n${history.map((h) => `${h.role.toUpperCase()}: ${h.content}`).join("\n")}\n\nUSER: ${text}`;
     const answer = (await askAI(env, prompt, `pb-${convId}`)) ?? "I couldn't reach the AI just now. Your question was saved; try again in a moment.";
     await env.DB.batch([
@@ -503,7 +504,8 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
 async function chatContext(env: Env, botId: string | null): Promise<string> {
   const bots = await loadBots(env);
   const scope = botId ? bots.filter((b) => b.id === botId) : bots;
-  const closed = (await closedPositions(env, botId, 300)).slice(0, 40);
+  const closed = (await closedPositions(env, botId, 300)).slice(0, 100); // up to a full day of trades (96 fifteen-minute contracts)
+  const strategy = await buildDayStats(env, Date.now() - 14 * 86_400_000, Date.now(), "the last 14 days", botId);
   const open = (await env.DB.prepare(botId ? "SELECT * FROM positions WHERE status='open' AND bot_id=?" : "SELECT * FROM positions WHERE status='open'").bind(...(botId ? [botId] : [])).all()).results;
   const logs = (await env.DB.prepare(botId ? "SELECT ts, level, kind, message FROM logs WHERE bot_id=? ORDER BY id DESC LIMIT 40" : "SELECT ts, level, kind, message FROM logs ORDER BY id DESC LIMIT 40").bind(...(botId ? [botId] : [])).all()).results;
   const analysis = await env.DB.prepare("SELECT ts, text FROM analyses ORDER BY id DESC LIMIT 1").first();
@@ -512,12 +514,13 @@ async function chatContext(env: Env, botId: string | null): Promise<string> {
   return JSON.stringify({
     now: new Date().toISOString(),
     bots: scope.map((b) => ({ name: b.name, enabled: b.enabled, config: b.config })),
+    strategyStats: strategy,
     performance: computePerformance(await closedPositions(env, botId, 500)),
     openPositions: open,
     recentTrades: closed.map((p) => ({ asset: p.asset, side: p.outcome, entryProb: p.entry_prob, favMax: p.fav_max, favMin: p.fav_min, exitProb: p.exit_prob, pnl: p.realized_pnl, result: p.result, how: p.close_reason, agree: p.agree_count })),
     latestProbabilities: latest,
     recentOrders: orders,
     recentLogs: logs,
-    latestHourlyAnalysis: analysis,
-  }).slice(0, 20_000);
+    latestDailyOverview: analysis,
+  }).slice(0, 50_000);
 }
