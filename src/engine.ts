@@ -19,7 +19,7 @@ const OBS_MIN_INTERVAL_MS = 10_000;
 const WATCH_LEASE_MS = 90_000;
 const BALANCE_MAX_AGE_MS = 15_000;
 
-/** Best-guess series tickers. Verified only for BTC (docs mention KXBTC15M); the rest are editable in the dashboard. */
+/** Series tickers, confirmed against Kalshi's own 15-minute series list. Editable in the dashboard if Kalshi renames one. */
 export const DEFAULT_SERIES: Record<string, string> = {
   BTC: "KXBTC15M",
   ETH: "KXETH15M",
@@ -29,7 +29,10 @@ export const DEFAULT_SERIES: Record<string, string> = {
   BNB: "KXBNB15M",
   HYPE: "KXHYPE15M",
   ADA: "KXADA15M",
-  LINK: "KXLINK15M",
+  BCH: "KXBCH15M",
+  NEAR: "KXNEAR15M",
+  TON: "KXTON15M",
+  ZEC: "KXZEC15M",
   GOLD: "KXGOLD15M",
   SILVER: "KXSILVER15M",
   PLATINUM: "KXPLATINUM15M",

@@ -212,7 +212,7 @@ function posTable(list){
 }
 
 // ----------------------------------------------------------------- Bots
-var CRYPTO=['BTC','ETH','SOL','XRP','DOGE','BNB','HYPE','ADA','LINK'],METALS=['GOLD','SILVER','PLATINUM','PALLADIUM','COPPER'];
+var CRYPTO=['BTC','ETH','SOL','XRP','DOGE','BNB','HYPE','ADA','BCH','NEAR','TON','ZEC'],METALS=['GOLD','SILVER','PLATINUM','PALLADIUM','COPPER'];
 function vBots(){
   var root=$('#main');
   var list=h('div'),form=h('div');
@@ -400,7 +400,7 @@ function vSettings(){
     root.appendChild(h('div',{class:'card'},h('h2',{text:'Account-wide limits (all bots combined)'}),h('div',{class:'grid'},h('div',null,h('label',{text:'Daily loss limit ($)'}),ll),h('div',null,h('label',{text:'Daily investment limit ($)'}),li),h('div',null,h('label',{text:'Max simultaneous positions'}),lp)),h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){act('/settings',{method:'POST',body:{accountLimits:{dailyLossLimit:+ll.value,dailyInvestLimit:+li.value,maxPositions:+lp.value}}},'Saved')}}))));
     var sm=s.seriesMap||{},ins={};var all=CRYPTO.concat(METALS);var found=h('div');
     root.appendChild(h('div',{class:'card'},h('h2',{text:'Market series (which Kalshi contract each asset uses)'}),
-      h('p',{class:'mute',text:'Only BTC (KXBTC15M) is confirmed in Kalshi\'s docs. The others are guesses — use "Find 15-minute series" to see what Kalshi actually lists, then correct the names. An asset with no matching open contract simply never trades.'}),
+      h('p',{class:'mute',text:'The default names were checked against Kalshi\'s own list of 15-minute series, so you normally leave these empty. Use "Find 15-minute series" to see what Kalshi lists if a name ever changes. An asset with no matching open contract simply never trades.'}),
       h('div',{class:'grid'},all.map(function(a){var i=ins[a]=h('input',{placeholder:'default',value:sm[a]||''});return h('div',null,h('label',{text:a}),i)})),
       h('p',{class:'row'},h('button',{class:'btn',text:'Save',onclick:function(){var m={};all.forEach(function(a){if(ins[a].value.trim())m[a]=ins[a].value.trim()});act('/settings',{method:'POST',body:{seriesMap:m}},'Saved')}}),h('button',{class:'btn gray',text:'Find 15-minute series',onclick:function(){act('/discover').then(function(r){found.textContent='';found.appendChild(h('div',{class:'scroll'},h('table',null,h('tbody',null,r.series.map(function(x){return h('tr',null,h('td',{text:x.ticker}),h('td',{text:x.title||''}))})))))})}})),found));
     root.appendChild(h('div',{class:'card'},h('button',{class:'btn gray',text:'Sign out',onclick:function(){api('/logout',{method:'POST'}).then(showLogin)}})));

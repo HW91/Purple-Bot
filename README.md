@@ -80,8 +80,8 @@ Account-wide (all bots): daily loss $40 · daily invest $100 · 3 open positions
 ## Things I could not verify from the build environment — check before real money
 The build sandbox could reach Kalshi's documentation but **not** its trading API, so the code was tested against a fake
 Kalshi that verifies signatures exactly as the docs describe (`test/e2e`). Not yet proven against the real exchange:
-1. **Series names.** Only `KXBTC15M` is confirmed by the docs. The other assets (and whether Kalshi even offers 15-minute
-   metals contracts) are unverified; an asset with no open contract never trades.
+1. ~~Series names~~ — checked against Kalshi's own 15-minute series list (all crypto defaults and all five metals exist;
+   LINK does not, so BCH replaced it in the default nine and NEAR, TON, ZEC are selectable). An asset with no open contract never trades.
 2. **YES = "up".** Confirm in the dashboard market table / Kalshi that each contract's YES means the price goes up.
 3. **Time Delay clock.** It counts from the market's `open_time`. If Kalshi opens a contract earlier than its reference
    period starts, the delay is measured from the earlier time.

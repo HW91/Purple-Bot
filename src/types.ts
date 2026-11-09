@@ -71,7 +71,10 @@ export interface Quote {
   ts: number;
 }
 
-export const CRYPTO_ASSETS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE", "ADA", "LINK"] as const;
+// Every crypto that has a 15-minute contract on Kalshi (confirmed from Kalshi's series list).
+export const CRYPTO_ASSETS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE", "ADA", "BCH", "NEAR", "TON", "ZEC"] as const;
+/** The nine selected by default for a new crypto bot. */
+export const DEFAULT_CRYPTO_ASSETS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE", "ADA", "BCH"] as const;
 export const METAL_ASSETS = ["GOLD", "SILVER", "PLATINUM", "PALLADIUM", "COPPER"] as const;
 
 export const DEFAULT_ACCOUNT_LIMITS: AccountLimits = {
@@ -83,7 +86,7 @@ export const DEFAULT_ACCOUNT_LIMITS: AccountLimits = {
 export function defaultBotConfig(strategy: Strategy): BotConfig {
   return {
     strategy,
-    assets: strategy === "crypto" ? [...CRYPTO_ASSETS] : ["GOLD", "SILVER"],
+    assets: strategy === "crypto" ? [...DEFAULT_CRYPTO_ASSETS] : ["GOLD", "SILVER"],
     durationMin: 15,
     probThreshold: 0.8,
     agreeCount: strategy === "crypto" ? 7 : 2,

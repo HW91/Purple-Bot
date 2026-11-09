@@ -6,7 +6,7 @@ const OPEN = 1_000_000_000_000;
 const mk = (asset: string): MarketInfo => ({ ticker: `KX${asset}15M-T`, asset, series: `KX${asset}15M`, title: "", openTs: OPEN, closeTs: OPEN + 15 * 60_000, status: "open" });
 const q = (t: string, bid: number, ask: number, ts: number, size = 100): Quote => ({ ticker: t, yesBid: bid, yesAsk: ask, yesBidSize: size, yesAskSize: size, last: (bid + ask) / 2, ts });
 const view = (asset: string, bid: number, ask: number, now: number): AssetView => ({ asset, market: mk(asset), quote: q(mk(asset).ticker, bid, ask, now) });
-const ASSETS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE", "ADA", "LINK"];
+const ASSETS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE", "ADA", "BCH"];
 
 describe("crypto entry", () => {
   const cfg = defaultBotConfig("crypto");
