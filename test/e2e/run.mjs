@@ -124,7 +124,7 @@ try {
   ok("control events + orders are logged", logs.some((l) => l.kind === "control" && /START BOT/.test(l.message)) && logs.some((l) => l.kind === "order" && /ENTERED/.test(l.message)) && logs.some((l) => /EMERGENCY/.test(l.message)));
   ok("signal reasons recorded (why entered / skipped)", logs.some((l) => l.kind === "signal"));
   const ov = await api("/analyze", "POST");
-  ok("daily overview (today so far) runs on demand, sends the day's measured data, and keeps the AI's real answer", ov.status === 200 && ov.j.ai === true && /^Overview for today so far/.test(ov.j.text) && /\[has:blockedBy,stopLossTakeProfitHindsight,reliability,byEntryHour\]/.test(ov.j.text), JSON.stringify(ov.j).slice(0, 300));
+  ok("daily overview (today so far) runs on demand, sends the day's measured data, and keeps the AI's real answer", ov.status === 200 && ov.j.ai === true && /^Overview for today so far/.test(ov.j.text) && /\[has:blockedBy,stopLossTakeProfitHindsight,reliability,byEntryHour,rules\]/.test(ov.j.text), JSON.stringify(ov.j).slice(0, 300));
   const analyses = (await api("/analyses")).j;
   ok("the overview is saved and listed", analyses.length >= 1 && /MOCK AI ANSWER/.test(analyses[0].text));
   ok("the overview can't be spammed", (await api("/analyze", "POST")).status === 429);
@@ -133,7 +133,7 @@ try {
   const chat = await api("/chat", "POST", { message: "Why was the last trade a loss?", botId: bot1 });
   ok("AI chat answers via the coach worker and is saved", chat.status === 200 && chat.j.answer === "MOCK AI ANSWER" && (await api(`/chat/${chat.j.convId}`)).j.length === 2, JSON.stringify(chat.j));
   const chatData = await api("/chat", "POST", { message: "ECHO_DATA what does the stop loss do?" });
-  ok("chat receives the strategy data (hindsight, blocked reasons, entry hours) and the recent trades", chatData.status === 200 && /\[has:strategyStats,stopLossTakeProfitHindsight,blockedBy,byEntryHour,recentTrades,latestDailyOverview\]/.test(chatData.j.answer) && Number((chatData.j.answer.match(/trades:(\d+)/) || [])[1]) >= 4, chatData.j.answer);
+  ok("chat receives the strategy data (hindsight, blocked reasons, entry hours) and the recent trades", chatData.status === 200 && /\[has:strategyStats,stopLossTakeProfitHindsight,blockedBy,byEntryHour,recentTrades,latestDailyOverview,rules\]/.test(chatData.j.answer) && Number((chatData.j.answer.match(/trades:(\d+)/) || [])[1]) >= 4, chatData.j.answer);
   await api(`/chat/${chatData.j.convId}`, "DELETE");
   const chatFail = await api("/chat", "POST", { message: "FAIL_AI please", botId: bot1 });
   ok("the coach's apology reply is treated as a failure, not shown as an answer", chatFail.status === 200 && /couldn't reach the AI/.test(chatFail.j.answer) && !/having trouble connecting/.test(chatFail.j.answer), JSON.stringify(chatFail.j));

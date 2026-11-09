@@ -9,6 +9,7 @@ import { askAI, emailShell, esc } from "./notify";
 import { computePerformance, type Performance } from "./stats";
 import type { PositionRow } from "./db";
 import { log } from "./db";
+import { KALSHI_RULES_PROMPT } from "./kalshi-rules";
 
 const ET = "America/New_York";
 
@@ -199,7 +200,7 @@ const PROMPT =
   "(3) stopLossTakeProfitHindsight: for trades that were stopped out or took profit early, how many would have finished in our favor had they been held, and what holding would have made versus what they actually made (this is hindsight and ignores the risk the exit removed; say so); " +
   "(4) reliability: how often a side reached 80% and then lost, versus the previous 7-day daily average, and any hours that stand out; " +
   "(5) at most three specific setting changes worth testing, each with the measured evidence and the sample size behind it. " +
-  "Label each point MEASURED (directly in the data) or HYPOTHESIS (your inference). If a sample is too small to conclude anything, write 'not enough data' instead of guessing. Never invent numbers or trades. No disclaimers.\n\nDATA:\n";
+  "Label each point MEASURED (directly in the data) or HYPOTHESIS (your inference). If a sample is too small to conclude anything, write 'not enough data' instead of guessing. Never invent numbers or trades. No disclaimers. Use the Kalshi rules below only to understand how contracts are defined and settled.\n\n";
 
 export interface Overview {
   text: string;
@@ -209,7 +210,7 @@ export interface Overview {
 
 export async function runOverview(env: Env, start: number, end: number, label: string): Promise<Overview> {
   const stats = await buildDayStats(env, start, end, label);
-  const answer = await askAI(env, PROMPT + JSON.stringify(stats).slice(0, 14_000));
+  const answer = await askAI(env, PROMPT + KALSHI_RULES_PROMPT + "\n\nDATA:\n" + JSON.stringify(stats).slice(0, 14_000));
   const text = `Overview for ${label}\n\n` + (answer ?? "The AI could not be reached, so there is no written overview for this period. The measured numbers are still saved with it.");
   await env.DB.prepare("INSERT INTO analyses (ts, stats, text) VALUES (?,?,?)").bind(Date.now(), JSON.stringify(stats).slice(0, 60_000), text).run();
   await log(env, answer ? "info" : "warn", "system", `Overview saved for ${label}${answer ? "" : " (AI unavailable)"}`);

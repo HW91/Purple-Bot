@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
 import { hindsightFor, etDateString } from "../src/analysis";
+import { KALSHI_RULES_PROMPT } from "../src/kalshi-rules";
 
 const OPEN = 1_000_000_000_000;
 const mk = (asset: string): MarketInfo => ({ ticker: `KX${asset}15M-T`, asset, series: `KX${asset}15M`, title: "", openTs: OPEN, closeTs: OPEN + 15 * 60_000, status: "open" });
@@ -161,6 +162,16 @@ describe("risk", () => {
     expect(checkRisk(cfg, acct, { ...ok, botInvestedToday: 48 }, 4)).toMatch(/investment/);
     expect(checkRisk(cfg, acct, { ...ok, accountInvestedToday: 98 }, 4)).toMatch(/Account daily investment/);
     expect(checkRisk(cfg, acct, { ...ok, balance: 3 }, 4)).toMatch(/Balance/);
+  });
+});
+
+describe("Kalshi rules text for the AI", () => {
+  it("carries the contract terms, says it is a template, and leaves out the confidential appendix", () => {
+    expect(KALSHI_RULES_PROMPT).toMatch(/Settlement Value: The Settlement Value for this Contract is \$1\.00/);
+    expect(KALSHI_RULES_PROMPT).toMatch(/Minimum Tick: The Minimum Tick size for the Contract shall be \$0\.01/);
+    expect(KALSHI_RULES_PROMPT).toMatch(/crosses or meets the specified threshold at any point/);
+    expect(KALSHI_RULES_PROMPT).toMatch(/TEMPLATE/);
+    expect(KALSHI_RULES_PROMPT).not.toMatch(/CONFIDENTIAL|TRADING PROHIBITIONS|Strategic Petroleum Reserve/i);
   });
 });
 

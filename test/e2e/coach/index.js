@@ -16,11 +16,15 @@ export default {
       // report which data sections the end-of-day prompt contained, so the test can check the right data was sent
       if (/end-of-day analyst/.test(b.message)) {
         const keys = ["blockedBy", "stopLossTakeProfitHindsight", "reliability", "byEntryHour"].filter((k) => b.message.includes(k));
+        if (b.message.includes("KALSHI CONTRACT RULES") && b.message.includes("Settlement Value")) keys.push("rules");
+        if (/TRADING PROHIBITIONS|CONFIDENTIAL/.test(b.message)) keys.push("LEAK"); // the confidential appendix must never be sent
         return Response.json({ reply: "MOCK AI ANSWER [has:" + keys.join(",") + "]", tip: null, threadId: "t", model: "gemini-3.5-flash" });
       }
       // the dashboard chat: report whether the strategy data reached the AI
       if (/inside a personal Kalshi trading-bot dashboard/.test(b.message) && /ECHO_DATA/.test(b.message)) {
         const keys = ["strategyStats", "stopLossTakeProfitHindsight", "blockedBy", "byEntryHour", "recentTrades", "latestDailyOverview"].filter((k) => b.message.includes('"' + k + '"'));
+        if (b.message.includes("KALSHI CONTRACT RULES") && b.message.includes("Settlement Value")) keys.push("rules");
+        if (/TRADING PROHIBITIONS|CONFIDENTIAL/.test(b.message)) keys.push("LEAK");
         const trades = (b.message.match(/"asset":"[A-Z]+","side"/g) || []).length;
         return Response.json({ reply: "MOCK CHAT [has:" + keys.join(",") + "] trades:" + trades, tip: null, threadId: "t", model: "gemini-3.5-flash" });
       }
