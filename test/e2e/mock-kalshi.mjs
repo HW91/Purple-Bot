@@ -12,7 +12,7 @@ export function startMock(port) {
   const close = open + 3600000; // far enough away that 'minimum time remaining' never interferes with the test
   const iso = (t) => new Date(t).toISOString();
   const shortClose = Date.now() + 150000; // KXETH15M closes 150s after start (settlement test)
-  const mk = (series) => ({ ticker: `${series}-T1`, event_ticker: `${series}-E1`, title: `${series} up?`, yes_sub_title: "Up", status: "active", open_time: iso(open), close_time: iso(series === "KXETH15M" ? shortClose : close), result: state.results.get(`${series}-T1`) ?? "", yes_bid_dollars: "0.5000", yes_ask_dollars: "0.5200", last_price_dollars: "0.5000" });
+  const mk = (series) => ({ ticker: `${series}-T1`, event_ticker: `${series}-E1`, title: `${series} up?`, yes_sub_title: "Up", status: "active", open_time: iso(open), close_time: iso(series === "KXETH15M" ? shortClose : close), result: state.results.get(`${series}-T1`) ?? "", yes_bid_dollars: q(`${series}-T1`).bid.toFixed(4), yes_ask_dollars: q(`${series}-T1`).ask.toFixed(4), last_price_dollars: ((q(`${series}-T1`).bid + q(`${series}-T1`).ask) / 2).toFixed(4) });
 
   function verify(req, wsPath) {
     const ts = req.headers["kalshi-access-timestamp"], sig = req.headers["kalshi-access-signature"], key = req.headers["kalshi-access-key"];
@@ -36,6 +36,7 @@ export function startMock(port) {
     if (url.pathname.startsWith("/_")) { // test controls (no auth)
       const b = body ? JSON.parse(body) : {};
       if (url.pathname === "/_quote") { for (const t of b.tickers) { state.quotes.set(t, { bid: b.bid, ask: b.ask, bidSize: b.size ?? 100, askSize: b.size ?? 100 }); tick(t); } return send(200, {}); }
+      if (url.pathname === "/_quiet") { state.quiet = b.on !== false; return send(200, {}); }
       if (url.pathname === "/_settle") { state.results.set(b.ticker, b.result); return send(200, {}); }
       if (url.pathname === "/_state") return send(200, { orders: state.orders, positions: [...state.positions], badAuth: state.badAuth });
       return send(404, {});
@@ -75,6 +76,6 @@ export function startMock(port) {
       });
     });
   });
-  setInterval(() => { for (const t of state.quotes.keys()) tick(t); }, 2000);
+  setInterval(() => { if (state.quiet) return; for (const t of state.quotes.keys()) tick(t); }, 2000);
   return new Promise((r) => server.listen(port, "127.0.0.1", () => r({ KEY_ID, pem, state, close: () => server.close() })));
 }

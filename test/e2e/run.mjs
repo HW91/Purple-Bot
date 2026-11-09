@@ -133,6 +133,18 @@ try {
   const chart = markets.length ? (await api(`/chart?ticker=${encodeURIComponent(markets[0].ticker)}`)).j : null;
   ok("probability observations were saved to D1 and are chartable", !!chart && chart.points.length > 0 && chart.points.every((p) => p.yes > 0 && p.yes < 1), JSON.stringify(chart).slice(0, 200));
 
+  // ---- K. quiet markets: no price messages for 45s, a bot started now must still enter
+  await quote([T("BTC"), T("SOL"), T("XRP")], 0.83, 0.85);
+  await fetch(`http://127.0.0.1:${KP}/_quiet`, { method: "POST", body: JSON.stringify({ on: true }) });
+  for (let i = 0; i < 9; i++) { await api("/live"); await sleep(5000); } // keeps the engine awake; the exchange sends nothing
+  const quietBot = (await api(`/bots/${bot1}/duplicate`, "POST")).j.id;
+  await api(`/bots/${quietBot}/start`, "POST");
+  const quietPos = await waitFor(async () => (await api("/positions")).j.open.find((p) => p.bot_id === quietBot), 40000);
+  ok("quiet markets (no price updates for 45s) still enter once all criteria are met", !!quietPos);
+  await api(`/bots/${quietBot}/stop-close`, "POST");
+  await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === quietBot), 40000);
+  await fetch(`http://127.0.0.1:${KP}/_quiet`, { method: "POST", body: JSON.stringify({ on: false }) });
+
   // ---- I2. account + per-bot profit/loss summaries
   const acctSum = (await api("/account")).j;
   const perfAll = (await api("/performance")).j;
