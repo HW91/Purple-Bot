@@ -416,9 +416,6 @@ function vCharts(){
     if(tb&&tb.config.timeDelaySec>0&&t0+tb.config.timeDelaySec*1000<t1){
       var td=t0+tb.config.timeDelaySec*1000;
       c.strokeStyle=css('--amber');c.lineWidth=1.5;c.setLineDash([2,3]);c.beginPath();c.moveTo(X(td),g.t);c.lineTo(X(td),g.t+ph);c.stroke();c.setLineDash([]);c.lineWidth=1;
-      var mins=tb.config.timeDelaySec/60,tl='Trading starts ('+(mins%1?mins.toFixed(1):mins)+' min)';
-      c.fillStyle=css('--amber');var tw=c.measureText(tl).width;
-      c.fillText(tl,X(td)+tw+8>g.w-g.r?X(td)-tw-4:X(td)+4,g.t+26);c.fillStyle=css('--mute');
     }
     function line(key,color){c.strokeStyle=color;c.lineWidth=2;c.beginPath();var first=true;data.points.forEach(function(p){var v=key==='yes'?p.yes:1-p.yes;if(first){c.moveTo(X(p.ts),Y(v));first=false}else c.lineTo(X(p.ts),Y(v))});c.stroke();c.lineWidth=1}
     line('yes',css('--green'));line('no',css('--red'));
