@@ -189,11 +189,11 @@ function vDash(){
         tile('Trades today / all time',a.today.trades+' / '+a.all.trades),
         tile('Fees paid (all time)',usd(a.all.fees)),
         tile('Open now',a.openCount+' · '+usd(a.openExposure)+' at risk'),
-        tile('Invested today',usd(a.investedToday)+' of '+usd(a.limits.dailyInvestLimit)),
-        tile('Loss today',usd(lossToday)+' of '+usd(a.limits.dailyLossLimit)+' limit')
+        tile('Invested today (all bots)',usd(a.investedToday)+' of '+usd(a.limits.dailyInvestLimit)+' account limit'),
+        tile('Loss today (all bots)',usd(lossToday)+' of '+usd(a.limits.dailyLossLimit)+' account limit')
       ]);
     }
-    acct.appendChild(h('div',{class:'card'},h('h2',{text:'Account'}),h('div',{class:'grid'},tiles),h('small',{text:'Balance and portfolio come straight from Kalshi. Profit/loss is from this bot\'s own closed trades, after fees. Tap a bot below to see its own numbers.'})));
+    acct.appendChild(h('div',{class:'card'},h('h2',{text:'Account'}),h('div',{class:'grid'},tiles),h('small',{text:'Balance and portfolio come straight from Kalshi. Profit/loss is from this bot\'s own closed trades, after fees. The two limits above are the account-wide limits from Settings. Each bot has its own limits, shown on its page: tap a bot below.'})));
   }
   function draw(){
     if(!live)return;
