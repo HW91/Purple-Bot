@@ -2,6 +2,14 @@
 
 Read `README.md` first — it lists the design, the definitions, and what was NOT verified against the real exchange.
 
+## Lessons (mistakes already made — don't repeat)
+- **Read the real response shape of the business coach before parsing it.** `askAI()` read `response`/`text`/`message`/`content`,
+  but `handleChat` (business-coach `src/index.ts`) answers `{ reply, tip, threadId, model, … }`. Every AI answer was silently
+  discarded, so the hourly analysis and the dashboard chat always said the AI was unavailable. The e2e fake coach had copied the
+  same wrong guess, so tests passed. Fake services in tests must mirror the REAL code's response, read from the source.
+- **handleChat returns HTTP 200 with an apology text when both AI providers fail** ("I'm having trouble connecting right now…").
+  `askAI()` treats those texts as failures.
+
 ## Rules for working here
 - **Real money.** Never change order, risk, or reconcile logic without running `npm test` and `node test/e2e/run.mjs`.
 - **Bots only start OFF and only a person turns them on.** Nothing in the code may set `enabled = 1` except the

@@ -13,7 +13,9 @@ export default {
       const b = await req.json();
       if (!b.userId) return Response.json({ error: "Please sign in to chat with Coach P" }, { status: 401 });
       chats.push(b);
-      return Response.json({ response: "MOCK AI ANSWER" });
+      // same shape as the real business coach (handleChat returns `reply`, not `response`)
+      if (/FAIL_AI/.test(b.message)) return Response.json({ reply: "I'm having trouble connecting right now. Please try again in a moment.", tip: null, threadId: "t", model: "gemini-3.5-flash" });
+      return Response.json({ reply: "MOCK AI ANSWER", tip: null, threadId: "t", model: "gemini-3.5-flash" });
     }
     if (url.pathname === "/_seen") return Response.json({ sent, chats });
     return new Response("nope", { status: 404 });

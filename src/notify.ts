@@ -12,6 +12,8 @@ import type { Env } from "./types";
 import { getSetting, log } from "./db";
 
 const AI_USER_ID = "purple-bot-trading@internal";
+/** The business coach's own failure replies (src/index.ts handleChat), returned as normal 200 answers. */
+const AI_APOLOGY = /having trouble connecting right now|unable to generate a response|currently unable to respond/i;
 
 export async function sendEmail(env: Env, subject: string, html: string, to?: string): Promise<boolean> {
   const recipient = to ?? (await getSetting(env, "notify_email"));
@@ -51,9 +53,20 @@ export async function askAI(env: Env, message: string, threadId?: string): Promi
       await log(env, "error", "error", `AI call failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
       return null;
     }
+    // business-coach's handleChat answers with { reply, tip, threadId, model, ... } (src/index.ts, "return jsonResponse({ reply, ...").
     const data = (await res.json()) as Record<string, unknown>;
-    const text = data.response ?? data.text ?? data.message ?? data.content;
-    return typeof text === "string" && text.trim() ? text : null;
+    const text = data.reply ?? data.response ?? data.text ?? data.message ?? data.content;
+    if (typeof text !== "string" || !text.trim()) {
+      await log(env, "error", "error", `AI call returned no text (fields: ${Object.keys(data).join(", ")})`);
+      return null;
+    }
+    // When both AI providers fail, the business coach still answers 200 with an apology instead of an error.
+    // Never treat that apology as a real analysis.
+    if (AI_APOLOGY.test(text)) {
+      await log(env, "error", "error", `The business coach could not reach its AI providers: "${text.slice(0, 120)}"`);
+      return null;
+    }
+    return text;
   } catch (e) {
     await log(env, "error", "error", `AI call error: ${(e as Error).message}`);
     return null;

@@ -123,8 +123,13 @@ try {
   const logs = (await api("/logs?limit=300")).j;
   ok("control events + orders are logged", logs.some((l) => l.kind === "control" && /START BOT/.test(l.message)) && logs.some((l) => l.kind === "order" && /ENTERED/.test(l.message)) && logs.some((l) => /EMERGENCY/.test(l.message)));
   ok("signal reasons recorded (why entered / skipped)", logs.some((l) => l.kind === "signal"));
+  const analyses = (await api("/analyses")).j;
+  ok("hourly AI analysis ran once a bot was started and kept the AI's real answer", analyses.length >= 1 && analyses[0].text === "MOCK AI ANSWER", JSON.stringify(analyses).slice(0, 200));
   const chat = await api("/chat", "POST", { message: "Why was the last trade a loss?", botId: bot1 });
   ok("AI chat answers via the coach worker and is saved", chat.status === 200 && chat.j.answer === "MOCK AI ANSWER" && (await api(`/chat/${chat.j.convId}`)).j.length === 2, JSON.stringify(chat.j));
+  const chatFail = await api("/chat", "POST", { message: "FAIL_AI please", botId: bot1 });
+  ok("the coach's apology reply is treated as a failure, not shown as an answer", chatFail.status === 200 && /couldn't reach the AI/.test(chatFail.j.answer) && !/having trouble connecting/.test(chatFail.j.answer), JSON.stringify(chatFail.j));
+  await api(`/chat/${chatFail.j.convId}`, "DELETE");
   const del = await api(`/chat/${chat.j.convId}`, "DELETE");
   ok("conversation can be deleted", del.status === 200 && (await api("/chat")).j.length === 0);
   const bt = await api("/backtest", "POST", { botId: bot1, fromTs: Date.now() - 86400000, toTs: Date.now() + 3600000, variants: [{ label: "85%", overrides: { probThreshold: 0.85 } }] });
