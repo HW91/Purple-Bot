@@ -389,16 +389,24 @@ function vTrades(){
 // ----------------------------------------------------------------- Charts
 function vCharts(){
   var root=$('#main');
-  var botSel=h('select'),asset=h('select'),period=h('select'),info=h('div',{class:'row'}),canvas=h('canvas'),tip=h('div',{class:'mute',text:'Hover or tap the chart to inspect a data point.'});
+  var botSel=h('select'),asset=h('select'),period=h('select'),info=h('div',{class:'row'}),canvas=h('canvas'),tip=h('div',{class:'mute',text:'Hover or tap the chart to inspect a data point.'}),whyEl=h('small',{style:'display:block;margin-top:6px'});
   var all=CRYPTO.concat(METALS);all.forEach(function(a){asset.appendChild(h('option',{value:a,text:a}))});
-  root.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('div',null,h('label',{text:'Bot'}),botSel),h('div',null,h('label',{text:'Asset'}),asset),h('div',null,h('label',{text:'Contract period (current or past)'}),period)),info,canvas,tip));
+  root.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('div',null,h('label',{text:'Bot'}),botSel),h('div',null,h('label',{text:'Asset'}),asset),h('div',null,h('label',{text:'Contract period (current or past)'}),period)),info,canvas,whyEl,tip));
   var data=null,chartBots=[];
   function curBot(){return chartBots.find(function(b){return b.id===botSel.value})||null}
   // picking a bot shows the asset that bot trades (its Time Delay line is drawn too)
   botSel.addEventListener('change',function(){var b=curBot();if(b)asset.value=b.config.tradeAsset;loadPeriods()});
   asset.addEventListener('change',loadPeriods);period.addEventListener('change',loadChart);
   function loadPeriods(){api('/chart/periods?asset='+asset.value).then(function(p){period.textContent='';if(!p.length)period.appendChild(h('option',{value:'',text:'No recorded contracts yet — the bot records them while it runs or the dashboard is open'}));p.forEach(function(x){period.appendChild(h('option',{value:x.ticker,text:new Date(x.open_ts).toLocaleString()+' → '+hm(x.close_ts)+(x.result?' ('+x.result.toUpperCase()+')':'')}))});loadChart()})}
-  function loadChart(){if(!period.value){data=null;draw();return}api('/chart?ticker='+encodeURIComponent(period.value)).then(function(d){data=d;draw()})}
+  // under the chart, bottom-left: why the selected bot took no trade on this contract
+  function showWhy(){
+    whyEl.textContent='';
+    if(!data||data.trades.length)return;
+    var w=data.why;
+    if(w&&w.top&&w.top.length){whyEl.textContent='No trade: '+w.top.map(function(t){return t.text+' ('+t.pct+'% of the time)'}).join(' · ')}
+    else if(botSel.value){whyEl.textContent='No trade. No signal checks were recorded for this bot on this contract (it was off, or it started after the Time Delay).'}
+  }
+  function loadChart(){if(!period.value){data=null;draw();showWhy();return}api('/chart?ticker='+encodeURIComponent(period.value)+(botSel.value?'&bot='+encodeURIComponent(botSel.value):'')).then(function(d){data=d;draw();showWhy()})}
   function geom(){var dpr=window.devicePixelRatio||1;var w=canvas.clientWidth,hh=canvas.clientHeight;canvas.width=w*dpr;canvas.height=hh*dpr;var c=canvas.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);return{c:c,w:w,h:hh,l:44,r:10,t:10,b:24}}
   function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n)}
   function draw(hoverTs){

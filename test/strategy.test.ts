@@ -59,6 +59,7 @@ describe("crypto entry", () => {
     const d = evaluateEntry(cfg, views, now);
     expect(d.ok).toBe(false);
     expect(d.reason).toMatch(/Only 6 of 9/);
+    expect(d.code).toBe("agreement");
   });
 
   it("skips when probability is under the threshold", () => {
@@ -85,6 +86,7 @@ describe("metals entry", () => {
   const now = OPEN + 6 * 60_000;
   it("needs gold AND silver to agree", () => {
     expect(evaluateEntry(cfg, [view("GOLD", 0.83, 0.85, now), view("SILVER", 0.3, 0.32, now)], now).reason).toMatch(/disagree/);
+    expect(evaluateEntry(cfg, [view("GOLD", 0.83, 0.85, now), view("SILVER", 0.3, 0.32, now)], now).code).toBe("disagree");
     expect(evaluateEntry(cfg, [view("GOLD", 0.83, 0.85, now)], now).ok).toBe(false);
     const ok = evaluateEntry(cfg, [view("GOLD", 0.83, 0.85, now), view("SILVER", 0.6, 0.62, now)], now);
     expect(ok.ok).toBe(true);

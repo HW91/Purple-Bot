@@ -104,6 +104,7 @@ export class Engine extends DurableObject<Env> {
   private lastReason = new Map<string, { reason: string; ts: number; up: number; down: number }>();
   private lastAlert = new Map<string, number>();
   private settleChecked = new Map<string, number>();
+  private notes = new Map<string, { botId: string; ticker: string; samples: number; counts: Record<string, number>; texts: Record<string, string>; last: number; dirty: boolean }>();
 
   private reconciled = false;
   private reconcileProblem: string | null = null;
@@ -535,6 +536,12 @@ export class Engine extends DurableObject<Env> {
       }
       this.dirtyPos.clear();
     }
+    const upNote = this.env.DB.prepare("INSERT INTO contract_notes (bot_id, ticker, samples, counts, texts, updated_ts) VALUES (?,?,?,?,?,?) ON CONFLICT(bot_id, ticker) DO UPDATE SET samples=excluded.samples, counts=excluded.counts, texts=excluded.texts, updated_ts=excluded.updated_ts");
+    for (const n of this.notes.values()) {
+      if (!n.dirty) continue;
+      n.dirty = false;
+      stmts.push(upNote.bind(n.botId, n.ticker, n.samples, JSON.stringify(n.counts), JSON.stringify(n.texts), Date.now()));
+    }
     if (stmts.length) await this.env.DB.batch(stmts);
   }
 
@@ -591,7 +598,24 @@ export class Engine extends DurableObject<Env> {
     }
   }
 
+  /** Count why this bot isn't trading the current contract (about one sample a second, only after its Time Delay), for the chart note. */
+  private sampleNote(bot: Bot, d: EntryDecision, now: number): void {
+    const m = this.currentMarket(bot.config.tradeAsset, now);
+    if (!m || now - m.openTs < bot.config.timeDelaySec * 1000) return;
+    const key = `${bot.id}|${m.ticker}`;
+    const n = this.notes.get(key) ?? { botId: bot.id, ticker: m.ticker, samples: 0, counts: {}, texts: {}, last: 0, dirty: false };
+    if (now - n.last < 1000) return;
+    n.last = now;
+    n.samples++;
+    n.counts[d.code] = (n.counts[d.code] ?? 0) + 1;
+    n.texts[d.code] = d.reason.slice(0, 200);
+    n.dirty = true;
+    this.notes.set(key, n);
+    if (this.notes.size > 200) for (const k of this.notes.keys()) if (!this.notes.get(k)!.dirty && k !== key) this.notes.delete(k);
+  }
+
   private noteReason(bot: Bot, d: EntryDecision, now: number): void {
+    this.sampleNote(bot, d, now);
     const prev = this.lastReason.get(bot.id);
     const changed = !prev || prev.reason !== d.reason;
     this.lastReason.set(bot.id, { reason: d.reason, ts: prev && !changed ? prev.ts : now, up: d.upCount, down: d.downCount });
@@ -620,7 +644,7 @@ export class Engine extends DurableObject<Env> {
       const cost = t.count * t.costPerContract;
       const blocked = checkRisk(bot.config, await getAccountLimits(this.env), stats, cost);
       if (blocked) {
-        this.noteReason(bot, { ...d, ok: false, reason: `Risk limit: ${blocked}` }, now);
+        this.noteReason(bot, { ...d, ok: false, code: "risk", reason: `Risk limit: ${blocked}` }, now);
         return;
       }
       att.n++;

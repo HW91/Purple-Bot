@@ -23,8 +23,12 @@ export interface AssetView {
   quote: Quote | null;
 }
 
+/** Machine-readable version of the reason, used to summarise why a contract had no trade. */
+export type EntryCode = "ok" | "no_data" | "disagree" | "agreement" | "trade_asset_direction" | "threshold" | "delay" | "time_left" | "spread" | "price" | "size" | "liquidity" | "risk";
+
 export interface EntryDecision {
   ok: boolean;
+  code: EntryCode;
   reason: string; // always filled in: this is the "why entered / why skipped" text
   upCount: number;
   downCount: number;
@@ -64,16 +68,16 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
   if (cfg.strategy === "metals") {
     // Every checked metal must have a live price and lean the same way before the bot may trade.
     const noLean = cfg.assets.filter((a) => !dirs.get(a));
-    if (noLean.length) return { ok: false, reason: `Every checked metal needs a live price and a clear lean (not ready: ${noLean.join(", ")})`, ...base };
+    if (noLean.length) return { ok: false, code: "no_data", reason: `Every checked metal needs a live price and a clear lean (not ready: ${noLean.join(", ")})`, ...base };
     const first = dirs.get(cfg.assets[0])!;
     if (!cfg.assets.every((a) => dirs.get(a) === first)) {
-      return { ok: false, reason: `Checked metals disagree on direction (${cfg.assets.map((a) => `${a} ${dirs.get(a)}`).join(", ")})`, ...base };
+      return { ok: false, code: "disagree", reason: `Checked metals disagree on direction (${cfg.assets.map((a) => `${a} ${dirs.get(a)}`).join(", ")})`, ...base };
     }
     direction = first;
   } else {
     if (up >= cfg.agreeCount && up >= down) direction = "up";
     else if (down >= cfg.agreeCount) direction = "down";
-    if (!direction) return { ok: false, reason: `Only ${Math.max(up, down)} of ${cfg.assets.length} assets agree (need ${cfg.agreeCount})${missing.length ? `; no live data for ${missing.join(", ")}` : ""}`, ...base };
+    if (!direction) return { ok: false, code: "agreement", reason: `Only ${Math.max(up, down)} of ${cfg.assets.length} assets agree (need ${cfg.agreeCount})${missing.length ? `; no live data for ${missing.join(", ")}` : ""}`, ...base };
   }
   const outcome: "yes" | "no" = direction === "up" ? "yes" : "no";
 
@@ -81,10 +85,11 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
   const cands = fresh.filter((v) => v.asset === cfg.tradeAsset && dirs.get(v.asset) === direction && favorableProb(outcome, yesProb(v.quote!)) >= cfg.probThreshold);
   if (cands.length === 0) {
     const tv = fresh.find((v) => v.asset === cfg.tradeAsset);
-    if (!tv) return { ok: false, reason: `No live data for ${cfg.tradeAsset}, the asset this bot trades`, ...base };
+    if (!tv) return { ok: false, code: "no_data", reason: `No live data for ${cfg.tradeAsset}, the asset this bot trades`, ...base };
     const own = favorableProb(outcome, yesProb(tv.quote!));
     return {
       ok: false,
+      code: dirs.get(tv.asset) === direction ? "threshold" : "trade_asset_direction",
       reason:
         dirs.get(tv.asset) === direction
           ? `Direction is ${direction}, but ${cfg.tradeAsset} ${outcome.toUpperCase()} probability ${pct(own)} is below ${pct(cfg.probThreshold)}`
@@ -94,6 +99,7 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
   }
 
   let lastWhy = "";
+  let lastCode: EntryCode = "no_data";
   for (const v of cands) {
     const m = v.market!;
     const q = v.quote!;
@@ -101,35 +107,42 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
     const remaining = (m.closeTs - now) / 1000;
     if (elapsed < cfg.timeDelaySec) {
       lastWhy = `Time Delay: ${Math.ceil(cfg.timeDelaySec - elapsed)}s left before ${v.asset} can be traded`;
+      lastCode = "delay";
       continue;
     }
     if (remaining < cfg.minRemainingSec) {
       lastWhy = `Only ${Math.max(0, Math.floor(remaining))}s left in ${v.asset} contract (need ${cfg.minRemainingSec}s)`;
+      lastCode = "time_left";
       continue;
     }
     const spread = q.yesAsk - q.yesBid;
     if (spread > cfg.maxSpread + 1e-9) {
       lastWhy = `${v.asset} spread ${pct(spread)} is wider than the ${pct(cfg.maxSpread)} limit`;
+      lastCode = "spread";
       continue;
     }
     const costPerContract = outcome === "yes" ? q.yesAsk : 1 - q.yesBid;
     if (!(costPerContract > 0.01 && costPerContract < 0.99)) {
       lastWhy = `${v.asset} price ${costPerContract.toFixed(2)} is too extreme to trade`;
+      lastCode = "price";
       continue;
     }
     const count = Math.floor(cfg.tradeAmount / costPerContract);
     if (count < 1) {
       lastWhy = `Trade amount $${cfg.tradeAmount} buys less than 1 contract at $${costPerContract.toFixed(2)}`;
+      lastCode = "size";
       continue;
     }
     // Liquidity: for a YES buy we lift the YES ask; for a NO buy we hit the YES bid.
     const depth = outcome === "yes" ? q.yesAskSize : q.yesBidSize;
     if (depth < count) {
       lastWhy = `${v.asset} only has ${depth} contracts at the best price (need ${count})`;
+      lastCode = "liquidity";
       continue;
     }
     return {
       ok: true,
+      code: "ok",
       reason: `${direction === "up" ? up : down} assets ${direction}; ${v.asset} ${outcome.toUpperCase()} probability ${pct(favorableProb(outcome, yesProb(q)))} >= ${pct(cfg.probThreshold)}; delay passed`,
       ...base,
       trade: {
@@ -146,7 +159,7 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
       },
     };
   }
-  return { ok: false, reason: lastWhy || "No tradable candidate", ...base };
+  return { ok: false, code: lastCode, reason: lastWhy || "No tradable candidate", ...base };
 }
 
 export interface OpenPos {

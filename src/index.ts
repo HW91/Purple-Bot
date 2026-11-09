@@ -354,7 +354,23 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     if (!mk) return err("Unknown market", 404);
     const obs = (await env.DB.prepare("SELECT ts, yes_bid, yes_ask FROM observations WHERE ticker=? ORDER BY ts").bind(ticker).all<{ ts: number; yes_bid: number; yes_ask: number }>()).results;
     const trades = (await env.DB.prepare("SELECT outcome, opened_ts, closed_ts, avg_entry, realized_pnl, close_reason FROM positions WHERE ticker=?").bind(ticker).all()).results;
-    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), trades });
+    // Why the chosen bot did not trade this contract (counts of what blocked it, after its Time Delay)
+    let why: { samples: number; top: Array<{ code: string; text: string; pct: number }> } | null = null;
+    const botParam = url.searchParams.get("bot");
+    if (botParam) {
+      const n = await env.DB.prepare("SELECT samples, counts, texts FROM contract_notes WHERE bot_id=? AND ticker=?").bind(botParam, ticker).first<{ samples: number; counts: string; texts: string }>();
+      if (n && n.samples > 0) {
+        const counts = JSON.parse(n.counts) as Record<string, number>;
+        const texts = JSON.parse(n.texts) as Record<string, string>;
+        const top = Object.entries(counts)
+          .filter(([c]) => c !== "ok")
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 2)
+          .map(([c, k]) => ({ code: c, text: texts[c] ?? c, pct: Math.round((100 * k) / n.samples) }));
+        why = { samples: n.samples, top };
+      }
+    }
+    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), trades, why });
   }
 
   // ---------------- AI chat (only calls AI when the user sends a message)

@@ -145,6 +145,17 @@ try {
   await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === quietBot), 40000);
   await fetch(`http://127.0.0.1:${KP}/_quiet`, { method: "POST", body: JSON.stringify({ on: false }) });
 
+  // ---- L. the chart note: why a bot took no trade on a contract
+  await quote([T("BTC"), T("XRP")], 0.83, 0.85);
+  await quote([T("SOL")], 0.30, 0.32); // SOL disagrees, so 3 of 3 can never agree
+  const whyBot = (await api(`/bots/${bot1}/duplicate`, "POST")).j.id;
+  await api(`/bots/${whyBot}/start`, "POST");
+  const whyData = await waitFor(async () => { const r = (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${whyBot}`)).j; return r.why && r.why.samples >= 3 ? r : null; }, 40000);
+  ok("chart explains why no trade was taken (agreement)", !!whyData && whyData.why.top[0].code === "agreement" && /agree/.test(whyData.why.top[0].text) && whyData.why.top[0].pct >= 90, JSON.stringify(whyData?.why));
+  await api(`/bots/${whyBot}/stop`, "POST");
+  ok("no note is returned when no bot is picked", (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}`)).j.why === null);
+  await quote([T("BTC"), T("SOL"), T("XRP")], 0.83, 0.85);
+
   // ---- I2. account + per-bot profit/loss summaries
   const acctSum = (await api("/account")).j;
   const perfAll = (await api("/performance")).j;
