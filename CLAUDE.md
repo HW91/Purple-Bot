@@ -13,7 +13,7 @@ Read `README.md` first — it lists the design, the definitions, and what was NO
 ## Rules for working here
 - **Real money.** Never change order, risk, or reconcile logic without running `npm test` and `node test/e2e/run.mjs`.
 - **Bots only start OFF and only a person turns them on.** Nothing in the code may set `enabled = 1` except the
-  dashboard's Start button. Restarts/deploys must never switch a bot on.
+  Bots tab's Start Bot button. Restarts/deploys must never switch a bot on.
 - **Verify Kalshi facts against https://docs.kalshi.com** (use `/llms.txt` and the `.md` pages) before changing any
   endpoint, field, or signing detail. Don't write them from memory. Only `docs.kalshi.com` is reachable from the cloud
   sandbox — the trading API itself is not, so live behavior can only be tested against `test/e2e/mock-kalshi.mjs`.

@@ -67,7 +67,7 @@ people's keys without written approval from Kalshi.
 6. Open the Worker's URL, sign in, **Settings → Kalshi connection**: paste (or upload) your production API Key ID and
    private key. The key is checked against your real account before it is saved, then encrypted.
 7. **Settings → Market series → "Find 15-minute series"** and correct any asset whose series name is wrong.
-8. Create a bot (it starts OFF), check its numbers, press **Start Bot**.
+8. Create a bot (it starts OFF), check its numbers, press **Start Bot** (on the Bots tab).
 
 `wrangler.jsonc` uses the service binding `COACH → recruiter-coach-worker`; that worker must already be deployed in the
 same Cloudflare account. Production URLs are in `vars` (`KALSHI_BASE`, `KALSHI_WS`).

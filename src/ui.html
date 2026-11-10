@@ -229,8 +229,7 @@ function vDash(){
         var st=live.bots.find(function(x){return x.id===b.id})||{reason:'',up:0,down:0};
         bt.appendChild(h('div',{class:'card'},
           h('div',{class:'row'},h('button',{class:'link',text:b.name+' ›',title:'See this bot\'s profit/loss',onclick:function(){openBot(b.id)}}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:b.strategy+' · trades '+b.config.tradeAsset}),
-            h('span',{style:'flex:1'}),
-            botButtons(b,function(){lastBots=0;refresh()})),
+            ),
           h('div',{class:'mute',text:'Signal: '+st.reason+(b.strategy==='crypto'?'  (up '+st.up+' / down '+st.down+', need '+b.config.agreeCount+')':'')}),
           h('div',{class:'mute',text:'Tap the bot name to see its profit/loss.'})));
       });
@@ -279,7 +278,6 @@ function openBot(id){
       body.textContent='';
       body.appendChild(h('div',{class:'card'},
         h('div',{class:'row'},h('h2',{text:b.name,style:'margin:0'}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:cfg.strategy+' · trades '+cfg.tradeAsset+' · confirmed by '+cfg.assets.join(', ')})),
-        h('div',{class:'row',style:'margin-top:10px'},botButtons(b,load)),
         h('div',{class:'mute',style:'margin-top:8px',text:'Signal: '+st.reason})));
       body.appendChild(h('div',{class:'card'},h('h2',{text:'Profit / loss — this bot only'}),[
         tileGroup('Open trades',[
@@ -321,6 +319,7 @@ function vBots(){
       h('button',{class:'btn gray',text:'Edit',onclick:function(){editBot(b)}}),
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
       h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}})),
+      h('div',{class:'row',style:'margin-top:10px'},botButtons(b,load)),
       h('div',{class:'mute',text:'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')+(b.config.flowOn?' · money ratio ≥ '+b.config.flowRatio+' ('+(b.config.flowWindowMin>0?'last '+b.config.flowWindowMin+' min':'whole contract')+')':'')})));
   })})}
   function field(label,input,hint){return h('div',null,h('label',{text:label}),input,hint?h('small',{text:hint,style:'display:block;margin-top:2px'}):null)}
