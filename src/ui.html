@@ -426,9 +426,9 @@ function vTrades(){
 // ----------------------------------------------------------------- Charts
 function vCharts(){
   var root=$('#main');
-  var botSel=h('select'),asset=h('select'),flt=h('select',null,[['all','All contracts'],['win','Winners'],['loss','Losers'],['none','No trade']].map(function(o){return h('option',{value:o[0],text:o[1]})})),period=h('select'),info=h('div',{class:'row'}),canvas=h('canvas'),tip=h('div',{class:'mute',text:'Hover or tap the chart to inspect a data point.'}),whyEl=h('small',{style:'display:block;margin-top:6px'}),volEl=h('div');
+  var botSel=h('select'),asset=h('select'),flt=h('select',null,[['all','All contracts'],['win','Winners'],['loss','Losers'],['none','No trade']].map(function(o){return h('option',{value:o[0],text:o[1]})})),period=h('select'),info=h('div',{class:'row'}),canvas=h('canvas'),tip=h('small',{class:'mute',style:'display:block;margin-top:6px',text:'Hover or tap the chart to inspect a data point.'}),whyEl=h('small',{style:'display:block;margin-top:6px'}),volEl=h('div');
   var all=CRYPTO.concat(METALS);all.forEach(function(a){asset.appendChild(h('option',{value:a,text:a}))});
-  root.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('div',null,h('label',{text:'Bot'}),botSel),h('div',null,h('label',{text:'Asset'}),asset),h('div',null,h('label',{text:'Show'}),flt),h('div',null,h('label',{text:'Contract period (current or past)'}),period)),info,canvas,whyEl,tip,volEl));
+  root.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('div',null,h('label',{text:'Bot'}),botSel),h('div',null,h('label',{text:'Asset'}),asset),h('div',null,h('label',{text:'Show'}),flt),h('div',null,h('label',{text:'Contract period (current or past)'}),period)),info,canvas,tip,whyEl,volEl));
   var data=null,chartBots=[];
   function curBot(){return chartBots.find(function(b){return b.id===botSel.value})||null}
   // picking a bot shows the asset that bot trades (its Time Delay line is drawn too)
@@ -455,6 +455,14 @@ function vCharts(){
     whyEl.textContent='';
     if(!data)return;
     var w=data.why,top=w&&w.top?w.top:[];
+    // newest version: what is true right now (frozen at the moment of entry when the bot traded)
+    if(data.checks&&data.checks.length){
+      whyEl.appendChild(h('div',{text:data.trades.length?'Trade entered. Checks at the entry:':'No trade. Latest checks:',style:'margin-bottom:6px'}));
+      data.checks.forEach(function(c){
+        whyEl.appendChild(h('div',{style:'margin-bottom:8px'},h('span',{class:c.ok===true?'g':c.ok===false?'r':'mute',text:'● '}),h('span',{text:c.text})));
+      });
+      return;
+    }
     if(!top.length){
       if(!data.trades.length&&botSel.value)whyEl.textContent='No trade. No signal checks were recorded for this bot on this contract (it was off, or it started after the Time Delay).';
       return;

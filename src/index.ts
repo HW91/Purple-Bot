@@ -458,9 +458,17 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const trades = (await env.DB.prepare("SELECT outcome, opened_ts, closed_ts, avg_entry, realized_pnl, close_reason FROM positions WHERE ticker=?").bind(ticker).all()).results;
     // Why the chosen bot did not trade this contract (counts of what blocked it, after its Time Delay)
     let why: { samples: number; top: Array<{ code: string; text: string; pct: number }> } | null = null;
+    let checks: unknown = null; // the latest requirement-by-requirement check (frozen when the bot entered)
     const botParam = url.searchParams.get("bot");
     if (botParam) {
-      const n = await env.DB.prepare("SELECT samples, counts, texts FROM contract_notes WHERE bot_id=? AND ticker=?").bind(botParam, ticker).first<{ samples: number; counts: string; texts: string }>();
+      const n = await env.DB.prepare("SELECT samples, counts, texts, checks FROM contract_notes WHERE bot_id=? AND ticker=?").bind(botParam, ticker).first<{ samples: number; counts: string; texts: string; checks: string | null }>();
+      if (n?.checks) {
+        try {
+          checks = JSON.parse(n.checks);
+        } catch {
+          checks = null;
+        }
+      }
       if (n && n.samples > 0) {
         const counts = JSON.parse(n.counts) as Record<string, number>;
         const texts = JSON.parse(n.texts) as Record<string, string>;
@@ -480,7 +488,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     }
     const mkRow = mk as unknown as { open_ts: number; close_ts: number };
     const minutes = (await minuteProbs(env, ticker, mkRow.open_ts, mkRow.close_ts)).map((m) => ({ minute: m.minute, prob: Math.round(m.prob * 10_000) / 10_000, n: m.n }));
-    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), minutes, trades, why, settings });
+    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), minutes, trades, why, checks, settings });
   }
 
   // ---------------- AI chat (only calls AI when the user sends a message)

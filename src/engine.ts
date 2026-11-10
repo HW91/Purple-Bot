@@ -11,6 +11,7 @@ import { authHeaders, importSigningKey, type SigningKey } from "./kalshi-auth";
 import { getAccountLimits, getCreds, getSetting, isBotEnabled, loadBots, log, openPositions, setSetting, type PositionRow } from "./db";
 import { emailShell, esc, sendEmail } from "./notify";
 import { etDateString, overviewEmail, runOverview } from "./analysis";
+import { checklistFor, type CheckLine } from "./checklist";
 import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
 
@@ -107,7 +108,7 @@ export class Engine extends DurableObject<Env> {
   private resultTried = new Map<string, number>(); // ticker -> last time we asked Kalshi for its final result
   private entered = new Set<string>(); // "botId|ticker" of contracts a bot has already entered
   private settingsSeen = new Map<string, string>(); // "botId|ticker" -> the probability min|max last saved for it
-  private notes = new Map<string, { botId: string; ticker: string; samples: number; counts: Record<string, number>; texts: Record<string, string>; last: number; dirty: boolean }>();
+  private notes = new Map<string, { botId: string; ticker: string; samples: number; counts: Record<string, number>; texts: Record<string, string>; checks: CheckLine[] | null; last: number; dirty: boolean }>();
 
   private reconciled = false;
   private reconcileProblem: string | null = null;
@@ -541,11 +542,11 @@ export class Engine extends DurableObject<Env> {
       }
       this.dirtyPos.clear();
     }
-    const upNote = this.env.DB.prepare("INSERT INTO contract_notes (bot_id, ticker, samples, counts, texts, updated_ts) VALUES (?,?,?,?,?,?) ON CONFLICT(bot_id, ticker) DO UPDATE SET samples=excluded.samples, counts=excluded.counts, texts=excluded.texts, updated_ts=excluded.updated_ts");
+    const upNote = this.env.DB.prepare("INSERT INTO contract_notes (bot_id, ticker, samples, counts, texts, checks, updated_ts) VALUES (?,?,?,?,?,?,?) ON CONFLICT(bot_id, ticker) DO UPDATE SET samples=excluded.samples, counts=excluded.counts, texts=excluded.texts, checks=excluded.checks, updated_ts=excluded.updated_ts");
     for (const n of this.notes.values()) {
       if (!n.dirty) continue;
       n.dirty = false;
-      stmts.push(upNote.bind(n.botId, n.ticker, n.samples, JSON.stringify(n.counts), JSON.stringify(n.texts), Date.now()));
+      stmts.push(upNote.bind(n.botId, n.ticker, n.samples, JSON.stringify(n.counts), JSON.stringify(n.texts), n.checks ? JSON.stringify(n.checks) : null, Date.now()));
     }
     if (stmts.length) await this.env.DB.batch(stmts);
   }
@@ -606,16 +607,21 @@ export class Engine extends DurableObject<Env> {
   /** Count why this bot isn't trading the current contract (about one sample a second, only after its Time Delay), for the chart note. */
   private sampleNote(bot: Bot, d: EntryDecision, now: number): void {
     const m = this.currentMarket(bot.config.tradeAsset, now);
-    if (!m || now - m.openTs < bot.config.timeDelaySec * 1000) return;
+    if (!m) return;
     const key = `${bot.id}|${m.ticker}`;
-    if (this.entered.has(key)) return; // once it has entered, only what held it back BEFORE the entry is worth explaining
-    const n = this.notes.get(key) ?? { botId: bot.id, ticker: m.ticker, samples: 0, counts: {}, texts: {}, last: 0, dirty: false };
-    if (now - n.last < 1000) return;
+    if (this.entered.has(key)) return; // once it has entered, the checklist stays frozen as it was at the entry
+    const n = this.notes.get(key) ?? { botId: bot.id, ticker: m.ticker, samples: 0, counts: {}, texts: {}, checks: null, last: 0, dirty: false };
+    if (!d.ok && now - n.last < 1000) return; // about one sample a second (an entry decision is always recorded)
     n.last = now;
+    // the checklist: every requirement as it is right now (the risk line is only known once the engine has tested the limits)
+    const prevRisk = n.checks?.find((c) => c.key === "risk") ?? null;
+    n.checks = checklistFor(bot.config, this.viewsFor(bot, now), now).map((c) => (c.key !== "risk" ? c : d.code === "risk" ? { key: "risk", ok: false, text: d.reason.slice(0, 200) } : d.ok && prevRisk ? prevRisk : c));
+    n.dirty = true;
+    this.notes.set(key, n);
+    if (now - m.openTs < bot.config.timeDelaySec * 1000) return; // the "how often" counts only start after the Time Delay
     n.samples++;
     n.counts[d.code] = (n.counts[d.code] ?? 0) + 1;
     n.texts[d.code] = d.reason.slice(0, 200);
-    n.dirty = true;
     this.notes.set(key, n);
     if (this.notes.size > 200) for (const k of this.notes.keys()) if (!this.notes.get(k)!.dirty && k !== key) this.notes.delete(k);
   }
@@ -738,6 +744,12 @@ export class Engine extends DurableObject<Env> {
       ]);
       this.posCache.set(pos.id, pos);
       this.entered.add(`${bot.id}|${t.ticker}`);
+      // freeze the checklist as it was at the entry: the risk limits passed too
+      const frozen = this.notes.get(`${bot.id}|${t.ticker}`);
+      if (frozen?.checks) {
+        frozen.checks = frozen.checks.map((c) => (c.key === "risk" ? { key: "risk", ok: true, text: "Risk limits passed" } : c));
+        frozen.dirty = true;
+      }
       this.balance = null; // balance changed
       await log(this.env, "info", "order", `ENTERED ${t.asset} ${t.outcome.toUpperCase()} x${fill}${status === "partially_filled" ? ` (partial, wanted ${t.count})` : ""} @ ${ourPrice.toFixed(3)} fee $${fee.toFixed(3)} — ${d.reason}`, bot.id, { orderId: res.orderId });
       if (bot.config.notify === "immediate") {

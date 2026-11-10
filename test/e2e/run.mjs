@@ -174,6 +174,8 @@ try {
   await api(`/bots/${whyBot}/start`, "POST");
   const whyData = await waitFor(async () => { const r = (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${whyBot}`)).j; return r.why && r.why.samples >= 3 ? r : null; }, 40000);
   ok("chart explains why no trade was taken (agreement)", !!whyData && whyData.why.top[0].code === "agreement" && /agree/.test(whyData.why.top[0].text) && whyData.why.top[0].pct >= 90, JSON.stringify(whyData?.why));
+  const chk = (c, k) => c && c.find((x) => x.key === k);
+  ok("the checklist shows the requirement that fails right now (assets do not agree) and the ones that pass", !!whyData && chk(whyData.checks, "agree")?.ok === false && chk(whyData.checks, "probMin")?.ok === true, JSON.stringify(whyData?.checks));
   // now let SOL agree: the bot enters, and the note keeps only what held it back BEFORE the entry
   await quote([T("SOL")], 0.83, 0.85);
   const whyPos = await waitFor(async () => (await api("/positions")).j.open.find((p) => p.bot_id === whyBot), 40000);
@@ -181,6 +183,7 @@ try {
   await sleep(12000);
   const after = (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${whyBot}`)).j;
   ok("after entry, the note still explains the wait and does not fill up with 'position open' reasons", after.trades.length >= 1 && after.why.top[0].code === "agreement" && after.why.top.every((x) => x.code !== "risk" && x.code !== "ok"), JSON.stringify(after.why));
+  ok("after the entry the checklist is frozen as it was at the entry (everything green, risk limits passed)", !!after.checks && after.checks.every((c) => c.ok === true), JSON.stringify(after.checks));
   // the chart's entry-minimum line: saved per contract from the setting in use while the contract ran
   const chartUrl = `/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${whyBot}`;
   const s1 = (await api(chartUrl)).j.settings;

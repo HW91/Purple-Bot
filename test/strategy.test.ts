@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { checklistFor } from "../src/checklist";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
 import { hindsightFor, etDateString, enrichTrade } from "../src/analysis";
@@ -78,6 +79,24 @@ describe("crypto entry", () => {
     const none = evaluateEntry(cfg, withSize(0), now);
     expect(none.ok).toBe(false);
     expect(none.code).toBe("liquidity");
+  });
+
+  it("checklist shows each requirement as it is right now, not stopping at the first failure", () => {
+    const views = (bid: number, ask: number, size = 100) => ASSETS.map((a) => ({ asset: a, market: mk(a), quote: q(mk(a).ticker, a === "BTC" ? bid : 0.6, a === "BTC" ? ask : 0.62, now, size) }));
+    const by = (l: ReturnType<typeof checklistFor>) => Object.fromEntries(l.map((c) => [c.key, c.ok]));
+    // BTC at 94% is above the default maximum: only that line is red, everything else that can be checked is green
+    const high = by(checklistFor({ ...cfg, probMax: 0.89 }, views(0.93, 0.95), now));
+    expect(high.probMax).toBe(false);
+    expect(high.probMin).toBe(true);
+    expect(high.liquidity).toBe(true);
+    expect(high.risk).toBeNull();
+    // back inside the range: the same line turns green (current state, not history)
+    const inRange = by(checklistFor({ ...cfg, probMax: 0.89 }, views(0.85, 0.87), now));
+    expect(inRange.probMax).toBe(true);
+    // a probability under the minimum is red now, and no contracts is red on its own line
+    const low = by(checklistFor(cfg, views(0.7, 0.72, 0), now));
+    expect(low.probMin).toBe(false);
+    expect(low.liquidity).toBe(false);
   });
 
   it("waits for the Time Delay and gives the reason", () => {
