@@ -221,8 +221,14 @@ try {
     ok("eye icon shows the typed password", (await page.getAttribute("#pw", "type")) === "text");
     await page.click("#loginBtn");
     await page.waitForSelector("text=Account", { timeout: 15000 });
-    await page.waitForSelector("text=Profit/loss today", { timeout: 15000 });
-    ok("dashboard shows the Account card with balance and profit/loss", (await page.textContent("#main")).includes("Cash balance") && (await page.textContent("#main")).includes("All time"));
+    await page.waitForSelector("text=Closed trades: profit/loss after fees", { timeout: 15000 });
+    const dashText = await page.textContent("#main");
+    ok("dashboard shows the Account card with balance and profit/loss", dashText.includes("Cash balance") && dashText.includes("All time"));
+    // related numbers are grouped under headings, in a sensible order
+    const order = ["Account value", "Open trades", "Closed trades: profit/loss after fees", "Results", "Daily limits (all bots)"].map((t) => dashText.indexOf(t));
+    ok("dashboard groups related numbers under headings in order (value, open trades, closed trades, results, limits)", order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])), JSON.stringify(order));
+    const openGroup = dashText.slice(dashText.indexOf("Open trades"), dashText.indexOf("Closed trades: profit/loss after fees"));
+    ok("the two open-trade numbers sit next to each other", openGroup.includes("Open now") && openGroup.includes("Profit/loss on open trades (if closed now)"));
     await page.screenshot({ path: "/tmp/claude-0/-home-user/82a96742-dc5a-5f59-b9da-e70bb4f29f5a/scratchpad/dash.png", fullPage: true });
     await page.click("button.link >> nth=0");
     await page.waitForSelector("text=Profit / loss — this bot only", { timeout: 15000 });

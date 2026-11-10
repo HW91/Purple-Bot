@@ -171,29 +171,35 @@ function vDash(){
   var root=$('#main');
   var lastBots=0,lastAcct=0,acctData=null;
   var banner=h('div'),acct=h('div'),mk=h('div'),bt=h('div'),pos=h('div');
-  root.appendChild(banner);root.appendChild(acct);root.appendChild(mk);root.appendChild(bt);root.appendChild(pos);
+  // top to bottom: money picture, what is open right now, the bots that trade it, then the live market table
+  root.appendChild(banner);root.appendChild(acct);root.appendChild(pos);root.appendChild(bt);root.appendChild(mk);
   function drawAcct(){
     acct.textContent='';
     var a=acctData;
     var unreal=live.positions.reduce(function(s,p){return s+(p.unrealized||0)},0);
     var total=(live.balance!=null&&live.portfolioValue!=null)?live.balance+live.portfolioValue:null;
-    var tiles=[tile('Cash balance',usd(live.balance)),tile('Portfolio value',usd(live.portfolioValue)),tile('Account total',usd(total))];
+    // related numbers sit together, each group under its own small heading
+    var groups=[tileGroup('Account value',[tile('Cash balance',usd(live.balance)),tile('Portfolio value',usd(live.portfolioValue)),tile('Account total',usd(total))])];
     if(a){
       var lossToday=Math.max(0,-a.today.pnl);
-      tiles=tiles.concat([
-        tile('Profit/loss today',usd(a.today.pnl),pnlCls(a.today.pnl)),
-        tile('Last 7 days',usd(a.week.pnl),pnlCls(a.week.pnl)),
-        tile('All time',usd(a.all.pnl),pnlCls(a.all.pnl)),
-        tile('Profit/loss on open trades (if closed now)',usd(unreal),pnlCls(unreal)),
-        tile('Win rate (all time)',a.all.winRate==null?'—':(a.all.winRate*100).toFixed(0)+'%  ('+a.all.wins+'W / '+a.all.losses+'L)'),
-        tile('Trades today / all time',a.today.trades+' / '+a.all.trades),
-        tile('Fees paid (all time)',usd(a.all.fees)),
-        tile('Open now',a.openCount+' · '+usd(a.openExposure)+' at risk'),
-        tile('Invested today (all bots)',usd(a.investedToday)+' of '+usd(a.limits.dailyInvestLimit)+' account limit'),
-        tile('Loss today (all bots)',usd(lossToday)+' of '+usd(a.limits.dailyLossLimit)+' account limit')
-      ]);
+      groups.push(
+        tileGroup('Open trades',[
+          tile('Open now',a.openCount+' · '+usd(a.openExposure)+' put in'),
+          tile('Profit/loss on open trades (if closed now)',usd(unreal),pnlCls(unreal))]),
+        tileGroup('Closed trades: profit/loss after fees',[
+          tile('Today',usd(a.today.pnl),pnlCls(a.today.pnl)),
+          tile('Last 7 days',usd(a.week.pnl),pnlCls(a.week.pnl)),
+          tile('All time',usd(a.all.pnl),pnlCls(a.all.pnl)),
+          tile('Fees paid (all time)',usd(a.all.fees))]),
+        tileGroup('Results',[
+          tile('Win rate (all time)',a.all.winRate==null?'—':(a.all.winRate*100).toFixed(0)+'%  ('+a.all.wins+'W / '+a.all.losses+'L)'),
+          tile('Trades today / all time',a.today.trades+' / '+a.all.trades)]),
+        tileGroup('Daily limits (all bots)',[
+          tile('Invested today',usd(a.investedToday)+' of '+usd(a.limits.dailyInvestLimit)),
+          tile('Loss today',usd(lossToday)+' of '+usd(a.limits.dailyLossLimit))])
+      );
     }
-    acct.appendChild(h('div',{class:'card'},h('h2',{text:'Account'}),h('div',{class:'grid'},tiles),h('small',{text:'Balance and portfolio come straight from Kalshi. Profit/loss is from this bot\'s own closed trades, after fees. The two limits above are the account-wide limits from Settings. Each bot has its own limits, shown on its page: tap a bot below.'})));
+    acct.appendChild(h('div',{class:'card'},h('h2',{text:'Account'}),groups,h('small',{text:'Balance and portfolio come straight from Kalshi. Profit/loss is from this bot\'s own trades, after fees. The daily limits are the account-wide limits from Settings. Each bot has its own limits, shown on its page: tap a bot below.'})));
   }
   function draw(){
     if(!live)return;
@@ -240,6 +246,7 @@ function vDash(){
   function refresh(){return api('/live').then(function(l){live=l;updateHeader();draw()}).catch(function(){})}
   refresh();pollTimer=setInterval(refresh,5000);
 }
+function tileGroup(title,tiles){return h('div',{style:'margin-top:12px'},h('div',{class:'mute',style:'font-weight:600;margin-bottom:6px',text:title}),h('div',{class:'grid'},tiles))}
 function tile(label,value,cls){return h('div',{class:'tile'},h('small',{text:label}),h('div',{class:'big '+(cls||''),text:value}))}
 function botButtons(b,after){
   return [
@@ -274,18 +281,22 @@ function openBot(id){
         h('div',{class:'row'},h('h2',{text:b.name,style:'margin:0'}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:cfg.strategy+' · trades '+cfg.tradeAsset+' · confirmed by '+cfg.assets.join(', ')})),
         h('div',{class:'row',style:'margin-top:10px'},botButtons(b,load)),
         h('div',{class:'mute',style:'margin-top:8px',text:'Signal: '+st.reason})));
-      body.appendChild(h('div',{class:'card'},h('h2',{text:'Profit / loss — this bot only'}),h('div',{class:'grid'},[
-        tile('Profit/loss today',usd(s.today.pnl),pnlCls(s.today.pnl)),
-        tile('Last 7 days',usd(s.week.pnl),pnlCls(s.week.pnl)),
-        tile('All time',usd(s.all.pnl),pnlCls(s.all.pnl)),
-        tile('Profit/loss on open trades (if closed now)',usd(unreal),pnlCls(unreal)),
-        tile('Win rate (all time)',s.all.winRate==null?'—':(s.all.winRate*100).toFixed(0)+'%  ('+s.all.wins+'W / '+s.all.losses+'L)'),
-        tile('Trades today / all time',s.today.trades+' / '+s.all.trades),
-        tile('Fees paid (all time)',usd(s.all.fees)),
-        tile('Open now',s.openCount+' · '+usd(s.openExposure)+' at risk'),
-        tile('Invested today',usd(s.investedToday)+' of '+usd(cfg.dailyInvestLimit)),
-        tile('Loss today',usd(lossToday)+' of '+usd(cfg.dailyLossLimit)+' limit')]),
-        h('small',{text:'After fees, from this bot\'s own closed trades.'})));
+      body.appendChild(h('div',{class:'card'},h('h2',{text:'Profit / loss — this bot only'}),[
+        tileGroup('Open trades',[
+          tile('Open now',s.openCount+' · '+usd(s.openExposure)+' put in'),
+          tile('Profit/loss on open trades (if closed now)',usd(unreal),pnlCls(unreal))]),
+        tileGroup('Closed trades: profit/loss after fees',[
+          tile('Today',usd(s.today.pnl),pnlCls(s.today.pnl)),
+          tile('Last 7 days',usd(s.week.pnl),pnlCls(s.week.pnl)),
+          tile('All time',usd(s.all.pnl),pnlCls(s.all.pnl)),
+          tile('Fees paid (all time)',usd(s.all.fees))]),
+        tileGroup('Results',[
+          tile('Win rate (all time)',s.all.winRate==null?'—':(s.all.winRate*100).toFixed(0)+'%  ('+s.all.wins+'W / '+s.all.losses+'L)'),
+          tile('Trades today / all time',s.today.trades+' / '+s.all.trades)]),
+        tileGroup('Daily limits (this bot)',[
+          tile('Invested today',usd(s.investedToday)+' of '+usd(cfg.dailyInvestLimit)),
+          tile('Loss today',usd(lossToday)+' of '+usd(cfg.dailyLossLimit))]),
+        h('small',{text:'After fees, from this bot\'s own trades.'})]));
       body.appendChild(h('div',{class:'card'},h('h2',{text:'Open positions'}),posTable(mine)));
       body.appendChild(h('div',{class:'card'},h('h2',{text:'Completed trades (latest 50)'}),closedTable(s.closed)));
     }).catch(function(e){body.textContent='';body.appendChild(h('div',{class:'banner bad',text:e.message}))});
