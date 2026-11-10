@@ -623,13 +623,13 @@ export class Engine extends DurableObject<Env> {
     const m = this.currentMarket(bot.config.tradeAsset, now);
     if (!m) return;
     const key = `${bot.id}|${m.ticker}`;
-    const val = `${bot.config.probThreshold}|${bot.config.probMax}`;
+    const val = `${bot.config.probThreshold}|${bot.config.probMax}|${bot.config.timeDelaySec}`;
     if (this.settingsSeen.get(key) === val) return;
     this.settingsSeen.set(key, val);
     if (this.settingsSeen.size > 500) this.settingsSeen.delete(this.settingsSeen.keys().next().value as string);
     this.ctx.waitUntil(
-      this.env.DB.prepare("INSERT INTO contract_settings (bot_id, ticker, prob_min, prob_max, updated_ts) VALUES (?,?,?,?,?) ON CONFLICT(bot_id, ticker) DO UPDATE SET prob_min=excluded.prob_min, prob_max=excluded.prob_max, updated_ts=excluded.updated_ts")
-        .bind(bot.id, m.ticker, bot.config.probThreshold, bot.config.probMax, now)
+      this.env.DB.prepare("INSERT INTO contract_settings (bot_id, ticker, prob_min, prob_max, delay_sec, updated_ts) VALUES (?,?,?,?,?,?) ON CONFLICT(bot_id, ticker) DO UPDATE SET prob_min=excluded.prob_min, prob_max=excluded.prob_max, delay_sec=excluded.delay_sec, updated_ts=excluded.updated_ts")
+        .bind(bot.id, m.ticker, bot.config.probThreshold, bot.config.probMax, bot.config.timeDelaySec, now)
         .run()
         .catch((e) => console.error("snapshotSettings failed", e)),
     );

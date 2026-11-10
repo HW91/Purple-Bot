@@ -179,10 +179,10 @@ try {
   // the chart's entry-minimum line: saved per contract from the setting in use while the contract ran
   const chartUrl = `/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${whyBot}`;
   const s1 = (await api(chartUrl)).j.settings;
-  ok("chart reports the bot's probability minimum for the contract (default 80%)", !!s1 && Math.abs(s1.probMin - 0.8) < 1e-9, JSON.stringify(s1));
-  await api(`/bots/${whyBot}`, "PUT", { name: "Bot One (copy)", config: { ...cfg, probThreshold: 0.82 } });
-  const s2 = await waitFor(async () => { const r = (await api(chartUrl)).j.settings; return r && Math.abs(r.probMin - 0.82) < 1e-9 ? r : null; }, 30000);
-  ok("changing the setting moves the line on the contract it applies to (82%)", !!s2);
+  ok("chart reports the bot's probability minimum and Time Delay for the contract (80%, 0s)", !!s1 && Math.abs(s1.probMin - 0.8) < 1e-9 && s1.delaySec === 0, JSON.stringify(s1));
+  await api(`/bots/${whyBot}`, "PUT", { name: "Bot One (copy)", config: { ...cfg, probThreshold: 0.82, timeDelaySec: 120 } });
+  const s2 = await waitFor(async () => { const r = (await api(chartUrl)).j.settings; return r && Math.abs(r.probMin - 0.82) < 1e-9 && r.delaySec === 120 ? r : null; }, 30000);
+  ok("changing the settings moves both lines on the contract they apply to (82%, 120s)", !!s2);
   ok("a bot that never ran on the contract has no line", (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${hourlyBot}`)).j.settings === null);
   await api(`/bots/${whyBot}/stop-close`, "POST");
   await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === whyBot), 40000);

@@ -467,8 +467,10 @@ function vCharts(){
     c.strokeStyle=css('--accent');c.setLineDash([4,4]);[t0,t1].forEach(function(t){c.beginPath();c.moveTo(X(t),g.t);c.lineTo(X(t),g.t+ph);c.stroke()});c.setLineDash([]);
     // Time Delay line: where this bot is allowed to start entering (open time + the bot's Time Delay)
     var tb=curBot();
-    if(tb&&tb.config.timeDelaySec>0&&t0+tb.config.timeDelaySec*1000<t1){
-      var td=t0+tb.config.timeDelaySec*1000;
+    // the Time Delay saved for THIS contract; contracts from before it was saved fall back to the bot's current setting
+    var delaySec=data.settings&&data.settings.delaySec!=null?data.settings.delaySec:(tb?tb.config.timeDelaySec:0);
+    if(delaySec>0&&t0+delaySec*1000<t1){
+      var td=t0+delaySec*1000;
       c.strokeStyle=css('--accent');c.lineWidth=1;c.setLineDash([4,4]);c.beginPath();c.moveTo(X(td),g.t);c.lineTo(X(td),g.t+ph);c.stroke();c.setLineDash([]);c.lineWidth=1;
     }
     // solid line at the probability minimum this bot used on THIS contract (saved per contract, so old charts don't change)
