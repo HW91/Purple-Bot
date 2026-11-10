@@ -100,6 +100,11 @@ export function flowPasses(mine: number, other: number, ratio: number): boolean 
   return mine / other >= ratio - 1e-9;
 }
 
+/** Whole dollars with thousands commas, for example 12345.6 -> "$12,346". */
+export function dollars0(x: number): string {
+  return "$" + Math.round(x).toLocaleString("en-US");
+}
+
 /** "2.4x" style text, or "all" when the other side has nothing. */
 export function flowRatioText(mine: number, other: number): string {
   if (!(other > 0)) return mine > 0 ? "no money on the other side" : "no trades";

@@ -109,6 +109,7 @@ describe("crypto entry", () => {
     expect(low.ok).toBe(false);
     expect(low.code).toBe("flow");
     expect(low.reason).toMatch(/\$150 on YES vs \$100 on NO.*need 2x/);
+    expect(evaluateEntry(flowCfg, withFlow({ yes: 1500, no: 12345.6 }), now).reason).toMatch(/\$1,500 on YES vs \$12,346 on NO/); // thousands commas
     expect(evaluateEntry(flowCfg, withFlow({ yes: 50, no: 0 }), now).ok).toBe(true); // money only on our side
     expect(evaluateEntry(flowCfg, withFlow({ yes: 0, no: 0 }), now).ok).toBe(false); // no trades at all = no support
     expect(evaluateEntry(flowCfg, withFlow(null), now).code).toBe("flow"); // data not loaded = never a pass

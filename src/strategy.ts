@@ -8,7 +8,7 @@
  *  - Entry is evaluated on every market update once the Time Delay has passed; the first update where every
  *    condition is true enters immediately. No indicators or extra filters.
  */
-import { flowPasses, flowRatioText } from "./flow";
+import { dollars0, flowPasses, flowRatioText } from "./flow";
 import type { AccountLimits, BotConfig, MarketInfo, Quote } from "./types";
 
 export type Direction = "up" | "down";
@@ -151,7 +151,7 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
       const mine = outcome === "yes" ? f.yes : f.no;
       const other = outcome === "yes" ? f.no : f.yes;
       if (!flowPasses(mine, other, cfg.flowRatio)) {
-        lastWhy = `Order flow: $${mine.toFixed(0)} on ${outcome.toUpperCase()} vs $${other.toFixed(0)} on ${outcome === "yes" ? "NO" : "YES"} (${flowRatioText(mine, other)}), need ${cfg.flowRatio}x or more`;
+        lastWhy = `Order flow: ${dollars0(mine)} on ${outcome.toUpperCase()} vs ${dollars0(other)} on ${outcome === "yes" ? "NO" : "YES"} (${flowRatioText(mine, other)}), need ${cfg.flowRatio}x or more`;
         lastCode = "flow";
         continue;
       }

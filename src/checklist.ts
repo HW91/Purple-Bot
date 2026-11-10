@@ -3,7 +3,7 @@
  * Unlike evaluateEntry (which stops at the first failure), each line here is true or false right now.
  * Display only: it never decides a trade. The "risk" line is filled in by the engine when it tests the limits.
  */
-import { flowPasses, flowRatioText } from "./flow";
+import { dollars0, flowPasses, flowRatioText } from "./flow";
 import { directionOf, favorableProb, QUOTE_MAX_AGE_MS, yesProb, type AssetView, type Direction } from "./strategy";
 import type { BotConfig } from "./types";
 
@@ -98,7 +98,7 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number): C
       const mine = outcome === "yes" ? f.yes : f.no;
       const other = outcome === "yes" ? f.no : f.yes;
       const fOk = flowPasses(mine, other, cfg.flowRatio);
-      const nums = `$${mine.toFixed(0)} on ${OUT} vs $${other.toFixed(0)} on ${outcome === "yes" ? "NO" : "YES"}, ${span}`;
+      const nums = `${dollars0(mine)} on ${OUT} vs ${dollars0(other)} on ${outcome === "yes" ? "NO" : "YES"}, ${span}`;
       line("flow", fOk, fOk ? `Money on your side beats the other side: ${nums} (${flowRatioText(mine, other)}, need ${cfg.flowRatio}x)` : `Money on your side is too low: ${nums} (${flowRatioText(mine, other)}, need ${cfg.flowRatio}x)`);
     }
   }
@@ -113,7 +113,7 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number): C
   const priceOk = cost > 0.01 && cost < 0.99;
   line("price", priceOk, priceOk ? "Price not too extreme" : `Price ${cost.toFixed(2)} is too extreme to trade`);
   const wanted = priceOk ? Math.floor(cfg.tradeAmount / cost) : 0;
-  line("size", wanted >= 1, wanted >= 1 ? `Trade amount buys ${wanted} contract(s)` : `Trade amount $${cfg.tradeAmount} buys less than 1 contract`);
+  line("size", wanted >= 1, wanted >= 1 ? `Trade amount buys ${wanted} contract(s)` : `Trade amount ${dollars0(cfg.tradeAmount)} buys less than 1 contract`);
   const depth = Math.floor(outcome === "yes" ? q.yesAskSize : q.yesBidSize);
   line("liquidity", depth >= 1, depth >= 1 ? `${depth} contracts available at the price` : "No contracts available at the price");
   line("risk", null, "Risk limits");
