@@ -501,7 +501,7 @@ function vCharts(){
   function volRows(v){
     var delaySec=data&&data.settings&&data.settings.delaySec!=null?data.settings.delaySec:(curBot()?curBot().config.timeDelaySec:0);
     var t0=data.market.open_ts;
-    function money(x){return '$'+x.toFixed(2)}
+    function money(x){return '$'+x.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
     function avg(p){return p==null?'—':p.toFixed(3)}
     var sum=h('table',null,h('thead',null,h('tr',null,['Side','Bets','Contracts','Dollars','Money ratio','Avg price'].map(function(x){return h('th',{text:x})}))),
       h('tbody',null,[['YES',v.summary.yes],['NO',v.summary.no],['Total',v.summary.total]].map(function(r){
