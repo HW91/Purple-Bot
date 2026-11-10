@@ -55,7 +55,7 @@ try {
 
   // ---- C. bots start OFF, bad config rejected
   ok("invalid bot rejected (unknown asset)", (await api("/bots", "POST", { name: "x", config: { strategy: "crypto", assets: ["BTC", "NOPE"] } })).status === 500 || (await api("/bots", "POST", { name: "x", config: { strategy: "crypto", assets: ["BTC", "NOPE"] } })).status === 400);
-  const cfg = { strategy: "crypto", assets: ["BTC", "SOL", "XRP"], agreeCount: 3, timeDelaySec: 0, minRemainingSec: 120, tradeAmount: 5, maxPositions: 1, maxTradesPerHour: 4 };
+  const cfg = { strategy: "crypto", assets: ["BTC", "SOL", "XRP"], agreeCount: 3, stopLossOn: true, stopLoss: 2.5, timeDelaySec: 0, minRemainingSec: 120, tradeAmount: 5, maxPositions: 1, maxTradesPerHour: 4 };
   const bot1 = (await api("/bots", "POST", { name: "Bot One", config: cfg })).j.id;
   ok("new bot is OFF", (await api("/bots")).j.find((b) => b.id === bot1).enabled === false);
 

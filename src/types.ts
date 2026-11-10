@@ -108,8 +108,8 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     maxTradesPerHour: 4,
     dailyLossLimit: 20,
     dailyInvestLimit: 50,
-    stopLossOn: true,
-    stopLoss: 2.5,
+    stopLossOn: false, // no stop loss unless you turn one on and choose the amount
+    stopLoss: 0,
     takeProfitOn: true,
     takeProfit: 1.0,
     maxSpread: 0.06,

@@ -198,7 +198,7 @@ describe("metals entry", () => {
 });
 
 describe("exits", () => {
-  const cfg = defaultBotConfig("crypto");
+  const cfg = { ...defaultBotConfig("crypto"), stopLossOn: true, stopLoss: 2.5 }; // the defaults have no stop loss; this test turns one on
   it("take profit at +$1.00 and stop loss at -$2.50 using entry fees", () => {
     const pos = { outcome: "yes" as const, openQty: 5, avgEntry: 0.8, entryFee: 0.1 };
     // sell YES at 0.97 => gain 0.85 - fee 0.10 = 0.75 (not yet)
@@ -415,7 +415,7 @@ describe("config validation + day boundary", () => {
   });
   it("accepts defaults from the plan", () => {
     const c = validateBotConfig({ strategy: "crypto" });
-    expect(c).toMatchObject({ tradeAmount: 5, maxPositions: 1, maxTradesPerHour: 4, dailyLossLimit: 20, dailyInvestLimit: 50, probThreshold: 0.8, agreeCount: 7, timeDelaySec: 300, stopLossOn: true, stopLoss: 2.5, takeProfitOn: true, takeProfit: 1 });
+    expect(c).toMatchObject({ tradeAmount: 5, maxPositions: 1, maxTradesPerHour: 4, dailyLossLimit: 20, dailyInvestLimit: 50, probThreshold: 0.8, agreeCount: 7, timeDelaySec: 300, stopLossOn: false, stopLoss: 0, takeProfitOn: true, takeProfit: 1 });
   });
   it("finds midnight Eastern", () => {
     const t = Date.UTC(2026, 5, 15, 17, 30, 0); // 13:30 EDT

@@ -44,7 +44,7 @@ describe("backtest", () => {
   it("stop loss exits early when the price collapses", () => {
     const gold = series(0.83, 0.85).map((o) => (o.ts >= OPEN + 420_000 ? { ...o, bid: 0.3, ask: 0.32 } : o));
     const silver = series(0.6, 0.62).map((o) => (o.ts >= OPEN + 420_000 ? { ...o, bid: 0.4, ask: 0.42 } : o));
-    const r = simulate(cfg, [mkt("GOLD", "no"), mkt("SILVER", "no")], new Map([["T-GOLD", gold], ["T-SILVER", silver]]), opt);
+    const r = simulate({ ...cfg, stopLossOn: true, stopLoss: 2.5 }, [mkt("GOLD", "no"), mkt("SILVER", "no")], new Map([["T-GOLD", gold], ["T-SILVER", silver]]), opt);
     expect(r.trades[0].exit).toBe("stop_loss");
     expect(r.maxDrawdown).toBeGreaterThan(0);
   });
