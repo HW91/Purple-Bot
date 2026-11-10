@@ -611,7 +611,7 @@ export class Engine extends DurableObject<Env> {
     const key = `${bot.id}|${m.ticker}`;
     if (this.entered.has(key)) return; // once it has entered, the checklist stays frozen as it was at the entry
     const n = this.notes.get(key) ?? { botId: bot.id, ticker: m.ticker, samples: 0, counts: {}, texts: {}, checks: null, last: 0, dirty: false };
-    if (!d.ok && now - n.last < 1000) return; // about one sample a second (an entry decision is always recorded)
+    if (!d.ok && d.code !== "risk" && now - n.last < 1000) return; // about one sample a second (an entry decision, and a risk-limit block right after it, are always recorded)
     n.last = now;
     // the checklist: every requirement as it is right now (the risk line is only known once the engine has tested the limits)
     const prevRisk = n.checks?.find((c) => c.key === "risk") ?? null;
