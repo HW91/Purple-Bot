@@ -503,8 +503,12 @@ function vCharts(){
     var t0=data.market.open_ts;
     function money(x){return '$'+x.toFixed(2)}
     function avg(p){return p==null?'—':p.toFixed(3)}
-    var sum=h('table',null,h('thead',null,h('tr',null,['Side','Bets','Contracts','Dollars','Avg price'].map(function(x){return h('th',{text:x})}))),
-      h('tbody',null,[['YES',v.summary.yes],['NO',v.summary.no],['Total',v.summary.total]].map(function(r){return h('tr',null,h('td',{text:r[0]}),h('td',{text:r[1].trades}),h('td',{text:r[1].contracts}),h('td',{text:money(r[1].dollars)}),h('td',{text:avg(r[1].avgPrice)}))})));
+    var sum=h('table',null,h('thead',null,h('tr',null,['Side','Bets','Contracts','Dollars','Money ratio','Avg price'].map(function(x){return h('th',{text:x})}))),
+      h('tbody',null,[['YES',v.summary.yes],['NO',v.summary.no],['Total',v.summary.total]].map(function(r){
+        // money on this side divided by money on the other side (the Total row has no ratio)
+        var mine=r[1].dollars,other=r[0]==='YES'?v.summary.no.dollars:v.summary.yes.dollars;
+        var ratio=r[0]==='Total'?'—':other>0?(mine/other).toFixed(2):(mine>0?'∞':'—');
+        return h('tr',null,h('td',{text:r[0]}),h('td',{text:r[1].trades}),h('td',{text:r[1].contracts}),h('td',{text:money(r[1].dollars)}),h('td',{text:ratio}),h('td',{text:avg(r[1].avgPrice)}))})));
     function pc(x){return x==null?'—':(x*100).toFixed(0)+'%'}
     function gp(x){return x==null?'—':(x>0?'+':'')+x.toFixed(1)}
     var S=v.summary;

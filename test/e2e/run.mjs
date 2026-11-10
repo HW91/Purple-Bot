@@ -271,7 +271,7 @@ try {
     await page.click("nav >> text=Charts");
     await page.waitForSelector("text=Volume behind this contract", { timeout: 25000 });
     const volText = await page.textContent("#main");
-    ok("Charts tab shows the volume tables (summary and by minute, no block-trade row or share/gap line)", !volText.includes("Block trades") && !volText.includes("YES share of dollars") && !volText.includes("Gap =") && volText.includes("YES bets") && volText.includes("NO bets") && volText.includes("Total") && volText.includes("YES $ ÷ NO $") && !volText.includes("Market YES prob.") && !volText.includes("Gap (pts)"), volText.slice(-400));
+    ok("Charts tab shows the volume tables (summary and by minute, no block-trade row or share/gap line)", !volText.includes("Block trades") && !volText.includes("YES share of dollars") && !volText.includes("Gap =") && volText.includes("YES bets") && volText.includes("NO bets") && volText.includes("Total") && volText.includes("YES $ ÷ NO $") && volText.includes("Money ratio") && !volText.includes("Market YES prob.") && !volText.includes("Gap (pts)"), volText.slice(-400));
     ok("no JavaScript errors in the page", errors.length === 0, errors.join(" | "));
     await browser.close();
   } catch (e) {
