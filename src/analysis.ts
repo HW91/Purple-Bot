@@ -60,6 +60,92 @@ export function hindsightFor(rows: HindsightRow[]): Record<string, Hindsight> {
   return out;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Complete per-trade record, including what happened AFTER an early exit (stop loss / take profit) up to the contract's close
+// ---------------------------------------------------------------------------------------------------------------
+
+export interface TradeDetail {
+  asset: string;
+  side: "yes" | "no";
+  entered: string; // US Eastern
+  amount: number; // dollars put into the trade (contracts x entry price)
+  qty: number;
+  entryPrice: number | null; // per contract, our side
+  exitPrice: number | null; // per contract, our side (null if held to settlement)
+  how: string | null; // stop_loss | take_profit | settled | manual_close | emergency | external
+  pnl: number | null; // actual, after fees
+  entryProb: number | null;
+  lowestProbWhileOpen: number | null; // our side's lowest probability while the trade was open
+  highestProbWhileOpen: number | null;
+  finalResult: "yes" | "no" | null; // how the contract finally settled (null = not settled yet)
+  endedInOurFavor: boolean | null; // our side won at settlement
+  ifHeldPnl: number | null; // what holding to settlement would have made after the entry fee (hindsight)
+  afterExit: { minutesToClose: number; bestProb: number; worstProb: number; lastProb: number; points: number } | null; // our side's probability after the exit, until the contract closed
+}
+
+const etStamp = (ms: number) =>
+  new Intl.DateTimeFormat("en-US", { timeZone: ET, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(ms));
+
+const r2 = (x: number) => Math.round(x * 100) / 100;
+
+export function enrichTrade(p: PositionRow, finalResult: string | null, marketCloseTs: number | null, after: Array<{ ts: number; mid: number }>): TradeDetail {
+  const settledResult = finalResult === "yes" || finalResult === "no" ? finalResult : null;
+  const won = settledResult ? settledResult === p.outcome : null;
+  const fav = (mid: number) => (p.outcome === "yes" ? mid : 1 - mid);
+  const exitedEarly = p.close_reason !== null && p.close_reason !== "settled" && p.closed_ts !== null;
+  const pts = exitedEarly && marketCloseTs !== null ? after.filter((o) => o.ts > p.closed_ts! && o.ts <= marketCloseTs) : [];
+  const probs = pts.map((o) => fav(o.mid));
+  const qty = p.entry_qty || 0;
+  return {
+    asset: p.asset,
+    side: p.outcome,
+    entered: etStamp(p.opened_ts),
+    amount: r2(p.entry_cost),
+    qty,
+    entryPrice: p.avg_entry,
+    exitPrice: exitedEarly && qty > 0 ? Math.round((p.exit_proceeds / qty) * 1000) / 1000 : null,
+    how: p.close_reason,
+    pnl: p.realized_pnl,
+    entryProb: p.entry_prob,
+    lowestProbWhileOpen: p.fav_min,
+    highestProbWhileOpen: p.fav_max,
+    finalResult: settledResult,
+    endedInOurFavor: won,
+    ifHeldPnl: won === null ? null : r2((won ? qty : 0) - p.entry_cost - p.entry_fee),
+    afterExit: probs.length && marketCloseTs !== null && p.closed_ts !== null ? { minutesToClose: Math.max(0, Math.round((marketCloseTs - p.closed_ts) / 60000)), bestProb: r2(Math.max(...probs) * 100) / 100, worstProb: r2(Math.min(...probs) * 100) / 100, lastProb: r2(probs[probs.length - 1] * 100) / 100, points: probs.length } : null,
+  };
+}
+
+/** Full detail for a list of closed trades (settlement result, and for early exits what the price did until the contract closed). */
+export async function describeTrades(env: Env, rows: PositionRow[]): Promise<TradeDetail[]> {
+  if (!rows.length) return [];
+  const tickers = [...new Set(rows.map((r) => r.ticker))];
+  const chunks: string[][] = [];
+  for (let i = 0; i < tickers.length; i += 80) chunks.push(tickers.slice(i, i + 80)); // D1 allows 100 bound values per query
+  const info = new Map<string, { result: string | null; close_ts: number }>();
+  for (const c of chunks) {
+    const res = await env.DB.prepare(`SELECT ticker, result, close_ts FROM markets WHERE ticker IN (${c.map(() => "?").join(",")})`).bind(...c).all<{ ticker: string; result: string | null; close_ts: number }>();
+    for (const m of res.results ?? []) info.set(m.ticker, { result: m.result, close_ts: m.close_ts });
+  }
+  const early = rows.filter((r) => r.close_reason !== null && r.close_reason !== "settled" && r.closed_ts !== null);
+  const obs = new Map<string, Array<{ ts: number; mid: number }>>();
+  if (early.length) {
+    const since = Math.min(...early.map((r) => r.closed_ts!));
+    const earlyTickers = [...new Set(early.map((r) => r.ticker))];
+    for (let i = 0; i < earlyTickers.length; i += 80) {
+      const c = earlyTickers.slice(i, i + 80);
+      const res = await env.DB.prepare(`SELECT ticker, ts, (yes_bid + yes_ask) / 2 AS mid FROM observations WHERE ts > ? AND ticker IN (${c.map(() => "?").join(",")}) ORDER BY ts`)
+        .bind(since, ...c)
+        .all<{ ticker: string; ts: number; mid: number }>();
+      for (const o of res.results ?? []) (obs.get(o.ticker) ?? obs.set(o.ticker, []).get(o.ticker)!).push({ ts: o.ts, mid: o.mid });
+    }
+  }
+  return rows.map((p) => {
+    const m = info.get(p.ticker);
+    return enrichTrade(p, m?.result ?? null, m?.close_ts ?? null, obs.get(p.ticker) ?? []);
+  });
+}
+
 interface Reliability {
   contracts: number;
   reached: number; // times a side reached 80%+ in the tradeable part of a contract
@@ -101,6 +187,7 @@ export interface DayStats {
   perf: Performance;
   byEntryHour: Array<{ hour: string; trades: number; wins: number; losses: number; pnl: number }>;
   stopLossTakeProfitHindsight: Record<string, Hindsight>;
+  earlyExits: TradeDetail[]; // each trade closed early, with what the price did after the exit until the contract closed (up to 40)
   blockedBy: { contractsWatched: number; contractsTraded: number; share: Array<{ code: string; pctOfTime: number; example: string }> };
   reliability: { day: Reliability; byHour: Array<Reliability & { hour: number }>; previous7DaysAverage: Reliability | null };
   bots: Array<{ name: string; enabled: boolean; tradeAsset: string; assets: string[]; probRange: string; delayMin: number; tradeAmount: number; stopLoss: string; takeProfit: string }>;
@@ -180,6 +267,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
     perf,
     byEntryHour: [...hours.entries()].sort((a, b) => a[0] - b[0]).map(([h, v]) => ({ hour: hourLabel(h), ...v, pnl: Math.round(v.pnl * 100) / 100 })),
     stopLossTakeProfitHindsight: hindsightFor(early),
+    earlyExits: await describeTrades(env, closed.filter((p) => p.close_reason === "stop_loss" || p.close_reason === "take_profit").slice(0, 40)),
     blockedBy: { contractsWatched: notes.length, contractsTraded: tradedContracts, share },
     reliability: {
       day: day.total,
@@ -197,7 +285,7 @@ const PROMPT =
   "Using ONLY the measured data below, write a short overview (under 250 words, plain language, bullets) covering: " +
   "(1) anything in the data that is NOT obvious from looking at the trades: patterns by entry hour, asset, probability range, YES vs NO, or how trades ended; " +
   "(2) blockedBy: what kept the bots from trading, and what share of the tradeable time each blocker accounted for; " +
-  "(3) stopLossTakeProfitHindsight: for trades that were stopped out or took profit early, how many would have finished in our favor had they been held, and what holding would have made versus what they actually made (this is hindsight and ignores the risk the exit removed; say so); " +
+  "(3) stopLossTakeProfitHindsight: for trades that were stopped out or took profit early, how many would have finished in our favor had they been held, and what holding would have made versus what they actually made (this is hindsight and ignores the risk the exit removed; say so). earlyExits lists each such trade in full, including finalResult (how the 15-minute contract finally settled), ifHeldPnl, and afterExit (our side's best, worst and last probability after the exit until the contract closed): use it to say whether stopped-out trades recovered; " +
   "(4) reliability: how often a side reached 80% and then lost, versus the previous 7-day daily average, and any hours that stand out; " +
   "(5) at most three specific setting changes worth testing, each with the measured evidence and the sample size behind it. " +
   "Label each point MEASURED (directly in the data) or HYPOTHESIS (your inference). If a sample is too small to conclude anything, write 'not enough data' instead of guessing. Never invent numbers or trades. No disclaimers. Use the Kalshi rules below only to understand how contracts are defined and settled.\n\n";

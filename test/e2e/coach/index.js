@@ -15,7 +15,7 @@ export default {
       chats.push(b);
       // report which data sections the end-of-day prompt contained, so the test can check the right data was sent
       if (/end-of-day analyst/.test(b.message)) {
-        const keys = ["blockedBy", "stopLossTakeProfitHindsight", "reliability", "byEntryHour"].filter((k) => b.message.includes(k));
+        const keys = ["blockedBy", "stopLossTakeProfitHindsight", "reliability", "byEntryHour", "earlyExits"].filter((k) => b.message.includes(k));
         if (b.message.includes("KALSHI CONTRACT RULES") && b.message.includes("Settlement Value")) keys.push("rules");
         if (/TRADING PROHIBITIONS|CONFIDENTIAL/.test(b.message)) keys.push("LEAK"); // the confidential appendix must never be sent
         return Response.json({ reply: "MOCK AI ANSWER [has:" + keys.join(",") + "]", tip: null, threadId: "t", model: "gemini-3.5-flash" });
@@ -24,6 +24,8 @@ export default {
       if (/inside a personal Kalshi trading-bot dashboard/.test(b.message) && /ECHO_DATA/.test(b.message)) {
         const keys = ["strategyStats", "stopLossTakeProfitHindsight", "blockedBy", "byEntryHour", "recentTrades", "latestDailyOverview"].filter((k) => b.message.includes('"' + k + '"'));
         if (b.message.includes("KALSHI CONTRACT RULES") && b.message.includes("Settlement Value")) keys.push("rules");
+        // full per-trade detail: how each contract finally settled, what holding would have made, and what happened after an early exit
+        if (b.message.includes('"finalResult"') && b.message.includes('"ifHeldPnl"') && b.message.includes('"amount"') && b.message.includes('"afterExit"')) keys.push("tradeDetail");
         if (/TRADING PROHIBITIONS|CONFIDENTIAL/.test(b.message)) keys.push("LEAK");
         const trades = (b.message.match(/"asset":"[A-Z]+","side"/g) || []).length;
         return Response.json({ reply: "MOCK CHAT [has:" + keys.join(",") + "] trades:" + trades, tip: null, threadId: "t", model: "gemini-3.5-flash" });

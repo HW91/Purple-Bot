@@ -5,7 +5,7 @@ import { deleteSetting, getAccountLimits, getCreds, getSetting, loadBots, log, r
 import { askAI } from "./notify";
 import { computePerformance } from "./stats";
 import { dayStartMs } from "./strategy";
-import { buildDayStats, etDateString, runOverview } from "./analysis";
+import { buildDayStats, describeTrades, etDateString, runOverview } from "./analysis";
 import { KALSHI_RULES_PROMPT } from "./kalshi-rules";
 import { simulate, type Obs, type SimMarket } from "./backtest";
 import { DEFAULT_ACCOUNT_LIMITS, defaultBotConfig, validateBotConfig, type Env } from "./types";
@@ -475,7 +475,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const prompt =
       "You are the assistant inside a personal Kalshi trading-bot dashboard. You are ADVISORY ONLY: you can explain and recommend, but you cannot change settings, start/stop bots, place orders, close positions or override risk limits, and you must never say you did. " +
       "If you recommend a setting change, say the owner must apply it themselves in the bot's settings. Answer only from the data below; separate MEASURED facts from ESTIMATES; if the data does not say, say you do not know. Be short and plain.\n\n" +
-      "How to read the data: strategyStats covers the last 14 days. Inside it, stopLossTakeProfitHindsight compares trades that exited early (stop loss or take profit) with what holding to settlement would have paid (hindsight only; it ignores the risk the exit removed). blockedBy is what kept the bots from trading and the share of tradeable time. reliability is how often a side that reached 80% then lost at settlement. byEntryHour is results by entry hour in US Eastern. performance is by asset, probability range, YES/NO and how trades ended. recentTrades lists up to the last 100 closed trades, newest first. Always say how many trades a conclusion rests on.\n\n" +
+      "How to read the data: strategyStats covers the last 14 days. Inside it, stopLossTakeProfitHindsight compares trades that exited early (stop loss or take profit) with what holding to settlement would have paid (hindsight only; it ignores the risk the exit removed). blockedBy is what kept the bots from trading and the share of tradeable time. reliability is how often a side that reached 80% then lost at settlement. byEntryHour is results by entry hour in US Eastern. performance is by asset, probability range, YES/NO and how trades ended. recentTrades lists up to the last 100 closed trades, newest first, each in full: amount put in, entry and exit price per contract, how it ended (how), actual pnl, the lowest and highest probability while open, finalResult (how the 15-minute contract finally settled: yes or no; null = not settled yet), endedInOurFavor, ifHeldPnl (what holding to settlement would have made; hindsight only), and for early exits afterExit (our side's best, worst and last probability between the exit and the contract close). A stopped-out trade with endedInOurFavor true recovered after the exit. Always say how many trades a conclusion rests on.\n\n" +
       "Use the Kalshi rules below to explain how contracts are defined and settled when asked. " + KALSHI_RULES_PROMPT + "\n\n" +
       `DATA (JSON):\n${context}\n\nCONVERSATION SO FAR:\n${history.map((h) => `${h.role.toUpperCase()}: ${h.content}`).join("\n")}\n\nUSER: ${text}`;
     const answer = (await askAI(env, prompt, `pb-${convId}`)) ?? "I couldn't reach the AI just now. Your question was saved; try again in a moment.";
@@ -538,10 +538,10 @@ async function chatContext(env: Env, botId: string | null): Promise<string> {
     strategyStats: strategy,
     performance: computePerformance(await closedPositions(env, botId, 500)),
     openPositions: open,
-    recentTrades: closed.map((p) => ({ asset: p.asset, side: p.outcome, entryProb: p.entry_prob, favMax: p.fav_max, favMin: p.fav_min, exitProb: p.exit_prob, pnl: p.realized_pnl, result: p.result, how: p.close_reason, agree: p.agree_count })),
+    recentTrades: await describeTrades(env, closed),
     latestProbabilities: latest,
     recentOrders: orders,
     recentLogs: logs,
     latestDailyOverview: analysis,
-  }).slice(0, 50_000);
+  }).slice(0, 70_000);
 }

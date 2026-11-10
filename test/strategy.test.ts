@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
-import { hindsightFor, etDateString } from "../src/analysis";
+import { hindsightFor, etDateString, enrichTrade } from "../src/analysis";
+import type { PositionRow } from "../src/db";
 import { KALSHI_RULES_PROMPT } from "../src/kalshi-rules";
 
 const OPEN = 1_000_000_000_000;
@@ -162,6 +163,48 @@ describe("risk", () => {
     expect(checkRisk(cfg, acct, { ...ok, botInvestedToday: 48 }, 4)).toMatch(/investment/);
     expect(checkRisk(cfg, acct, { ...ok, accountInvestedToday: 98 }, 4)).toMatch(/Account daily investment/);
     expect(checkRisk(cfg, acct, { ...ok, balance: 3 }, 4)).toMatch(/Balance/);
+  });
+});
+
+describe("complete trade detail for the AI", () => {
+  const T0 = Date.UTC(2026, 5, 15, 14, 0, 0);
+  const stopped = { asset: "GOLD", outcome: "yes", entry_qty: 5, entry_cost: 4.25, entry_fee: 0.1, avg_entry: 0.85, exit_proceeds: 1.5, exit_fee: 0.1, close_reason: "stop_loss", opened_ts: T0 - 300_000, closed_ts: T0, realized_pnl: -2.95, entry_prob: 0.84, fav_min: 0.3, fav_max: 0.9 } as unknown as PositionRow;
+
+  it("a stopped-out trade that went on to win: shows the recovery, the final result and what holding would have made", () => {
+    const after = [
+      { ts: T0 + 60_000, mid: 0.35 },
+      { ts: T0 + 120_000, mid: 0.5 },
+      { ts: T0 + 240_000, mid: 0.9 },
+      { ts: T0 + 290_000, mid: 0.99 },
+      { ts: T0 + 400_000, mid: 0.2 }, // after the contract closed: must be ignored
+    ];
+    const d = enrichTrade(stopped, "yes", T0 + 300_000, after);
+    expect(d.endedInOurFavor).toBe(true);
+    expect(d.finalResult).toBe("yes");
+    expect(d.ifHeldPnl).toBeCloseTo(0.65, 2);
+    expect(d.exitPrice).toBeCloseTo(0.3, 3);
+    expect(d.amount).toBeCloseTo(4.25, 2);
+    expect(d.afterExit).toMatchObject({ minutesToClose: 5, points: 4 });
+    expect(d.afterExit!.bestProb).toBeCloseTo(0.99, 2);
+    expect(d.afterExit!.worstProb).toBeCloseTo(0.35, 2);
+    expect(d.afterExit!.lastProb).toBeCloseTo(0.99, 2);
+  });
+
+  it("a NO trade is measured on the NO side, and an unsettled contract has no result yet", () => {
+    const noTrade = { ...stopped, outcome: "no" } as unknown as PositionRow;
+    const d = enrichTrade(noTrade, null, T0 + 300_000, [{ ts: T0 + 60_000, mid: 0.2 }]);
+    expect(d.finalResult).toBeNull();
+    expect(d.endedInOurFavor).toBeNull();
+    expect(d.ifHeldPnl).toBeNull();
+    expect(d.afterExit!.bestProb).toBeCloseTo(0.8, 2); // YES at 0.2 is NO at 0.8
+  });
+
+  it("a trade held to settlement has no 'after exit' section", () => {
+    const held = { ...stopped, close_reason: "settled", exit_proceeds: 5 } as unknown as PositionRow;
+    const d = enrichTrade(held, "yes", T0 + 300_000, [{ ts: T0 + 60_000, mid: 0.5 }]);
+    expect(d.afterExit).toBeNull();
+    expect(d.exitPrice).toBeNull();
+    expect(d.endedInOurFavor).toBe(true);
   });
 });
 
