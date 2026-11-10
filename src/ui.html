@@ -454,14 +454,34 @@ function vCharts(){
   function showWhy(){
     whyEl.textContent='';
     if(!data)return;
-    var w=data.why,list=w&&w.top&&w.top.length?w.top.map(function(t){return t.text+' ('+t.pct+'% of the time)'}).join(' · '):'';
-    if(data.trades.length){
-      // entered: explain what held it back before the entry (if it waited at all)
-      if(list)whyEl.textContent='Before entering, the bot waited because: '+list;
+    var w=data.why,top=w&&w.top?w.top:[];
+    if(!top.length){
+      if(!data.trades.length&&botSel.value)whyEl.textContent='No trade. No signal checks were recorded for this bot on this contract (it was off, or it started after the Time Delay).';
       return;
     }
-    if(list){whyEl.textContent='No trade: '+list}
-    else if(botSel.value){whyEl.textContent='No trade. No signal checks were recorded for this bot on this contract (it was off, or it started after the Time Delay).'}
+    // every requirement on its own line: red circle = it held the bot back (with how often), green circle = it never did
+    var reqs=[
+      ['Live prices available',['no_data']],
+      ['Assets agree on direction',['disagree','agreement']],
+      ['Trade asset leans the same way',['trade_asset_direction']],
+      ['Probability at or above your minimum',['threshold']],
+      ['Probability and price paid within your maximum',['above_max']],
+      ['Time Delay passed',['delay']],
+      ['Enough time left in the contract',['time_left']],
+      ['Spread within your limit',['spread']],
+      ['Price not too extreme',['price']],
+      ['Trade amount buys at least 1 contract',['size']],
+      ['Enough contracts available at the price',['liquidity']],
+      ['Risk limits',['risk']]
+    ];
+    var head=data.trades.length?'Before entering, the bot waited because:':'No trade. Checks on this contract:';
+    whyEl.appendChild(h('div',{text:head,style:'margin-bottom:6px'}));
+    reqs.forEach(function(r){
+      var hit=top.filter(function(t){return r[1].indexOf(t.code)>=0});
+      var bad=hit.length>0;
+      var txt=bad?hit.map(function(t){return t.text+' ('+t.pct+'% of the time)'}).join(' · '):r[0];
+      whyEl.appendChild(h('div',{style:'margin-bottom:8px'},h('span',{class:bad?'r':'g',text:'\u25CF '}),h('span',{text:txt})));
+    });
   }
   // volume behind this contract: bets on YES and NO (trades, contracts, dollars), in total and minute by minute
   var lastVolTicker='',lastVolTs=0;
