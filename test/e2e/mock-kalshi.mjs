@@ -12,7 +12,7 @@ export function startMock(port) {
   const close = open + 3600000; // far enough away that 'minimum time remaining' never interferes with the test
   const iso = (t) => new Date(t).toISOString();
   const shortClose = Date.now() + 150000; // KXETH15M closes 150s after start (settlement test)
-  const mk = (series) => ({ ticker: `${series}-T1`, event_ticker: `${series}-E1`, title: `${series} up?`, yes_sub_title: "Up", status: "active", open_time: iso(open), close_time: iso(series === "KXETH15M" ? shortClose : close), result: state.results.get(`${series}-T1`) ?? "", yes_bid_dollars: q(`${series}-T1`).bid.toFixed(4), yes_ask_dollars: q(`${series}-T1`).ask.toFixed(4), last_price_dollars: ((q(`${series}-T1`).bid + q(`${series}-T1`).ask) / 2).toFixed(4) });
+  const mk = (series) => ({ ticker: `${series}-T1`, event_ticker: `${series}-E1`, title: `${series} up?`, yes_sub_title: "Up", status: "active", open_time: iso(open), close_time: iso(series === "KXETH15M" || series === "KXDOGE15M" ? shortClose : close), result: state.results.get(`${series}-T1`) ?? "", yes_bid_dollars: q(`${series}-T1`).bid.toFixed(4), yes_ask_dollars: q(`${series}-T1`).ask.toFixed(4), last_price_dollars: ((q(`${series}-T1`).bid + q(`${series}-T1`).ask) / 2).toFixed(4) });
 
   function verify(req, wsPath) {
     const ts = req.headers["kalshi-access-timestamp"], sig = req.headers["kalshi-access-signature"], key = req.headers["kalshi-access-key"];

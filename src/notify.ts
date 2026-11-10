@@ -42,6 +42,27 @@ export async function sendEmail(env: Env, subject: string, html: string, to?: st
   }
 }
 
+/**
+ * Our screens show plain text, so markdown shows up as raw symbols. Remove it (and the [MEASURED]-style tags and
+ * "I'm an advisory system" reminders) in case the AI adds them anyway.
+ */
+export function cleanAiText(s: string): string {
+  return s
+    .replace(/\*{0,2}\[(?:MEASURED|HYPOTHESIS|ESTIMATE)[^\]]*\]\*{0,2}[ \t]*/g, "") // [MEASURED] tags, with any bold marks around them
+    .replace(/\b(?:MEASURED|HYPOTHESIS)\b\s*[:\-–]\s*/g, "") // "MEASURED:" prefixes
+    .replace(/^\s*#{1,6}\s*/gm, "") // headings
+    .replace(/\*\*(.+?)\*\*/g, "$1") // bold
+    .replace(/\*{2,}/g, "") // any leftover runs of asterisks
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/^\s*[*•]\s+/gm, "- ") // bullets
+    .replace(/(^|[\s(])\*([^*\n]+?)\*(?=$|[\s).,;:!?])/g, "$1$2") // italics
+    .replace(/`([^`\n]+)`/g, "$1") // inline code
+    .replace(/^\s*-?\s*\*?Reminder:[^\n]*advisory[^\n]*$/gim, "") // "Reminder: I am an advisory system..."
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function askAI(env: Env, message: string, threadId?: string): Promise<string | null> {
   try {
     const res = await env.COACH.fetch("https://internal/chat", {
@@ -66,7 +87,7 @@ export async function askAI(env: Env, message: string, threadId?: string): Promi
       await log(env, "error", "error", `The business coach could not reach its AI providers: "${text.slice(0, 120)}"`);
       return null;
     }
-    return text;
+    return cleanAiText(text);
   } catch (e) {
     await log(env, "error", "error", `AI call error: ${(e as Error).message}`);
     return null;

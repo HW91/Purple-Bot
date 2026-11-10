@@ -60,6 +60,8 @@ try {
   ok("new bot is OFF", (await api("/bots")).j.find((b) => b.id === bot1).enabled === false);
 
   // settlement bot on ETH (its contract closes 75s after the mock started)
+  // a bot that never trades: it only makes the engine watch DOGE, whose contract closes early, to test that results are saved for every contract
+  await api("/bots", "POST", { name: "DOGE watcher (never started)", config: { strategy: "crypto", assets: ["DOGE"], agreeCount: 1, tradeAsset: "DOGE" } });
   const bots2 = (await api("/bots", "POST", { name: "ETH settle bot", config: { strategy: "crypto", assets: ["ETH"], agreeCount: 1, timeDelaySec: 0, minRemainingSec: 15, tradeAmount: 5, stopLossOn: false, takeProfitOn: false } })).j.id;
   const T = (s) => `KX${s}15M-T1`;
   await quote([T("BTC"), T("SOL"), T("XRP"), T("ETH")], 0.83, 0.85);
@@ -105,6 +107,9 @@ try {
   // ---- H. settlement of the ETH contract (held to expiry, no forced close)
   await sleep(Math.max(0, 158000 - (Date.now() - startedAt)));
   await fetch(`http://127.0.0.1:${KP}/_settle`, { method: "POST", body: JSON.stringify({ ticker: T("ETH"), result: "yes" }) });
+  await fetch(`http://127.0.0.1:${KP}/_settle`, { method: "POST", body: JSON.stringify({ ticker: T("DOGE"), result: "no" }) });
+  const dogeSaved = await waitFor(async () => (await api("/chart/periods?asset=DOGE")).j.find((x) => x.ticker === T("DOGE") && x.result === "no"), 90000);
+  ok("the final result is saved for a contract the bot never traded (so early exits and backtests can use it)", !!dogeSaved, JSON.stringify((await api("/chart/periods?asset=DOGE")).j));
   const settled = await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === bots2), 90000);
   ok("ETH position held to expiry and settled as a win", !!settled && settled.close_reason === "settled" && settled.result === "win" && Math.abs(settled.realized_pnl - 0.65) < 0.011 && settled.exit_prob === 1, JSON.stringify(settled));
 

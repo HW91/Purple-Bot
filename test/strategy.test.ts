@@ -3,6 +3,7 @@ import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
 import { hindsightFor, etDateString, enrichTrade } from "../src/analysis";
 import type { PositionRow } from "../src/db";
+import { cleanAiText } from "../src/notify";
 import { KALSHI_RULES_PROMPT } from "../src/kalshi-rules";
 
 const OPEN = 1_000_000_000_000;
@@ -163,6 +164,29 @@ describe("risk", () => {
     expect(checkRisk(cfg, acct, { ...ok, botInvestedToday: 48 }, 4)).toMatch(/investment/);
     expect(checkRisk(cfg, acct, { ...ok, accountInvestedToday: 98 }, 4)).toMatch(/Account daily investment/);
     expect(checkRisk(cfg, acct, { ...ok, balance: 3 }, 4)).toMatch(/Balance/);
+  });
+});
+
+describe("AI text cleanup", () => {
+  it("removes markdown, [MEASURED] tags and the advisory reminder, but keeps the words and numbers", () => {
+    const raw = [
+      "Based on the telemetry for the last 14 days, here is the breakdown:",
+      "",
+      "* **[MEASURED]** **Total Stopped-Out Trades:** There are **8 trades** that exited via stop loss.",
+      "### **[MEASURED]** Post-Exit Probability (8 Trades Total)",
+      "  * **11/09 14:51 (YES):** Reached a peak of 99.95% after stop out.",
+      "A value of `resolved: 0` and *some emphasis* here.",
+      "*Reminder: I am an advisory system and cannot modify your bot configuration.*",
+    ].join("\n");
+    const out = cleanAiText(raw);
+    expect(out).not.toMatch(/\*|#|`|MEASURED|Reminder/);
+    expect(out).toMatch(/- Total Stopped-Out Trades: There are 8 trades that exited via stop loss\./);
+    expect(out).toMatch(/Post-Exit Probability \(8 Trades Total\)/);
+    expect(out).toMatch(/- 11\/09 14:51 \(YES\): Reached a peak of 99\.95% after stop out\./);
+    expect(out).toMatch(/A value of resolved: 0 and some emphasis here\./);
+  });
+  it("leaves ordinary text, math and lowercase 'measured' alone", () => {
+    expect(cleanAiText("5 * 3 = 15 and the price was measured at 0.85.")).toBe("5 * 3 = 15 and the price was measured at 0.85.");
   });
 });
 

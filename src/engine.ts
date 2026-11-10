@@ -104,6 +104,7 @@ export class Engine extends DurableObject<Env> {
   private lastReason = new Map<string, { reason: string; ts: number; up: number; down: number }>();
   private lastAlert = new Map<string, number>();
   private settleChecked = new Map<string, number>();
+  private resultTried = new Map<string, number>(); // ticker -> last time we asked Kalshi for its final result
   private entered = new Set<string>(); // "botId|ticker" of contracts a bot has already entered
   private settingsSeen = new Map<string, string>(); // "botId|ticker" -> the probability min|max last saved for it
   private notes = new Map<string, { botId: string; ticker: string; samples: number; counts: Record<string, number>; texts: Record<string, string>; last: number; dirty: boolean }>();
@@ -200,6 +201,7 @@ export class Engine extends DurableObject<Env> {
       await this.evaluateAllEntries();
       await this.flush();
       await this.checkSettlements();
+      await this.backfillResults();
       await this.processCloseRequests();
       await this.dailyJobs();
     } catch (e) {
@@ -948,6 +950,32 @@ export class Engine extends DurableObject<Env> {
         await log(this.env, "warn", "system", `Settlement check failed for ${p.ticker}: ${(e as Error).message}`);
       }
     }
+  }
+
+  /**
+   * Save the final result (yes/no) of every contract that has closed, not only the ones we held to settlement. Without this,
+   * trades we exited early (stop loss / take profit) never learn how their contract finally settled, which breaks the
+   * "would holding have won?" analysis, the reliability-by-hour numbers and backtests (they skip unsettled contracts).
+   */
+  private async backfillResults(): Promise<void> {
+    if (!this.client) return;
+    const now = Date.now();
+    const rows = (await this.env.DB.prepare("SELECT ticker FROM markets WHERE result IS NULL AND close_ts < ? AND close_ts > ? ORDER BY close_ts DESC LIMIT 16").bind(now - 45_000, now - 7 * 86_400_000).all<{ ticker: string }>()).results ?? [];
+    let looked = 0;
+    for (const r of rows) {
+      if (looked >= 4) break; // a few lookups per tick keeps Kalshi traffic tiny
+      if (now - (this.resultTried.get(r.ticker) ?? 0) < 120_000) continue; // not decided yet: try again in two minutes
+      this.resultTried.set(r.ticker, now);
+      looked++;
+      try {
+        const m = await this.client.market(r.ticker);
+        const result = (m.result ?? "").toLowerCase();
+        if (result === "yes" || result === "no") await this.env.DB.prepare("UPDATE markets SET result=?, status=? WHERE ticker=?").bind(result, m.status, r.ticker).run();
+      } catch (e) {
+        if (e instanceof KalshiAuthError) throw e;
+      }
+    }
+    if (this.resultTried.size > 2000) this.resultTried.clear();
   }
 
   /** Compare our records with Kalshi's real positions. New orders stay blocked until they agree. */
