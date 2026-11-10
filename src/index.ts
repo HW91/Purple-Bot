@@ -89,6 +89,15 @@ async function closedPositions(env: Env, botId?: string | null, limit = 2000): P
   return (await st.all<PositionRow>()).results ?? [];
 }
 
+/** Average YES probability the bot recorded in each minute of a contract (minute 0 = the first minute after it opened). One query, used by both the chart lines and the volume table so they always match. */
+async function minuteProbs(env: Env, ticker: string, openTs: number, closeTs: number): Promise<Array<{ minute: number; prob: number; n: number }>> {
+  return (
+    await env.DB.prepare("SELECT CAST((ts - ?1) / 60000 AS INTEGER) AS minute, AVG((yes_bid + yes_ask) / 2) AS prob, COUNT(*) AS n FROM observations WHERE ticker = ?2 AND ts >= ?1 AND ts < ?3 GROUP BY minute ORDER BY minute")
+      .bind(openTs, ticker, closeTs)
+      .all<{ minute: number; prob: number; n: number }>()
+  ).results;
+}
+
 /** Profit/loss totals (realized, after fees) from closed positions since `since`, for the whole account or one bot. */
 async function plAgg(env: Env, since: number, botId?: string): Promise<{ trades: number; wins: number; losses: number; pnl: number; fees: number; winRate: number | null }> {
   const sql =
@@ -435,11 +444,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     if (!client) return err("Connect Kalshi first");
     const { trades, truncated } = await client.trades(ticker);
     // the market's own YES probability (what this bot recorded), by minute and overall, to set next to the money split
-    const probRows = (
-      await env.DB.prepare("SELECT CAST((ts - ?1) / 60000 AS INTEGER) AS minute, AVG((yes_bid + yes_ask) / 2) AS prob FROM observations WHERE ticker = ?2 AND ts >= ?1 AND ts < ?3 GROUP BY minute")
-        .bind(mk.open_ts, ticker, mk.close_ts)
-        .all<{ minute: number; prob: number }>()
-    ).results;
+    const probRows = await minuteProbs(env, ticker, mk.open_ts, mk.close_ts);
     const overall = await env.DB.prepare("SELECT AVG((yes_bid + yes_ask) / 2) AS prob FROM observations WHERE ticker = ? AND ts >= ? AND ts < ?").bind(ticker, mk.open_ts, mk.close_ts).first<{ prob: number | null }>();
     const volume = attachMarketProb(aggregateTrades(trades, mk.open_ts, mk.close_ts, truncated), probRows, overall?.prob ?? null);
     if (settled && !truncated) await env.DB.prepare("INSERT OR REPLACE INTO contract_volume (ticker, data, fetched_ts) VALUES (?,?,?)").bind(ticker, JSON.stringify(volume), Date.now()).run();
@@ -473,7 +478,9 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       const s = await env.DB.prepare("SELECT prob_min, prob_max, delay_sec FROM contract_settings WHERE bot_id=? AND ticker=?").bind(botParam, ticker).first<{ prob_min: number; prob_max: number; delay_sec: number | null }>();
       if (s) settings = { probMin: s.prob_min, probMax: s.prob_max, delaySec: s.delay_sec };
     }
-    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), trades, why, settings });
+    const mkRow = mk as unknown as { open_ts: number; close_ts: number };
+    const minutes = (await minuteProbs(env, ticker, mkRow.open_ts, mkRow.close_ts)).map((m) => ({ minute: m.minute, prob: Math.round(m.prob * 10_000) / 10_000, n: m.n }));
+    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), minutes, trades, why, settings });
   }
 
   // ---------------- AI chat (only calls AI when the user sends a message)
