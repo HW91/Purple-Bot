@@ -45,6 +45,12 @@ export function startMock(port) {
     const p = url.pathname.replace("/trade-api/v2", "");
     if (p === "/portfolio/balance") return send(200, { balance: Math.round(state.balance * 100), balance_dollars: state.balance.toFixed(2), portfolio_value: 0, updated_ts: Date.now() });
     if (p === "/markets") return send(200, { markets: url.searchParams.get("status") === "open" ? [mk(url.searchParams.get("series_ticker"))] : [], cursor: "" });
+    if (p === "/markets/trades") { // same fields as Kalshi's Get Trades (docs.kalshi.com/api-reference/market/get-trades)
+      const t = url.searchParams.get("ticker");
+      const at = (min, sec) => iso(open + min * 60000 + sec * 1000);
+      const tr = (id, side, count, yes, minute, sec, blockTrade = false) => ({ trade_id: id, ticker: t, count_fp: count, yes_price_dollars: yes, no_price_dollars: (1 - Number(yes)).toFixed(4), taker_outcome_side: side, taker_book_side: side === "yes" ? "bid" : "ask", created_time: at(minute, sec), is_block_trade: blockTrade });
+      return send(200, { trades: [tr("1", "yes", "2.00", "0.8400", 0, 30), tr("2", "no", "3.00", "0.8000", 0, 45), tr("3", "yes", "1.50", "0.9000", 1, 10), tr("4", "no", "100.00", "0.9000", 1, 40, true), tr("5", "yes", "4.00", "0.8600", 2, 5)], cursor: "" });
+    }
     let m = p.match(/^\/markets\/(.+)$/);
     if (m) { const t = decodeURIComponent(m[1]); return send(200, { market: { ...mk(t.replace("-T1", "")), ticker: t, status: state.results.has(t) ? "determined" : "active", result: state.results.get(t) ?? "" } }); }
     if (p === "/portfolio/positions") return send(200, { market_positions: [...state.positions].filter(([, v]) => Math.abs(v) > 0.001).map(([ticker, v]) => ({ ticker, position_fp: v.toFixed(2), market_exposure_dollars: "0", realized_pnl_dollars: "0", fees_paid_dollars: "0" })), cursor: "" });

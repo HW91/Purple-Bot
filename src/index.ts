@@ -7,6 +7,7 @@ import { computePerformance } from "./stats";
 import { dayStartMs } from "./strategy";
 import { buildDayStats, describeTrades, etDateString, runOverview } from "./analysis";
 import { KALSHI_RULES_PROMPT } from "./kalshi-rules";
+import { aggregateTrades } from "./volume";
 import { simulate, type Obs, type SimMarket } from "./backtest";
 import { DEFAULT_ACCOUNT_LIMITS, defaultBotConfig, validateBotConfig, type Env } from "./types";
 import { UI_HTML } from "./ui";
@@ -416,6 +417,23 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
         .all()
     ).results;
     return json(rows);
+  }
+  // Volume behind a contract: bets on YES and on NO (trades, contracts, dollars), in total and by minute.
+  if (path === "/api/chart/volume" && m === "GET") {
+    const ticker = url.searchParams.get("ticker") ?? "";
+    const mk = await env.DB.prepare("SELECT open_ts, close_ts FROM markets WHERE ticker=?").bind(ticker).first<{ open_ts: number; close_ts: number }>();
+    if (!mk) return err("Unknown market", 404);
+    const settled = Date.now() - mk.close_ts > 5 * 60_000; // its trades can no longer change
+    if (settled) {
+      const c = await env.DB.prepare("SELECT data FROM contract_volume WHERE ticker=?").bind(ticker).first<{ data: string }>();
+      if (c) return json({ ...(JSON.parse(c.data) as object), cached: true });
+    }
+    const client = await kalshiClient(env);
+    if (!client) return err("Connect Kalshi first");
+    const { trades, truncated } = await client.trades(ticker);
+    const volume = aggregateTrades(trades, mk.open_ts, mk.close_ts, truncated);
+    if (settled && !truncated) await env.DB.prepare("INSERT OR REPLACE INTO contract_volume (ticker, data, fetched_ts) VALUES (?,?,?)").bind(ticker, JSON.stringify(volume), Date.now()).run();
+    return json({ ...volume, cached: false });
   }
   if (path === "/api/chart" && m === "GET") {
     const ticker = url.searchParams.get("ticker") ?? "";

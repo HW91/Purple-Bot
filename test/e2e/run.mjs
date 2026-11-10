@@ -242,11 +242,22 @@ try {
     await page.reload();
     await page.waitForSelector("text=Kalshi connection", { timeout: 15000 });
     ok("refresh keeps you on the Settings tab", true);
+    await page.click("nav >> text=Charts");
+    await page.waitForSelector("text=Volume behind this contract", { timeout: 25000 });
+    const volText = await page.textContent("#main");
+    ok("Charts tab shows the volume tables (summary, block trades, by minute)", volText.includes("Block trades (included above)") && volText.includes("YES bets") && volText.includes("NO bets") && volText.includes("Total"), volText.slice(-400));
     ok("no JavaScript errors in the page", errors.length === 0, errors.join(" | "));
     await browser.close();
   } catch (e) {
     ok("browser check of the dashboard", false, String(e?.stack || e));
   }
+
+  // ---- volume behind a contract (bets on YES and NO, by minute)
+  const vol = (await api(`/chart/volume?ticker=${encodeURIComponent(T("BTC"))}`)).j;
+  ok("volume: YES and NO bets, contracts and dollars (YES pays the yes price, NO pays the no price)", vol.summary?.yes?.trades === 3 && vol.summary.yes.contracts === 7.5 && vol.summary.yes.dollars === 6.47 && vol.summary.no.trades === 2 && vol.summary.no.contracts === 103 && vol.summary.no.dollars === 10.6 && vol.summary.total.dollars === 17.07, JSON.stringify(vol.summary));
+  ok("volume: block trades are identified and included in the totals", vol.summary.block.trades === 1 && vol.summary.block.dollars === 10 && vol.summary.total.trades === 5);
+  ok("volume: split by minute (15 minutes, the block trade lands in minute 2)", vol.minutes.length === 15 && vol.minutes[0].yes.trades === 1 && vol.minutes[1].block.trades === 1 && vol.minutes[2].yes.dollars === 3.44);
+  ok("volume: an unknown contract is refused", (await api("/chart/volume?ticker=NOPE")).status === 404);
 
   // ---- J. delete rules + disconnect rules
   ok("cannot delete a bot while ON", await (async () => { await api(`/bots/${bot1}/start`, "POST"); const r = await api(`/bots/${bot1}`, "DELETE"); await api(`/bots/${bot1}/stop`, "POST"); return r.status === 409; })());

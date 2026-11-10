@@ -4,6 +4,7 @@
  * Nothing here is guessed: if Kalshi changes a shape, the response is rejected loudly instead of traded on.
  */
 import { authHeaders, type SigningKey } from "./kalshi-auth";
+import type { RawTrade } from "./volume";
 
 export class KalshiAuthError extends Error {}
 export class KalshiHttpError extends Error {
@@ -97,6 +98,19 @@ export class KalshiClient {
     const r = await this.request<{ market: KalshiMarket }>("GET", `/markets/${encodeURIComponent(ticker)}`);
     if (!r?.market) throw new Error("Unexpected market response from Kalshi");
     return r.market;
+  }
+
+  /** Every completed trade on one contract (Get Trades, newest first, up to `maxPages` pages of 1000). */
+  async trades(ticker: string, maxPages = 10): Promise<{ trades: RawTrade[]; truncated: boolean }> {
+    const out: RawTrade[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < maxPages; page++) {
+      const r = await this.request<{ trades: RawTrade[]; cursor?: string }>("GET", "/markets/trades", { query: { ticker, limit: 1000, cursor } });
+      out.push(...(r?.trades ?? []));
+      cursor = r?.cursor || undefined;
+      if (!cursor) return { trades: out, truncated: false };
+    }
+    return { trades: out, truncated: true };
   }
 
   async seriesList(): Promise<Array<{ ticker: string; title?: string; frequency?: string; category?: string }>> {

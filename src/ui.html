@@ -426,9 +426,9 @@ function vTrades(){
 // ----------------------------------------------------------------- Charts
 function vCharts(){
   var root=$('#main');
-  var botSel=h('select'),asset=h('select'),flt=h('select',null,[['all','All contracts'],['win','Winners'],['loss','Losers'],['none','No trade']].map(function(o){return h('option',{value:o[0],text:o[1]})})),period=h('select'),info=h('div',{class:'row'}),canvas=h('canvas'),tip=h('div',{class:'mute',text:'Hover or tap the chart to inspect a data point.'}),whyEl=h('small',{style:'display:block;margin-top:6px'});
+  var botSel=h('select'),asset=h('select'),flt=h('select',null,[['all','All contracts'],['win','Winners'],['loss','Losers'],['none','No trade']].map(function(o){return h('option',{value:o[0],text:o[1]})})),period=h('select'),info=h('div',{class:'row'}),canvas=h('canvas'),tip=h('div',{class:'mute',text:'Hover or tap the chart to inspect a data point.'}),whyEl=h('small',{style:'display:block;margin-top:6px'}),volEl=h('div');
   var all=CRYPTO.concat(METALS);all.forEach(function(a){asset.appendChild(h('option',{value:a,text:a}))});
-  root.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('div',null,h('label',{text:'Bot'}),botSel),h('div',null,h('label',{text:'Asset'}),asset),h('div',null,h('label',{text:'Show'}),flt),h('div',null,h('label',{text:'Contract period (current or past)'}),period)),info,canvas,whyEl,tip));
+  root.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('div',null,h('label',{text:'Bot'}),botSel),h('div',null,h('label',{text:'Asset'}),asset),h('div',null,h('label',{text:'Show'}),flt),h('div',null,h('label',{text:'Contract period (current or past)'}),period)),info,canvas,whyEl,tip,volEl));
   var data=null,chartBots=[];
   function curBot(){return chartBots.find(function(b){return b.id===botSel.value})||null}
   // picking a bot shows the asset that bot trades (its Time Delay line is drawn too)
@@ -463,7 +463,35 @@ function vCharts(){
     if(list){whyEl.textContent='No trade: '+list}
     else if(botSel.value){whyEl.textContent='No trade. No signal checks were recorded for this bot on this contract (it was off, or it started after the Time Delay).'}
   }
-  function loadChart(){if(!period.value){data=null;draw();showWhy();return}api('/chart?ticker='+encodeURIComponent(period.value)+(botSel.value?'&bot='+encodeURIComponent(botSel.value):'')).then(function(d){data=d;draw();showWhy()})}
+  // volume behind this contract: bets on YES and NO (trades, contracts, dollars), in total and minute by minute
+  var lastVolTicker='',lastVolTs=0;
+  function volRows(v){
+    var delaySec=data&&data.settings&&data.settings.delaySec!=null?data.settings.delaySec:(curBot()?curBot().config.timeDelaySec:0);
+    var t0=data.market.open_ts;
+    function money(x){return '$'+x.toFixed(2)}
+    function avg(p){return p==null?'—':p.toFixed(3)}
+    var sum=h('table',null,h('thead',null,h('tr',null,['Side','Bets','Contracts','Dollars','Avg price'].map(function(x){return h('th',{text:x})}))),
+      h('tbody',null,[['YES',v.summary.yes],['NO',v.summary.no],['Total',v.summary.total]].map(function(r){return h('tr',null,h('td',{text:r[0]}),h('td',{text:r[1].trades}),h('td',{text:r[1].contracts}),h('td',{text:money(r[1].dollars)}),h('td',{text:avg(r[1].avgPrice)}))}).concat([
+        h('tr',{class:'mute'},h('td',{text:'Block trades (included above)'}),h('td',{text:v.summary.block.trades}),h('td',{text:v.summary.block.contracts}),h('td',{text:money(v.summary.block.dollars)}),h('td',{text:'—'}))])));
+    var mins=h('table',null,h('thead',null,h('tr',null,['Minute','YES bets','YES $','NO bets','NO $','Block trades'].map(function(x){return h('th',{text:x})}))),
+      h('tbody',null,v.minutes.map(function(m){
+        var mark=delaySec>0&&t0+delaySec*1000>=m.startTs&&t0+delaySec*1000<m.startTs+60000?' · delay line':'';
+        return h('tr',null,h('td',{text:hm(m.startTs).replace(/:\d\d (AM|PM)$/,' $1')+mark}),h('td',{text:m.yes.trades}),h('td',{text:money(m.yes.dollars)}),h('td',{text:m.no.trades}),h('td',{text:money(m.no.dollars)}),h('td',{text:m.block.trades?m.block.trades+' ('+money(m.block.dollars)+')':''}));
+      })));
+    var notes=['A bet counts on the side that started the trade. Dollars = contracts x the price that side paid. Block trades are large negotiated trades: they are included in every number and also shown separately.'];
+    if(v.summary.outside)notes.push(v.summary.outside+' trade(s) happened before the contract opened or after it closed. They are in the totals but not in any minute.');
+    if(v.truncated)notes.push('This contract had more trades than could be fetched, so the numbers are a partial count.');
+    return [h('div',{style:'font-weight:600;margin-top:14px'},h('span',{text:'Volume behind this contract'})),h('div',{class:'scroll'},sum),h('div',{class:'scroll',style:'margin-top:10px'},mins),h('small',{style:'display:block;margin-top:6px',text:notes.join(' ')})];
+  }
+  function loadVolume(){
+    if(!data||!period.value){volEl.textContent='';return}
+    var t=period.value,running=data.market.close_ts>Date.now();
+    if(t===lastVolTicker&&(!running||Date.now()-lastVolTs<30000))return;
+    if(t!==lastVolTicker)volEl.textContent='Loading volume…';
+    lastVolTicker=t;lastVolTs=Date.now();
+    api('/chart/volume?ticker='+encodeURIComponent(t)).then(function(v){if(period.value!==t)return;volEl.textContent='';volRows(v).forEach(function(x){volEl.appendChild(x)})}).catch(function(e){if(period.value===t){volEl.textContent='';volEl.appendChild(h('small',{text:'Volume is not available: '+e.message}))}});
+  }
+  function loadChart(){if(!period.value){data=null;draw();showWhy();loadVolume();return}api('/chart?ticker='+encodeURIComponent(period.value)+(botSel.value?'&bot='+encodeURIComponent(botSel.value):'')).then(function(d){data=d;draw();showWhy();loadVolume()})}
   function geom(){var dpr=window.devicePixelRatio||1;var w=canvas.clientWidth,hh=canvas.clientHeight;canvas.width=w*dpr;canvas.height=hh*dpr;var c=canvas.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);return{c:c,w:w,h:hh,l:44,r:10,t:10,b:24}}
   function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n)}
   function draw(hoverTs){

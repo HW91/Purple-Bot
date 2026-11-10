@@ -4,6 +4,7 @@ import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from
 import { hindsightFor, etDateString, enrichTrade } from "../src/analysis";
 import type { PositionRow } from "../src/db";
 import { cleanAiText } from "../src/notify";
+import { aggregateTrades } from "../src/volume";
 import { KALSHI_RULES_PROMPT } from "../src/kalshi-rules";
 
 const OPEN = 1_000_000_000_000;
@@ -187,6 +188,48 @@ describe("AI text cleanup", () => {
   });
   it("leaves ordinary text, math and lowercase 'measured' alone", () => {
     expect(cleanAiText("5 * 3 = 15 and the price was measured at 0.85.")).toBe("5 * 3 = 15 and the price was measured at 0.85.");
+  });
+});
+
+describe("volume behind a contract", () => {
+  const open = Date.UTC(2026, 5, 15, 14, 0, 0);
+  const close = open + 15 * 60_000;
+  const tr = (side: "yes" | "no", count: string, yes: string, minute: number, sec: number, block = false) => ({
+    count_fp: count,
+    yes_price_dollars: yes,
+    no_price_dollars: (1 - Number(yes)).toFixed(4),
+    taker_outcome_side: side,
+    created_time: new Date(open + minute * 60_000 + sec * 1000).toISOString(),
+    is_block_trade: block,
+  });
+  const trades = [tr("yes", "2.00", "0.8400", 0, 30), tr("no", "3.00", "0.8000", 0, 45), tr("yes", "1.50", "0.9000", 1, 10), tr("no", "100.00", "0.9000", 1, 40, true), tr("yes", "4.00", "0.8600", 2, 5)];
+
+  it("counts bets, contracts and dollars per side: YES pays the yes price, NO pays the no price", () => {
+    const v = aggregateTrades(trades, open, close);
+    expect(v.summary.yes).toMatchObject({ trades: 3, contracts: 7.5, dollars: 6.47 });
+    expect(v.summary.no).toMatchObject({ trades: 2, contracts: 103, dollars: 10.6 });
+    expect(v.summary.total).toMatchObject({ trades: 5, contracts: 110.5, dollars: 17.07 });
+    expect(v.summary.yes.avgPrice).toBeCloseTo(0.863, 3);
+    expect(v.summary.no.avgPrice).toBeCloseTo(0.103, 3);
+  });
+  it("identifies block trades (included in the totals) and splits everything by minute", () => {
+    const v = aggregateTrades(trades, open, close);
+    expect(v.summary.block).toMatchObject({ trades: 1, contracts: 100, dollars: 10 });
+    expect(v.minutes).toHaveLength(15);
+    expect(v.minutes[0]).toMatchObject({ yes: { trades: 1, dollars: 1.68 }, no: { trades: 1, dollars: 0.6 }, block: { trades: 0, dollars: 0 } });
+    expect(v.minutes[1]).toMatchObject({ yes: { trades: 1, dollars: 1.35 }, no: { trades: 1, dollars: 10 }, block: { trades: 1, dollars: 10 } });
+    expect(v.minutes[2].yes.dollars).toBe(3.44);
+    expect(v.minutes[3].yes.trades + v.minutes[3].no.trades).toBe(0);
+  });
+  it("keeps trades outside the contract window in the totals but out of every minute", () => {
+    const v = aggregateTrades([...trades, tr("yes", "1.00", "0.5000", -2, 0), tr("no", "1.00", "0.5000", 16, 0)], open, close);
+    expect(v.summary.outside).toBe(2);
+    expect(v.summary.total.trades).toBe(7);
+    expect(v.minutes.reduce((s, m) => s + m.yes.trades + m.no.trades, 0)).toBe(5);
+  });
+  it("handles a contract with no trades", () => {
+    const v = aggregateTrades([], open, close);
+    expect(v.summary.total).toMatchObject({ trades: 0, contracts: 0, dollars: 0, avgPrice: null });
   });
 });
 
