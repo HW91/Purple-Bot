@@ -505,10 +505,10 @@ function vCharts(){
     function gp(x){return x==null?'—':(x>0?'+':'')+x.toFixed(1)}
     var S=v.summary;
     var shareLine=h('div',{style:'margin-top:8px'},h('span',{text:'YES share of dollars: '+pc(S.yesShare)+'  ·  average market YES probability: '+pc(S.marketProb)+'  ·  gap: '+gp(S.gap)+' points'}),h('div',{class:'mute',style:'font-size:12.5px',text:'Gap = YES share of dollars minus the market probability. Above 0 means more YES buying than the price implies; below 0 means more NO buying.'}));
-    var mins=h('table',null,h('thead',null,h('tr',null,['Minute','YES bets','YES $','NO bets','NO $','Block trades','YES share of $','Market YES prob.','Gap (pts)'].map(function(x){return h('th',{text:x})}))),
+    var mins=h('table',null,h('thead',null,h('tr',null,['Minute','YES bets','YES $','NO bets','NO $','YES $ ÷ NO $'].map(function(x){return h('th',{text:x})}))),
       h('tbody',null,v.minutes.map(function(m){
         var mark=delaySec>0&&t0+delaySec*1000>=m.startTs&&t0+delaySec*1000<m.startTs+60000?' · delay line':'';
-        return h('tr',null,h('td',{text:hm(m.startTs).replace(/:\d\d (AM|PM)$/,' $1')+mark}),h('td',{text:m.yes.trades}),h('td',{text:money(m.yes.dollars)}),h('td',{text:m.no.trades}),h('td',{text:money(m.no.dollars)}),h('td',{text:m.block.trades?m.block.trades+' ('+money(m.block.dollars)+')':''}),h('td',{text:pc(m.yesShare)}),h('td',{text:pc(m.marketProb)}),h('td',{text:gp(m.gap)}));
+        return h('tr',null,h('td',{text:hm(m.startTs).replace(/:\d\d (AM|PM)$/,' $1')+mark}),h('td',{text:m.yes.trades}),h('td',{text:money(m.yes.dollars)}),h('td',{text:m.no.trades}),h('td',{text:money(m.no.dollars)}),h('td',{text:m.no.dollars>0?(m.yes.dollars/m.no.dollars).toFixed(2):(m.yes.dollars>0?'∞':'—')}));
       })));
     var notes=['A bet counts on the side that started the trade. Dollars = contracts x the price that side paid. Block trades are large negotiated trades: they are included in every number and also shown separately.'];
     if(v.summary.outside)notes.push(v.summary.outside+' trade(s) happened before the contract opened or after it closed. They are in the totals but not in any minute.');
