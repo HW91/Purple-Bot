@@ -256,7 +256,7 @@ try {
   const vol = (await api(`/chart/volume?ticker=${encodeURIComponent(T("BTC"))}`)).j;
   ok("volume: YES and NO bets, contracts and dollars (YES pays the yes price, NO pays the no price)", vol.summary?.yes?.trades === 3 && vol.summary.yes.contracts === 7.5 && vol.summary.yes.dollars === 6.47 && vol.summary.no.trades === 2 && vol.summary.no.contracts === 103 && vol.summary.no.dollars === 10.6 && vol.summary.total.dollars === 17.07, JSON.stringify(vol.summary));
   ok("volume: block trades are identified and included in the totals", vol.summary.block.trades === 1 && vol.summary.block.dollars === 10 && vol.summary.total.trades === 5);
-  ok("volume: split by minute (15 minutes, the block trade lands in minute 2)", vol.minutes.length === 15 && vol.minutes[0].yes.trades === 1 && vol.minutes[1].block.trades === 1 && vol.minutes[2].yes.dollars === 3.44);
+  ok("volume: split by minute (one row per minute of the contract; the fake contract lasts an hour; the block trade is in the second minute)", vol.minutes.length === 60 && vol.minutes[0].yes.trades === 1 && vol.minutes[1].block.trades === 1 && vol.minutes[2].yes.dollars === 3.44, JSON.stringify(vol.minutes.slice(0, 3)));
   ok("volume: an unknown contract is refused", (await api("/chart/volume?ticker=NOPE")).status === 404);
 
   // ---- J. delete rules + disconnect rules
