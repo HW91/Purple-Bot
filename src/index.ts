@@ -467,7 +467,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
         const top = Object.entries(counts)
           .filter(([c]) => c !== "ok")
           .sort((a, b) => b[1] - a[1])
-          .slice(0, 2)
+          .slice(0, 6)
           .map(([c, k]) => ({ code: c, text: texts[c] ?? c, pct: Math.round((100 * k) / n.samples) }));
         why = { samples: n.samples, top };
       }
