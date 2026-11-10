@@ -105,6 +105,7 @@ export class Engine extends DurableObject<Env> {
   private lastAlert = new Map<string, number>();
   private settleChecked = new Map<string, number>();
   private entered = new Set<string>(); // "botId|ticker" of contracts a bot has already entered
+  private settingsSeen = new Map<string, string>(); // "botId|ticker" -> the probability min|max last saved for it
   private notes = new Map<string, { botId: string; ticker: string; samples: number; counts: Record<string, number>; texts: Record<string, string>; last: number; dirty: boolean }>();
 
   private reconciled = false;
@@ -617,7 +618,25 @@ export class Engine extends DurableObject<Env> {
     if (this.notes.size > 200) for (const k of this.notes.keys()) if (!this.notes.get(k)!.dirty && k !== key) this.notes.delete(k);
   }
 
+  /** Save the probability minimum/maximum this bot is using on the current contract (for the chart's entry-minimum line). */
+  private snapshotSettings(bot: Bot, now: number): void {
+    const m = this.currentMarket(bot.config.tradeAsset, now);
+    if (!m) return;
+    const key = `${bot.id}|${m.ticker}`;
+    const val = `${bot.config.probThreshold}|${bot.config.probMax}`;
+    if (this.settingsSeen.get(key) === val) return;
+    this.settingsSeen.set(key, val);
+    if (this.settingsSeen.size > 500) this.settingsSeen.delete(this.settingsSeen.keys().next().value as string);
+    this.ctx.waitUntil(
+      this.env.DB.prepare("INSERT INTO contract_settings (bot_id, ticker, prob_min, prob_max, updated_ts) VALUES (?,?,?,?,?) ON CONFLICT(bot_id, ticker) DO UPDATE SET prob_min=excluded.prob_min, prob_max=excluded.prob_max, updated_ts=excluded.updated_ts")
+        .bind(bot.id, m.ticker, bot.config.probThreshold, bot.config.probMax, now)
+        .run()
+        .catch((e) => console.error("snapshotSettings failed", e)),
+    );
+  }
+
   private noteReason(bot: Bot, d: EntryDecision, now: number): void {
+    this.snapshotSettings(bot, now);
     this.sampleNote(bot, d, now);
     const prev = this.lastReason.get(bot.id);
     const changed = !prev || prev.reason !== d.reason;

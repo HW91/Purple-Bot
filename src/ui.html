@@ -471,11 +471,16 @@ function vCharts(){
       var td=t0+tb.config.timeDelaySec*1000;
       c.strokeStyle=css('--accent');c.lineWidth=1;c.setLineDash([4,4]);c.beginPath();c.moveTo(X(td),g.t);c.lineTo(X(td),g.t+ph);c.stroke();c.setLineDash([]);c.lineWidth=1;
     }
+    // solid line at the probability minimum this bot used on THIS contract (saved per contract, so old charts don't change)
+    if(data.settings&&data.settings.probMin>0&&data.settings.probMin<1){
+      c.strokeStyle=css('--start');c.lineWidth=1.5;c.setLineDash([]);c.beginPath();c.moveTo(g.l,Y(data.settings.probMin));c.lineTo(g.w-g.r,Y(data.settings.probMin));c.stroke();c.lineWidth=1;
+    }
     function line(key,color){c.strokeStyle=color;c.lineWidth=2;c.beginPath();var first=true;data.points.forEach(function(p){var v=key==='yes'?p.yes:1-p.yes;if(first){c.moveTo(X(p.ts),Y(v));first=false}else c.lineTo(X(p.ts),Y(v))});c.stroke();c.lineWidth=1}
     line('yes',css('--green'));line('no',css('--red'));
     data.trades.forEach(function(t){c.fillStyle=css('--accent');c.beginPath();c.arc(X(t.opened_ts),t.avg_entry!=null?Y(t.avg_entry):g.t+6,4,0,7);c.fill()});
     var last=data.points[data.points.length-1];
     info.textContent='';if(last){info.appendChild(h('span',{class:'g',text:'YES '+pct(last.yes)}));info.appendChild(h('span',{class:'r',text:'NO '+pct(1-last.yes)}));info.appendChild(h('span',{class:'mute',text:data.points.length+' recorded points · '+data.market.title}))}
+    if(data.settings)info.appendChild(h('span',{class:'mute',text:'White line = entry minimum for this contract: '+pct(data.settings.probMin)}));
     if(hoverTs){var best=null;data.points.forEach(function(p){if(!best||Math.abs(p.ts-hoverTs)<Math.abs(best.ts-hoverTs))best=p});if(best){c.strokeStyle=css('--text');c.beginPath();c.moveTo(X(best.ts),g.t);c.lineTo(X(best.ts),g.t+ph);c.stroke();tip.textContent=new Date(best.ts).toLocaleTimeString()+' — YES '+pct(best.yes)+' (bid '+best.bid.toFixed(2)+' / ask '+best.ask.toFixed(2)+') · NO '+pct(1-best.yes)}}
   }
   function hover(e){if(!data)return;var r=canvas.getBoundingClientRect();var x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;var pw=r.width-44-10;var ts=data.market.open_ts+(x-44)/pw*(data.market.close_ts-data.market.open_ts);draw(ts)}

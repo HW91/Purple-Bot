@@ -176,6 +176,14 @@ try {
   await sleep(12000);
   const after = (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${whyBot}`)).j;
   ok("after entry, the note still explains the wait and does not fill up with 'position open' reasons", after.trades.length >= 1 && after.why.top[0].code === "agreement" && after.why.top.every((x) => x.code !== "risk" && x.code !== "ok"), JSON.stringify(after.why));
+  // the chart's entry-minimum line: saved per contract from the setting in use while the contract ran
+  const chartUrl = `/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${whyBot}`;
+  const s1 = (await api(chartUrl)).j.settings;
+  ok("chart reports the bot's probability minimum for the contract (default 80%)", !!s1 && Math.abs(s1.probMin - 0.8) < 1e-9, JSON.stringify(s1));
+  await api(`/bots/${whyBot}`, "PUT", { name: "Bot One (copy)", config: { ...cfg, probThreshold: 0.82 } });
+  const s2 = await waitFor(async () => { const r = (await api(chartUrl)).j.settings; return r && Math.abs(r.probMin - 0.82) < 1e-9 ? r : null; }, 30000);
+  ok("changing the setting moves the line on the contract it applies to (82%)", !!s2);
+  ok("a bot that never ran on the contract has no line", (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${hourlyBot}`)).j.settings === null);
   await api(`/bots/${whyBot}/stop-close`, "POST");
   await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === whyBot), 40000);
   ok("no note is returned when no bot is picked", (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}`)).j.why === null);

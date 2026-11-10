@@ -439,7 +439,13 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
         why = { samples: n.samples, top };
       }
     }
-    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), trades, why });
+    // the probability minimum this bot was using on this contract (saved while it ran; old contracts have none)
+    let settings: { probMin: number; probMax: number } | null = null;
+    if (botParam) {
+      const s = await env.DB.prepare("SELECT prob_min, prob_max FROM contract_settings WHERE bot_id=? AND ticker=?").bind(botParam, ticker).first<{ prob_min: number; prob_max: number }>();
+      if (s) settings = { probMin: s.prob_min, probMax: s.prob_max };
+    }
+    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), trades, why, settings });
   }
 
   // ---------------- AI chat (only calls AI when the user sends a message)

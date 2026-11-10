@@ -41,6 +41,9 @@ people's keys without written approval from Kalshi.
   themselves — no separate price feed. (Kalshi's Pyth metals price feed costs $1,000/month; it is not used.)
 - **Entry** is checked on every update once the Time Delay has passed, and the first update where every condition is true
   enters immediately. YES trade = up direction + YES probability; NO trade = down direction + NO probability.
+- **Chart entry-minimum line:** a solid white line at the bot's probability minimum (e.g. 82%) for that contract. It is saved per
+  contract while the bot runs, so changing the setting later never moves the line on contracts that already happened, and
+  contracts from before this feature have no line. Because the chart plots YES and NO each as its own probability, one line serves both sides.
 - **Maximum probability to enter** (per bot, 100% = no limit): the bot skips the trade if the probability, or the price it
   would pay per contract, is above this. Very high-probability entries pay 90c+ to win a few cents.
 - Each bot trades ONE asset you choose ("Asset to trade", default BTC for crypto, GOLD for metals). The other checked assets
