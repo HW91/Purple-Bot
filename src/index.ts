@@ -7,7 +7,7 @@ import { computePerformance } from "./stats";
 import { dayStartMs } from "./strategy";
 import { buildDayStats, describeTrades, etDateString, runOverview } from "./analysis";
 import { KALSHI_RULES_PROMPT } from "./kalshi-rules";
-import { aggregateTrades } from "./volume";
+import { aggregateTrades, attachMarketProb } from "./volume";
 import { simulate, type Obs, type SimMarket } from "./backtest";
 import { DEFAULT_ACCOUNT_LIMITS, defaultBotConfig, validateBotConfig, type Env } from "./types";
 import { UI_HTML } from "./ui";
@@ -426,12 +426,22 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const settled = Date.now() - mk.close_ts > 5 * 60_000; // its trades can no longer change
     if (settled) {
       const c = await env.DB.prepare("SELECT data FROM contract_volume WHERE ticker=?").bind(ticker).first<{ data: string }>();
-      if (c) return json({ ...(JSON.parse(c.data) as object), cached: true });
+      if (c) {
+        const cv = JSON.parse(c.data) as { summary?: { yesShare?: unknown } };
+        if (cv.summary && cv.summary.yesShare !== undefined) return json({ ...cv, cached: true }); // older saved copies lack the share/gap fields: fetch those again
+      }
     }
     const client = await kalshiClient(env);
     if (!client) return err("Connect Kalshi first");
     const { trades, truncated } = await client.trades(ticker);
-    const volume = aggregateTrades(trades, mk.open_ts, mk.close_ts, truncated);
+    // the market's own YES probability (what this bot recorded), by minute and overall, to set next to the money split
+    const probRows = (
+      await env.DB.prepare("SELECT CAST((ts - ?1) / 60000 AS INTEGER) AS minute, AVG((yes_bid + yes_ask) / 2) AS prob FROM observations WHERE ticker = ?2 AND ts >= ?1 AND ts < ?3 GROUP BY minute")
+        .bind(mk.open_ts, ticker, mk.close_ts)
+        .all<{ minute: number; prob: number }>()
+    ).results;
+    const overall = await env.DB.prepare("SELECT AVG((yes_bid + yes_ask) / 2) AS prob FROM observations WHERE ticker = ? AND ts >= ? AND ts < ?").bind(ticker, mk.open_ts, mk.close_ts).first<{ prob: number | null }>();
+    const volume = attachMarketProb(aggregateTrades(trades, mk.open_ts, mk.close_ts, truncated), probRows, overall?.prob ?? null);
     if (settled && !truncated) await env.DB.prepare("INSERT OR REPLACE INTO contract_volume (ticker, data, fetched_ts) VALUES (?,?,?)").bind(ticker, JSON.stringify(volume), Date.now()).run();
     return json({ ...volume, cached: false });
   }

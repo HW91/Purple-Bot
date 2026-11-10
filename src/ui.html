@@ -473,15 +473,19 @@ function vCharts(){
     var sum=h('table',null,h('thead',null,h('tr',null,['Side','Bets','Contracts','Dollars','Avg price'].map(function(x){return h('th',{text:x})}))),
       h('tbody',null,[['YES',v.summary.yes],['NO',v.summary.no],['Total',v.summary.total]].map(function(r){return h('tr',null,h('td',{text:r[0]}),h('td',{text:r[1].trades}),h('td',{text:r[1].contracts}),h('td',{text:money(r[1].dollars)}),h('td',{text:avg(r[1].avgPrice)}))}).concat([
         h('tr',{class:'mute'},h('td',{text:'Block trades (included above)'}),h('td',{text:v.summary.block.trades}),h('td',{text:v.summary.block.contracts}),h('td',{text:money(v.summary.block.dollars)}),h('td',{text:'—'}))])));
-    var mins=h('table',null,h('thead',null,h('tr',null,['Minute','YES bets','YES $','NO bets','NO $','Block trades'].map(function(x){return h('th',{text:x})}))),
+    function pc(x){return x==null?'—':(x*100).toFixed(0)+'%'}
+    function gp(x){return x==null?'—':(x>0?'+':'')+x.toFixed(1)}
+    var S=v.summary;
+    var shareLine=h('div',{style:'margin-top:8px'},h('span',{text:'YES share of dollars: '+pc(S.yesShare)+'  ·  average market YES probability: '+pc(S.marketProb)+'  ·  gap: '+gp(S.gap)+' points'}),h('div',{class:'mute',style:'font-size:12.5px',text:'Gap = YES share of dollars minus the market probability. Above 0 means more YES buying than the price implies; below 0 means more NO buying.'}));
+    var mins=h('table',null,h('thead',null,h('tr',null,['Minute','YES bets','YES $','NO bets','NO $','Block trades','YES share of $','Market YES prob.','Gap (pts)'].map(function(x){return h('th',{text:x})}))),
       h('tbody',null,v.minutes.map(function(m){
         var mark=delaySec>0&&t0+delaySec*1000>=m.startTs&&t0+delaySec*1000<m.startTs+60000?' · delay line':'';
-        return h('tr',null,h('td',{text:hm(m.startTs).replace(/:\d\d (AM|PM)$/,' $1')+mark}),h('td',{text:m.yes.trades}),h('td',{text:money(m.yes.dollars)}),h('td',{text:m.no.trades}),h('td',{text:money(m.no.dollars)}),h('td',{text:m.block.trades?m.block.trades+' ('+money(m.block.dollars)+')':''}));
+        return h('tr',null,h('td',{text:hm(m.startTs).replace(/:\d\d (AM|PM)$/,' $1')+mark}),h('td',{text:m.yes.trades}),h('td',{text:money(m.yes.dollars)}),h('td',{text:m.no.trades}),h('td',{text:money(m.no.dollars)}),h('td',{text:m.block.trades?m.block.trades+' ('+money(m.block.dollars)+')':''}),h('td',{text:pc(m.yesShare)}),h('td',{text:pc(m.marketProb)}),h('td',{text:gp(m.gap)}));
       })));
     var notes=['A bet counts on the side that started the trade. Dollars = contracts x the price that side paid. Block trades are large negotiated trades: they are included in every number and also shown separately.'];
     if(v.summary.outside)notes.push(v.summary.outside+' trade(s) happened before the contract opened or after it closed. They are in the totals but not in any minute.');
     if(v.truncated)notes.push('This contract had more trades than could be fetched, so the numbers are a partial count.');
-    return [h('div',{style:'font-weight:600;margin-top:14px'},h('span',{text:'Volume behind this contract'})),h('div',{class:'scroll'},sum),h('div',{class:'scroll',style:'margin-top:10px'},mins),h('small',{style:'display:block;margin-top:6px',text:notes.join(' ')})];
+    return [h('div',{style:'font-weight:600;margin-top:14px'},h('span',{text:'Volume behind this contract'})),h('div',{class:'scroll'},sum),shareLine,h('div',{class:'scroll',style:'margin-top:10px'},mins),h('small',{style:'display:block;margin-top:6px',text:notes.join(' ')})];
   }
   function loadVolume(){
     if(!data||!period.value){volEl.textContent='';return}

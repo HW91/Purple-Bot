@@ -245,7 +245,7 @@ try {
     await page.click("nav >> text=Charts");
     await page.waitForSelector("text=Volume behind this contract", { timeout: 25000 });
     const volText = await page.textContent("#main");
-    ok("Charts tab shows the volume tables (summary, block trades, by minute)", volText.includes("Block trades (included above)") && volText.includes("YES bets") && volText.includes("NO bets") && volText.includes("Total"), volText.slice(-400));
+    ok("Charts tab shows the volume tables (summary, block trades, by minute)", volText.includes("Block trades (included above)") && volText.includes("YES bets") && volText.includes("NO bets") && volText.includes("Total") && volText.includes("YES share of $") && volText.includes("Market YES prob.") && volText.includes("Gap (pts)"), volText.slice(-400));
     ok("no JavaScript errors in the page", errors.length === 0, errors.join(" | "));
     await browser.close();
   } catch (e) {
@@ -255,6 +255,7 @@ try {
   // ---- volume behind a contract (bets on YES and NO, by minute)
   const vol = (await api(`/chart/volume?ticker=${encodeURIComponent(T("BTC"))}`)).j;
   ok("volume: YES and NO bets, contracts and dollars (YES pays the yes price, NO pays the no price)", vol.summary?.yes?.trades === 3 && vol.summary.yes.contracts === 7.5 && vol.summary.yes.dollars === 6.47 && vol.summary.no.trades === 2 && vol.summary.no.contracts === 103 && vol.summary.no.dollars === 10.6 && vol.summary.total.dollars === 17.07, JSON.stringify(vol.summary));
+  ok("volume: YES share of dollars is set next to the market's own YES probability, with the gap in points", Math.abs(vol.summary.yesShare - 6.47 / 17.07) < 0.001 && typeof vol.summary.marketProb === "number" && vol.summary.marketProb > 0 && vol.summary.marketProb < 1 && Math.abs(vol.summary.gap - (vol.summary.yesShare - vol.summary.marketProb) * 100) < 0.2 && vol.minutes[0].yesShare > 0.73 && vol.minutes[0].yesShare < 0.74 && vol.minutes[0].gap === null, JSON.stringify([vol.summary.yesShare, vol.summary.marketProb, vol.summary.gap, vol.minutes[0]]));
   ok("volume: block trades are identified and included in the totals", vol.summary.block.trades === 1 && vol.summary.block.dollars === 10 && vol.summary.total.trades === 5);
   ok("volume: split by minute (one row per minute of the contract; the fake contract lasts an hour; the block trade is in the second minute)", vol.minutes.length === 60 && vol.minutes[0].yes.trades === 1 && vol.minutes[1].block.trades === 1 && vol.minutes[2].yes.dollars === 3.44, JSON.stringify(vol.minutes.slice(0, 3)));
   ok("volume: an unknown contract is refused", (await api("/chart/volume?ticker=NOPE")).status === 404);

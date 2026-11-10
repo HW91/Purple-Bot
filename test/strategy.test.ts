@@ -4,7 +4,7 @@ import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from
 import { hindsightFor, etDateString, enrichTrade } from "../src/analysis";
 import type { PositionRow } from "../src/db";
 import { cleanAiText } from "../src/notify";
-import { aggregateTrades } from "../src/volume";
+import { aggregateTrades, attachMarketProb } from "../src/volume";
 import { KALSHI_RULES_PROMPT } from "../src/kalshi-rules";
 
 const OPEN = 1_000_000_000_000;
@@ -220,6 +220,27 @@ describe("volume behind a contract", () => {
     expect(v.minutes[1]).toMatchObject({ yes: { trades: 1, dollars: 1.35 }, no: { trades: 1, dollars: 10 }, block: { trades: 1, dollars: 10 } });
     expect(v.minutes[2].yes.dollars).toBe(3.44);
     expect(v.minutes[3].yes.trades + v.minutes[3].no.trades).toBe(0);
+  });
+  it("YES share of dollars, by minute and overall (null when nothing traded)", () => {
+    const v = aggregateTrades(trades, open, close);
+    expect(v.minutes[0].yesShare).toBeCloseTo(1.68 / 2.28, 3); // 0.7368
+    expect(v.minutes[1].yesShare).toBeCloseTo(1.35 / 11.35, 3); // a big NO block trade: money leaned NO
+    expect(v.minutes[2].yesShare).toBe(1);
+    expect(v.minutes[3].yesShare).toBeNull();
+    expect(v.summary.yesShare).toBeCloseTo(6.47 / 17.07, 3);
+  });
+  it("sets the market's own YES probability next to the share and reports the gap in points", () => {
+    const v0 = aggregateTrades(trades, open, close);
+    const v = attachMarketProb(v0, [{ minute: 0, prob: 0.84 }, { minute: 3, prob: 0.9 }], 0.86);
+    expect(v.minutes[0].marketProb).toBe(0.84);
+    expect(v.minutes[0].gap).toBeCloseTo((0.7368 - 0.84) * 100, 1); // about -10.3 points: more NO buying than the price implies
+    expect(v.minutes[1].marketProb).toBeNull(); // nothing recorded that minute
+    expect(v.minutes[1].gap).toBeNull();
+    expect(v.minutes[3].marketProb).toBe(0.9);
+    expect(v.minutes[3].gap).toBeNull(); // no trades that minute, so no share to compare
+    expect(v.summary.marketProb).toBe(0.86);
+    expect(v.summary.gap).toBeCloseTo((6.47 / 17.07 - 0.86) * 100, 1);
+    expect(attachMarketProb(v0, [], null).summary.gap).toBeNull();
   });
   it("keeps trades outside the contract window in the totals but out of every minute", () => {
     const v = aggregateTrades([...trades, tr("yes", "1.00", "0.5000", -2, 0), tr("no", "1.00", "0.5000", 16, 0)], open, close);
