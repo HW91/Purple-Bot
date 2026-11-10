@@ -12,6 +12,7 @@ import { getAccountLimits, getCreds, getSetting, isBotEnabled, loadBots, log, op
 import { emailShell, esc, sendEmail } from "./notify";
 import { etDateString, overviewEmail, runOverview } from "./analysis";
 import { checklistFor, type CheckLine } from "./checklist";
+import { FlowTracker } from "./flow";
 import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
 
@@ -82,6 +83,11 @@ export class Engine extends DurableObject<Env> {
   private ws: WebSocket | null = null;
   private sid: number | null = null;
   private subscribed = new Set<string>();
+  // order flow: Kalshi's live trade channel (only subscribed while an enabled bot uses it) and the running money totals
+  private tradeSid: number | null = null;
+  private tradeSubscribed = new Set<string>();
+  private flow = new FlowTracker();
+  private flowLoading = new Set<string>();
   private downSince: number | null = null;
   private restFallback = false;
 
@@ -193,6 +199,8 @@ export class Engine extends DurableObject<Env> {
       if (!(await this.ensureClient())) return; // no credentials: stay idle, no alarm
       await this.discoverIfNeeded();
       if (!this.ws) await this.openSocket();
+      this.syncSubscription(); // new contracts, or an order-flow bot was just turned on
+      await this.ensureFlowReady();
       if (!this.ws || this.restFallback) await this.restPoll();
       else await this.refreshQuietQuotes();
       if (!this.reconciled || now - this.lastReconcile > 300_000) await this.reconcile();
@@ -366,6 +374,14 @@ export class Engine extends DurableObject<Env> {
     this.ws = null;
     this.sid = null;
     this.subscribed.clear();
+    this.dropTradeFeed();
+  }
+
+  /** The live trade feed is gone: money totals may be missing trades, so none are trusted until they are loaded again. */
+  private dropTradeFeed(): void {
+    this.tradeSid = null;
+    this.tradeSubscribed.clear();
+    this.flow.markAllNotReady();
   }
 
   private async openSocket(): Promise<void> {
@@ -387,6 +403,7 @@ export class Engine extends DurableObject<Env> {
           this.ws = null;
           this.sid = null;
           this.subscribed.clear();
+          this.dropTradeFeed();
           this.downSince = this.downSince ?? Date.now();
           this.ctx.waitUntil(log(this.env, "warn", "system", `Kalshi WebSocket closed: ${why}`));
           this.ctx.storage.setAlarm(Date.now() + 2_000).catch(() => {});
@@ -411,20 +428,67 @@ export class Engine extends DurableObject<Env> {
 
   private syncSubscription(): void {
     if (!this.ws) return;
+    // price channel (always)
     const want = [...this.markets.keys()].filter((t) => !this.subscribed.has(t));
-    if (want.length === 0) return;
-    try {
-      if (this.sid === null && this.subscribed.size === 0) {
-        this.ws.send(JSON.stringify({ id: 1, cmd: "subscribe", params: { channels: ["ticker"], market_tickers: want } }));
-      } else if (this.sid !== null) {
-        this.ws.send(JSON.stringify({ id: Date.now() % 1_000_000, cmd: "update_subscription", params: { sids: [this.sid], market_tickers: want, action: "add_markets" } }));
-      } else {
-        return; // waiting for the subscribed reply
+    if (want.length > 0) {
+      try {
+        if (this.sid === null && this.subscribed.size === 0) {
+          this.ws.send(JSON.stringify({ id: 1, cmd: "subscribe", params: { channels: ["ticker"], market_tickers: want } }));
+          for (const t of want) this.subscribed.add(t);
+        } else if (this.sid !== null) {
+          this.ws.send(JSON.stringify({ id: Date.now() % 1_000_000, cmd: "update_subscription", params: { sids: [this.sid], market_tickers: want, action: "add_markets" } }));
+          for (const t of want) this.subscribed.add(t);
+        } // else: waiting for the subscribed reply
+      } catch (e) {
+        console.error("subscribe send failed", e);
       }
-      for (const t of want) this.subscribed.add(t);
-    } catch (e) {
-      console.error("subscribe send failed", e);
     }
+    // trade channel (only while an enabled bot uses order flow)
+    if (this.wantFlow()) {
+      const wantT = [...this.markets.keys()].filter((t) => !this.tradeSubscribed.has(t));
+      if (wantT.length > 0) {
+        try {
+          if (this.tradeSid === null && this.tradeSubscribed.size === 0) {
+            this.ws.send(JSON.stringify({ id: 2, cmd: "subscribe", params: { channels: ["trade"], market_tickers: wantT } }));
+            for (const t of wantT) this.tradeSubscribed.add(t);
+          } else if (this.tradeSid !== null) {
+            this.ws.send(JSON.stringify({ id: Date.now() % 1_000_000, cmd: "update_subscription", params: { sids: [this.tradeSid], market_tickers: wantT, action: "add_markets" } }));
+            for (const t of wantT) this.tradeSubscribed.add(t);
+          }
+        } catch (e) {
+          console.error("trade subscribe send failed", e);
+        }
+      }
+    }
+  }
+
+  private wantFlow(): boolean {
+    return this.bots.some((b) => b.enabled && b.config.flowOn);
+  }
+
+  /** Load the trades placed before we subscribed (once per contract), so the running totals are complete before any decision uses them. */
+  private async ensureFlowReady(): Promise<void> {
+    if (!this.client || !this.ws || this.tradeSid === null || !this.wantFlow()) return;
+    const now = Date.now();
+    for (const bot of this.bots) {
+      if (!bot.enabled || !bot.config.flowOn) continue;
+      const m = this.currentMarket(bot.config.tradeAsset, now);
+      if (!m || this.flow.isReady(m.ticker) || !this.tradeSubscribed.has(m.ticker) || this.flowLoading.has(m.ticker)) continue;
+      this.flowLoading.add(m.ticker);
+      try {
+        const { trades, truncated } = await this.client.trades(m.ticker, 10);
+        for (const t of trades) {
+          this.flow.add(m.ticker, { id: t.trade_id, side: t.taker_outcome_side === "no" ? "no" : "yes", ts: Date.parse(t.created_time), contracts: num(t.count_fp), yesPrice: num(t.yes_price_dollars), noPrice: num(t.no_price_dollars) });
+        }
+        if (truncated) await log(this.env, "warn", "system", `Order flow: ${m.ticker} had more trades than could be loaded; totals for long time frames may be low`, bot.id);
+        this.flow.markReady(m.ticker);
+      } catch (e) {
+        if (e instanceof KalshiAuthError) throw e; // anything else: stay "not ready", so no trade is taken on partial totals
+      } finally {
+        this.flowLoading.delete(m.ticker);
+      }
+    }
+    this.flow.prune(now);
   }
 
   private async onMessage(raw: string): Promise<void> {
@@ -440,7 +504,18 @@ export class Engine extends DurableObject<Env> {
       if (Number.isFinite(sid) && m.msg?.channel === "ticker") {
         this.sid = sid;
         this.syncSubscription();
+      } else if (Number.isFinite(sid) && m.msg?.channel === "trade") {
+        this.tradeSid = sid;
+        this.syncSubscription();
       }
+      return;
+    }
+    if (m.type === "trade" && m.msg) {
+      // one public trade: add its money to the side that started it
+      const t = m.msg;
+      const tk = String(t.market_ticker ?? "");
+      if (!tk || !this.markets.has(tk)) return;
+      this.flow.add(tk, { id: t.trade_id !== undefined ? String(t.trade_id) : undefined, side: t.taker_outcome_side === "no" ? "no" : "yes", ts: t.ts_ms !== undefined ? num(t.ts_ms) : Date.now(), contracts: num(t.count_fp), yesPrice: num(t.yes_price_dollars), noPrice: num(t.no_price_dollars) });
       return;
     }
     if (m.type === "error") {
@@ -556,7 +631,10 @@ export class Engine extends DurableObject<Env> {
   private viewsFor(bot: Bot, now: number): AssetView[] {
     return bot.config.assets.map((asset) => {
       const market = this.currentMarket(asset, now);
-      return { asset, market, quote: market ? this.quotes.get(market.ticker) ?? null : null };
+      // money on each side over this bot's time frame; null until the trades placed before we subscribed are loaded
+      const since = market ? (bot.config.flowWindowMin > 0 ? Math.max(now - bot.config.flowWindowMin * 60_000, market.openTs) : market.openTs) : 0;
+      const flow = bot.config.flowOn && market && this.flow.isReady(market.ticker) ? this.flow.totals(market.ticker, since, now) : null;
+      return { asset, market, quote: market ? this.quotes.get(market.ticker) ?? null : null, flow };
     });
   }
 

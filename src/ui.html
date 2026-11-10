@@ -321,7 +321,7 @@ function vBots(){
       h('button',{class:'btn gray',text:'Edit',onclick:function(){editBot(b)}}),
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
       h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}})),
-      h('div',{class:'mute',text:'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')})));
+      h('div',{class:'mute',text:'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')+(b.config.flowOn?' · money ratio ≥ '+b.config.flowRatio+' ('+(b.config.flowWindowMin>0?'last '+b.config.flowWindowMin+' min':'whole contract')+')':'')})));
   })})}
   function field(label,input,hint){return h('div',null,h('label',{text:label}),input,hint?h('small',{text:hint,style:'display:block;margin-top:2px'}):null)}
   function editBot(b,strategy){
@@ -334,6 +334,7 @@ function vBots(){
       function chk(k){return inp[k]=h('input',{type:'checkbox'});}
       var assets=(s==='crypto'?CRYPTO:METALS).map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=cfg.assets.indexOf(a)>=0;return h('label',{class:'chk'},cb,a)});
       var tradeSel=h('select',null,(s==='crypto'?CRYPTO:METALS).map(function(a){var op=h('option',{value:a,text:a});if(cfg.tradeAsset===a)op.selected=true;return op}));
+      var fl=chk('flowOn');fl.checked=!!cfg.flowOn;
       var sl=chk('stopLossOn');sl.checked=cfg.stopLossOn;var tp=chk('takeProfitOn');tp.checked=cfg.takeProfitOn;
       var nt=h('select',null,['immediate','daily','off'].map(function(o){var op=h('option',{value:o,text:o});if(cfg.notify===o)op.selected=true;return op}));
       f.appendChild(h('h2',{text:(b?'Edit ':'New ')+s+' bot'}));
@@ -351,6 +352,9 @@ function vBots(){
         field('Daily loss limit ($)',num('dailyLossLimit')),
         field('Daily investment limit ($)',num('dailyInvestLimit')),
         field('Max spread allowed ($)',num('maxSpread')),
+        field('Use money on each side',fl,'When on, the bot only buys a side if the money placed on it beats the other side by the ratio below. Money is counted for the side that started each trade, the same as the volume table.'),
+        field('Money time frame (minutes, 0 = whole contract)',num('flowWindowMin',1,1),'How far back the money is added up each time the bot checks.'),
+        field('Required ratio (your side ÷ other side)',num('flowRatio',1,0.1),'1.5 means the money on the side being bought must be at least 1.5 times the money on the other side. Must be 1 or more.'),
         field('Stop loss ($ per position)',h('div',{class:'row'},sl,num('stopLoss'))),
         field('Take profit ($ per position)',h('div',{class:'row'},tp,num('takeProfit'))),
         field('Email notifications',nt)));
@@ -358,7 +362,8 @@ function vBots(){
       f.appendChild(h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){
         var out={strategy:s,durationMin:cfg.durationMin};
         ['probThreshold','probMax'].forEach(function(k){out[k]=+inp[k].value/100});
-        ['agreeCount','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
+        ['agreeCount','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
+        out.flowOn=fl.checked;
         out.tradeAsset=tradeSel.value;
         out.stopLossOn=sl.checked;out.takeProfitOn=tp.checked;out.notify=nt.value;
         out.assets=[].slice.call(f.querySelectorAll('[data-a]')).filter(function(x){return x.checked}).map(function(x){return x.getAttribute('data-a')});

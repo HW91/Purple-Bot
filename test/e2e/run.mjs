@@ -197,6 +197,29 @@ try {
   ok("no note is returned when no bot is picked", (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}`)).j.why === null);
   await quote([T("BTC"), T("SOL"), T("XRP")], 0.83, 0.85);
 
+  // ---- L2. order flow: money on each side as support for entering (user-chosen time frame and ratio)
+  const flowBot = (await api(`/bots/${bot1}/duplicate`, "POST")).j.id;
+  const flowSave = await api(`/bots/${flowBot}`, "PUT", { name: "Flow bot", config: { ...cfg, flowOn: true, flowWindowMin: 0, flowRatio: 3 } });
+  ok("order flow settings save (on, whole contract, ratio 3)", flowSave.status === 200, JSON.stringify(flowSave.j).slice(0, 200));
+  ok("a ratio under 1 is refused", (await api(`/bots/${flowBot}`, "PUT", { name: "Flow bot", config: { ...cfg, flowOn: true, flowRatio: 0.5 } })).status >= 400);
+  await api(`/bots/${flowBot}/start`, "POST");
+  const flowUrl = `/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${flowBot}`;
+  const flowLine = (r) => r?.checks?.find((c) => c.key === "flow");
+  // the contract already has $6.47 on YES and $10.60 on NO (the fake exchange's trade list): not enough support yet
+  const flowRed = await waitFor(async () => { const r = (await api(flowUrl)).j; return flowLine(r)?.ok === false && /\$\d/.test(flowLine(r).text) ? r : null; }, 60000);
+  ok("with too little money on YES the checklist shows the order-flow line red, with the dollars", !!flowRed && /\$6 on YES vs \$11 on NO/.test(flowLine(flowRed).text), JSON.stringify(flowLine(flowRed)));
+  ok("and the bot has not traded", !(await api("/positions")).j.open.find((p) => p.bot_id === flowBot));
+  // a big YES trade arrives on the live trade channel: the running total updates and the bot enters
+  await fetch(`http://127.0.0.1:${KP}/_trade`, { method: "POST", body: JSON.stringify({ tickers: [T("BTC")], side: "yes", count: 150, yes: 0.85 }) });
+  const flowPos = await waitFor(async () => (await api("/positions")).j.open.find((p) => p.bot_id === flowBot), 40000);
+  ok("after a large YES trade the ratio is met and the bot enters", !!flowPos);
+  await sleep(11000);
+  const flowAfter = (await api(flowUrl)).j;
+  ok("after entry the checklist is frozen with the order-flow line green", flowLine(flowAfter)?.ok === true, JSON.stringify(flowLine(flowAfter)));
+  await api(`/bots/${flowBot}/stop-close`, "POST");
+  await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === flowBot), 40000);
+  await quote([T("BTC"), T("SOL"), T("XRP")], 0.83, 0.85);
+
   // ---- H2. time-of-day view
   const hrs = (await api("/hours?days=7")).j;
   ok("time-of-day view: 24 hours, counts every recorded contract and trade", hrs.hours?.length === 24 && hrs.contracts >= 1 && hrs.trades >= 4 && hrs.hours.reduce((s, x) => s + x.trades, 0) === hrs.trades, JSON.stringify(hrs).slice(0, 300));

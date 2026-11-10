@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { checklistFor } from "../src/checklist";
+import { FlowTracker, flowPasses } from "../src/flow";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
 import { hindsightFor, etDateString, enrichTrade } from "../src/analysis";
@@ -97,6 +98,45 @@ describe("crypto entry", () => {
     const low = by(checklistFor(cfg, views(0.7, 0.72, 0), now));
     expect(low.probMin).toBe(false);
     expect(low.liquidity).toBe(false);
+  });
+
+  it("order flow: needs the money on our side to beat the other side by the ratio, and never passes without data", () => {
+    const flowCfg = { ...cfg, flowOn: true, flowRatio: 2, flowWindowMin: 3 };
+    const withFlow = (flow: { yes: number; no: number } | null) => ASSETS.map((a) => ({ asset: a, market: mk(a), quote: q(mk(a).ticker, a === "BTC" ? 0.83 : 0.6, a === "BTC" ? 0.85 : 0.62, now), flow }));
+    expect(evaluateEntry(flowCfg, withFlow({ yes: 300, no: 100 }), now).ok).toBe(true); // 3x >= 2x
+    expect(evaluateEntry(flowCfg, withFlow({ yes: 200, no: 100 }), now).ok).toBe(true); // exactly 2x
+    const low = evaluateEntry(flowCfg, withFlow({ yes: 150, no: 100 }), now);
+    expect(low.ok).toBe(false);
+    expect(low.code).toBe("flow");
+    expect(low.reason).toMatch(/\$150 on YES vs \$100 on NO.*need 2x/);
+    expect(evaluateEntry(flowCfg, withFlow({ yes: 50, no: 0 }), now).ok).toBe(true); // money only on our side
+    expect(evaluateEntry(flowCfg, withFlow({ yes: 0, no: 0 }), now).ok).toBe(false); // no trades at all = no support
+    expect(evaluateEntry(flowCfg, withFlow(null), now).code).toBe("flow"); // data not loaded = never a pass
+    expect(evaluateEntry(cfg, withFlow(null), now).ok).toBe(true); // turned off: unchanged
+    // a NO trade needs the NO money to lead
+    const noViews = (flow: { yes: number; no: number }) => ASSETS.map((a) => ({ asset: a, market: mk(a), quote: q(mk(a).ticker, a === "BTC" ? 0.15 : 0.35, a === "BTC" ? 0.17 : 0.37, now), flow }));
+    expect(evaluateEntry(flowCfg, noViews({ yes: 100, no: 250 }), now).trade?.outcome).toBe("no");
+    expect(evaluateEntry(flowCfg, noViews({ yes: 250, no: 100 }), now).ok).toBe(false);
+  });
+
+  it("order flow totals: add up by side and time frame, ignore repeats, and are not trusted until loaded", () => {
+    const f = new FlowTracker();
+    const T0 = 1_000_000_000_000;
+    f.add("X", { id: "a", side: "yes", ts: T0, contracts: 10, yesPrice: 0.8, noPrice: 0.2 }); // $8 on YES (YES price)
+    f.add("X", { id: "b", side: "no", ts: T0 + 60_000, contracts: 10, yesPrice: 0.8, noPrice: 0.2 }); // $2 on NO (NO price)
+    f.add("X", { id: "b", side: "no", ts: T0 + 60_000, contracts: 10, yesPrice: 0.8, noPrice: 0.2 }); // same trade again: ignored
+    expect(f.totals("X", T0, T0 + 120_000)).toEqual({ yes: 8, no: 2 });
+    expect(f.totals("X", T0 + 30_000, T0 + 120_000)).toEqual({ yes: 0, no: 2 }); // shorter time frame
+    expect(f.isReady("X")).toBe(false);
+    f.markReady("X");
+    expect(f.isReady("X")).toBe(true);
+    f.markAllNotReady();
+    expect(f.isReady("X")).toBe(false);
+    expect(flowPasses(0, 5, 1.5)).toBe(false);
+    expect(flowPasses(15, 10, 1.5)).toBe(true);
+    expect(() => validateBotConfig({ strategy: "crypto", flowRatio: 0.9 })).toThrow(/ratio/i);
+    expect(() => validateBotConfig({ strategy: "crypto", flowWindowMin: 99 })).toThrow(/time frame/i);
+    expect(validateBotConfig({ strategy: "crypto" }).flowOn).toBe(false);
   });
 
   it("waits for the Time Delay and gives the reason", () => {

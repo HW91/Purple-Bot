@@ -8,6 +8,7 @@
  *  - Entry is evaluated on every market update once the Time Delay has passed; the first update where every
  *    condition is true enters immediately. No indicators or extra filters.
  */
+import { flowPasses, flowRatioText } from "./flow";
 import type { AccountLimits, BotConfig, MarketInfo, Quote } from "./types";
 
 export type Direction = "up" | "down";
@@ -21,10 +22,12 @@ export interface AssetView {
   asset: string;
   market: MarketInfo | null;
   quote: Quote | null;
+  /** Money placed on each side over the bot's order-flow time frame. null/undefined = not known (never counts as support). */
+  flow?: { yes: number; no: number } | null;
 }
 
 /** Machine-readable version of the reason, used to summarise why a contract had no trade. */
-export type EntryCode = "ok" | "above_max" | "no_data" | "disagree" | "agreement" | "trade_asset_direction" | "threshold" | "delay" | "time_left" | "spread" | "price" | "size" | "liquidity" | "risk";
+export type EntryCode = "ok" | "flow" | "above_max" | "no_data" | "disagree" | "agreement" | "trade_asset_direction" | "threshold" | "delay" | "time_left" | "spread" | "price" | "size" | "liquidity" | "risk";
 
 export interface EntryDecision {
   ok: boolean;
@@ -136,6 +139,22 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
       lastWhy = `${v.asset} would cost ${pct(costPerContract)} per contract, above your ${pct(cfg.probMax)} maximum`;
       lastCode = "above_max";
       continue;
+    }
+    // Order flow: the money placed on our side must beat the other side by the required ratio (only when turned on).
+    if (cfg.flowOn) {
+      const f = v.flow;
+      if (!f) {
+        lastWhy = `Order flow: no trade data yet for ${v.asset}`;
+        lastCode = "flow";
+        continue;
+      }
+      const mine = outcome === "yes" ? f.yes : f.no;
+      const other = outcome === "yes" ? f.no : f.yes;
+      if (!flowPasses(mine, other, cfg.flowRatio)) {
+        lastWhy = `Order flow: $${mine.toFixed(0)} on ${outcome.toUpperCase()} vs $${other.toFixed(0)} on ${outcome === "yes" ? "NO" : "YES"} (${flowRatioText(mine, other)}), need ${cfg.flowRatio}x or more`;
+        lastCode = "flow";
+        continue;
+      }
     }
     const wanted = Math.floor(cfg.tradeAmount / costPerContract);
     if (wanted < 1) {

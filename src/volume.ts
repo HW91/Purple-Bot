@@ -9,6 +9,7 @@
  */
 
 export interface RawTrade {
+  trade_id?: string;
   count_fp: string;
   yes_price_dollars: string;
   no_price_dollars: string;

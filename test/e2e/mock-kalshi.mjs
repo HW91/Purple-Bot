@@ -36,6 +36,13 @@ export function startMock(port) {
     if (url.pathname.startsWith("/_")) { // test controls (no auth)
       const b = body ? JSON.parse(body) : {};
       if (url.pathname === "/_quote") { for (const t of b.tickers) { state.quotes.set(t, { bid: b.bid, ask: b.ask, bidSize: b.size ?? 100, askSize: b.size ?? 100 }); tick(t); } return send(200, {}); }
+      if (url.pathname === "/_trade") { // a public trade on the live trade channel: { tickers, side, count, yes }
+        for (const t of b.tickers) {
+          const msg = JSON.stringify({ type: "trade", sid: 2, seq: 1, msg: { trade_id: "t" + Math.random().toString(36).slice(2), market_ticker: t, yes_price_dollars: Number(b.yes).toFixed(4), no_price_dollars: (1 - Number(b.yes)).toFixed(4), count_fp: Number(b.count).toFixed(2), taker_side: b.side, taker_outcome_side: b.side, taker_book_side: b.side === "yes" ? "bid" : "ask", is_block_trade: false, ts: Math.floor(Date.now() / 1000), ts_ms: Date.now() } });
+          for (const c of clients) if (c.tradeTickers?.has(t) && c.readyState === 1) c.send(msg);
+        }
+        return send(200, {});
+      }
       if (url.pathname === "/_quiet") { state.quiet = b.on !== false; return send(200, {}); }
       if (url.pathname === "/_settle") { state.results.set(b.ticker, b.result); return send(200, {}); }
       if (url.pathname === "/_state") return send(200, { orders: state.orders, positions: [...state.positions], badAuth: state.badAuth });
@@ -73,12 +80,22 @@ export function startMock(port) {
   server.on("upgrade", (req, socket, head) => {
     if (!verify(req, "/trade-api/ws/v2")) { state.badAuth++; socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); return socket.destroy(); }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      ws.tickers = new Set(); clients.add(ws);
+      ws.tickers = new Set(); ws.tradeTickers = new Set(); clients.add(ws);
       ws.on("close", () => clients.delete(ws));
       ws.on("message", (raw) => {
         const m = JSON.parse(raw.toString());
-        if (m.cmd === "subscribe") { (m.params.market_tickers ?? []).forEach((t) => ws.tickers.add(t)); ws.send(JSON.stringify({ id: m.id, type: "subscribed", msg: { channel: "ticker", sid: 1 } })); (m.params.market_tickers ?? []).forEach(tick); }
-        if (m.cmd === "update_subscription" && m.params.action === "add_markets") { m.params.market_tickers.forEach((t) => ws.tickers.add(t)); m.params.market_tickers.forEach(tick); }
+        if (m.cmd === "subscribe") {
+          const channel = (m.params.channels ?? ["ticker"])[0];
+          const set = channel === "trade" ? ws.tradeTickers : ws.tickers;
+          (m.params.market_tickers ?? []).forEach((t) => set.add(t));
+          ws.send(JSON.stringify({ id: m.id, type: "subscribed", msg: { channel, sid: channel === "trade" ? 2 : 1 } }));
+          if (channel !== "trade") (m.params.market_tickers ?? []).forEach(tick);
+        }
+        if (m.cmd === "update_subscription" && m.params.action === "add_markets") {
+          const isTrade = (m.params.sids ?? []).includes(2);
+          m.params.market_tickers.forEach((t) => (isTrade ? ws.tradeTickers : ws.tickers).add(t));
+          if (!isTrade) m.params.market_tickers.forEach(tick);
+        }
       });
     });
   });

@@ -3,6 +3,7 @@
  * Unlike evaluateEntry (which stops at the first failure), each line here is true or false right now.
  * Display only: it never decides a trade. The "risk" line is filled in by the engine when it tests the limits.
  */
+import { flowPasses, flowRatioText } from "./flow";
 import { directionOf, favorableProb, QUOTE_MAX_AGE_MS, yesProb, type AssetView, type Direction } from "./strategy";
 import type { BotConfig } from "./types";
 
@@ -64,6 +65,7 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number): C
     const names: Array<[string, string]> = [
       ["probMin", "Probability at or above your minimum"],
       ["probMax", "Probability and price paid within your maximum"],
+      ...(cfg.flowOn ? ([["flow", "Money on your side beats the other side"]] as Array<[string, string]>) : []),
       ["delay", "Time Delay passed"],
       ["timeLeft", "Enough time left in the contract"],
       ["spread", "Spread within your limit"],
@@ -86,6 +88,20 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number): C
   line("probMin", minOk, minOk ? `${cfg.tradeAsset} ${OUT} probability ${pct(p)} meets your ${pct(cfg.probThreshold)} minimum` : `${cfg.tradeAsset} ${OUT} probability ${pct(p)} is below your ${pct(cfg.probThreshold)} minimum`);
   const maxOk = p <= cfg.probMax + 1e-9 && cost <= cfg.probMax + 1e-9;
   line("probMax", maxOk, maxOk ? `${cfg.tradeAsset} ${OUT} probability ${pct(p)} and price ${pct(cost)} are within your ${pct(cfg.probMax)} maximum` : p > cfg.probMax + 1e-9 ? `${cfg.tradeAsset} ${OUT} probability ${pct(p)} is above your ${pct(cfg.probMax)} maximum` : `Price paid ${pct(cost)} is above your ${pct(cfg.probMax)} maximum`);
+
+  if (cfg.flowOn) {
+    const f = tv.flow;
+    const span = cfg.flowWindowMin > 0 ? `last ${cfg.flowWindowMin} min` : "whole contract";
+    if (!f) {
+      line("flow", false, `Order flow: no trade data yet (${span})`);
+    } else {
+      const mine = outcome === "yes" ? f.yes : f.no;
+      const other = outcome === "yes" ? f.no : f.yes;
+      const fOk = flowPasses(mine, other, cfg.flowRatio);
+      const nums = `$${mine.toFixed(0)} on ${OUT} vs $${other.toFixed(0)} on ${outcome === "yes" ? "NO" : "YES"}, ${span}`;
+      line("flow", fOk, fOk ? `Money on your side beats the other side: ${nums} (${flowRatioText(mine, other)}, need ${cfg.flowRatio}x)` : `Money on your side is too low: ${nums} (${flowRatioText(mine, other)}, need ${cfg.flowRatio}x)`);
+    }
+  }
 
   const elapsed = (now - m.openTs) / 1000;
   const remaining = (m.closeTs - now) / 1000;

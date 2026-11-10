@@ -38,6 +38,10 @@ export interface BotConfig {
   takeProfitOn: boolean;
   takeProfit: number; // dollars per position
   maxSpread: number; // liquidity check: max (ask - bid) in dollars
+  /** Order flow: only enter when the money placed on our side is at least `flowRatio` times the money on the other side. */
+  flowOn: boolean;
+  flowWindowMin: number; // minutes of trades to add up (0 = the whole contract so far)
+  flowRatio: number; // required (our side $) / (other side $), at least 1
   notify: NotifyMode;
 }
 
@@ -109,6 +113,9 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     takeProfitOn: true,
     takeProfit: 1.0,
     maxSpread: 0.06,
+    flowOn: false,
+    flowWindowMin: 3,
+    flowRatio: 1.5,
     notify: "immediate",
   };
 }
@@ -150,6 +157,9 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     takeProfitOn: bool(input.takeProfitOn, d.takeProfitOn),
     takeProfit: num(input.takeProfit, d.takeProfit),
     maxSpread: num(input.maxSpread, d.maxSpread),
+    flowOn: bool(input.flowOn, d.flowOn),
+    flowWindowMin: Math.round(num(input.flowWindowMin, d.flowWindowMin)),
+    flowRatio: num(input.flowRatio, d.flowRatio),
     // the old "hourly" choice no longer exists (the AI overview is daily now), so saved hourly bots become daily
     notify: (input.notify as string) === "hourly" ? "daily" : (["immediate", "daily", "off"] as const).includes(input.notify as NotifyMode) ? (input.notify as NotifyMode) : d.notify,
   };
@@ -178,5 +188,7 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
   if (cfg.stopLossOn && !(cfg.stopLoss > 0)) throw new Error("Stop loss must be greater than zero");
   if (cfg.takeProfitOn && !(cfg.takeProfit > 0)) throw new Error("Take profit must be greater than zero");
   if (!(cfg.maxSpread > 0 && cfg.maxSpread < 1)) throw new Error("Max spread must be between $0 and $1");
+  if (cfg.flowWindowMin < 0 || cfg.flowWindowMin > cfg.durationMin) throw new Error(`Order flow time frame must be between 0 (whole contract) and ${cfg.durationMin} minutes`);
+  if (!(cfg.flowRatio >= 1 && cfg.flowRatio <= 1000)) throw new Error("Order flow ratio must be at least 1 (for example 1.5 means your side needs 1.5 times the other side's money)");
   return cfg;
 }
