@@ -151,7 +151,10 @@ function buildNav(){
 }
 function go(t){tab=t;try{history.replaceState(null,'','#'+encodeURIComponent(t))}catch(e){}buildNav();if(pollTimer){clearInterval(pollTimer);pollTimer=null}
   var v={Dashboard:vDash,Bots:vBots,Trades:vTrades,Charts:vCharts,AI:vAI,Backtest:vBacktest,Settings:vSettings,Logs:vLogs}[t];
-  $('#main').textContent='';v();}
+  $('#main').textContent='';v();
+  // the Dashboard refreshes the header every few seconds on its own; on every other tab, load the balance once per switch
+  if(t!=='Dashboard')api('/live').then(function(l){live=l;updateHeader()}).catch(function(){});
+}
 
 $('#emergencyBtn').addEventListener('click',function(){
   if(!confirm('EMERGENCY SHUTDOWN: turn every bot OFF and try to close every open position now. Continue?'))return;
