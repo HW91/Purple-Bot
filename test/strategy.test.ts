@@ -68,6 +68,18 @@ describe("crypto entry", () => {
     expect(evaluateEntry(cfg, high, now).ok).toBe(true);
   });
 
+  it("buys what is available when fewer contracts are on offer than wanted, and skips only when none are", () => {
+    const withSize = (size: number) => ASSETS.map((a) => ({ asset: a, market: mk(a), quote: q(mk(a).ticker, a === "BTC" ? 0.83 : 0.6, a === "BTC" ? 0.85 : 0.62, now, size) }));
+    const few = evaluateEntry(cfg, withSize(3), now); // wants 5, only 3 on offer
+    expect(few.ok).toBe(true);
+    expect(few.trade!.count).toBe(3);
+    const plenty = evaluateEntry(cfg, withSize(100), now);
+    expect(plenty.trade!.count).toBe(5);
+    const none = evaluateEntry(cfg, withSize(0), now);
+    expect(none.ok).toBe(false);
+    expect(none.code).toBe("liquidity");
+  });
+
   it("waits for the Time Delay and gives the reason", () => {
     const early = OPEN + 2 * 60_000;
     const views = ASSETS.map((a) => view(a, 0.83, 0.85, early));

@@ -137,16 +137,18 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
       lastCode = "above_max";
       continue;
     }
-    const count = Math.floor(cfg.tradeAmount / costPerContract);
-    if (count < 1) {
+    const wanted = Math.floor(cfg.tradeAmount / costPerContract);
+    if (wanted < 1) {
       lastWhy = `Trade amount $${cfg.tradeAmount} buys less than 1 contract at $${costPerContract.toFixed(2)}`;
       lastCode = "size";
       continue;
     }
     // Liquidity: for a YES buy we lift the YES ask; for a NO buy we hit the YES bid.
+    // If fewer contracts are on offer than we want, buy what is available (one buy per contract).
     const depth = outcome === "yes" ? q.yesAskSize : q.yesBidSize;
-    if (depth < count) {
-      lastWhy = `${v.asset} only has ${depth} contracts at the best price (need ${count})`;
+    const count = Math.min(wanted, Math.floor(depth));
+    if (count < 1) {
+      lastWhy = `${v.asset} has no contracts at the best price`;
       lastCode = "liquidity";
       continue;
     }
