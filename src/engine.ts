@@ -88,6 +88,8 @@ export class Engine extends DurableObject<Env> {
   private tradeSubscribed = new Set<string>();
   private flow = new FlowTracker();
   private flowLoading = new Set<string>();
+  private flowIncomplete = new Set<string>();
+  private flowMeta = new Map<string, { asset: string; openTs: number; closeTs: number }>(); // contracts being recorded, until they end
   private downSince: number | null = null;
   private restFallback = false;
 
@@ -201,6 +203,7 @@ export class Engine extends DurableObject<Env> {
       if (!this.ws) await this.openSocket();
       this.syncSubscription(); // new contracts, or an order-flow bot was just turned on
       await this.ensureFlowReady();
+      await this.saveFlowSummaries();
       if (!this.ws || this.restFallback) await this.restPoll();
       else await this.refreshQuietQuotes();
       if (!this.reconciled || now - this.lastReconcile > 300_000) await this.reconcile();
@@ -443,9 +446,10 @@ export class Engine extends DurableObject<Env> {
         console.error("subscribe send failed", e);
       }
     }
-    // trade channel (only while an enabled bot uses order flow)
-    if (this.wantFlow()) {
-      const wantT = [...this.markets.keys()].filter((t) => !this.tradeSubscribed.has(t));
+    // trade channel: only the contract each enabled bot trades (order-flow decisions, and the money record the AI reads)
+    {
+      const traded = this.tradedTickers(Date.now());
+      const wantT = [...traded].filter((t) => !this.tradeSubscribed.has(t));
       if (wantT.length > 0) {
         try {
           if (this.tradeSid === null && this.tradeSubscribed.size === 0) {
@@ -462,16 +466,23 @@ export class Engine extends DurableObject<Env> {
     }
   }
 
-  private wantFlow(): boolean {
-    return this.bots.some((b) => b.enabled && b.config.flowOn);
+  /** The current contract of every asset an enabled bot trades. */
+  private tradedTickers(now: number): Set<string> {
+    const out = new Set<string>();
+    for (const bot of this.bots) {
+      if (!bot.enabled) continue;
+      const m = this.currentMarket(bot.config.tradeAsset, now);
+      if (m) out.add(m.ticker);
+    }
+    return out;
   }
 
   /** Load the trades placed before we subscribed (once per contract), so the running totals are complete before any decision uses them. */
   private async ensureFlowReady(): Promise<void> {
-    if (!this.client || !this.ws || this.tradeSid === null || !this.wantFlow()) return;
+    if (!this.client || !this.ws || this.tradeSid === null) return;
     const now = Date.now();
     for (const bot of this.bots) {
-      if (!bot.enabled || !bot.config.flowOn) continue;
+      if (!bot.enabled) continue;
       const m = this.currentMarket(bot.config.tradeAsset, now);
       if (!m || this.flow.isReady(m.ticker) || !this.tradeSubscribed.has(m.ticker) || this.flowLoading.has(m.ticker)) continue;
       this.flowLoading.add(m.ticker);
@@ -480,13 +491,41 @@ export class Engine extends DurableObject<Env> {
         for (const t of trades) {
           this.flow.add(m.ticker, { id: t.trade_id, side: t.taker_outcome_side === "no" ? "no" : "yes", ts: Date.parse(t.created_time), contracts: num(t.count_fp), yesPrice: num(t.yes_price_dollars), noPrice: num(t.no_price_dollars) });
         }
-        if (truncated) await log(this.env, "warn", "system", `Order flow: ${m.ticker} had more trades than could be loaded; totals for long time frames may be low`, bot.id);
+        if (truncated) {
+          this.flowIncomplete.add(m.ticker); // the contract had more trades than we could load: its totals are low, so it is not saved for the AI
+          await log(this.env, "warn", "system", `Order flow: ${m.ticker} had more trades than could be loaded; totals for long time frames may be low`, bot.id);
+        }
+        this.flowMeta.set(m.ticker, { asset: m.asset, openTs: m.openTs, closeTs: m.closeTs });
         this.flow.markReady(m.ticker);
       } catch (e) {
         if (e instanceof KalshiAuthError) throw e; // anything else: stay "not ready", so no trade is taken on partial totals
       } finally {
         this.flowLoading.delete(m.ticker);
       }
+    }
+  }
+
+  /** When a contract has ended, save its money totals (per minute) for the AI, then forget its trades. Only complete records are saved. */
+  private async saveFlowSummaries(): Promise<void> {
+    const now = Date.now();
+    for (const [ticker, meta] of [...this.flowMeta]) {
+      if (now < meta.closeTs + 3_000) continue;
+      this.flowMeta.delete(ticker);
+      const complete = this.flow.isReady(ticker) && !this.flowIncomplete.has(ticker);
+      if (complete) {
+        const minutes = this.flow.byMinute(ticker, meta.openTs, meta.closeTs);
+        const yes = Math.round(minutes.reduce((s, m) => s + m[0], 0) * 100) / 100;
+        const no = Math.round(minutes.reduce((s, m) => s + m[1], 0) * 100) / 100;
+        try {
+          await this.env.DB.prepare("INSERT OR REPLACE INTO contract_flow (ticker, asset, open_ts, close_ts, yes_dollars, no_dollars, minutes, saved_ts) VALUES (?,?,?,?,?,?,?,?)")
+            .bind(ticker, meta.asset, meta.openTs, meta.closeTs, yes, no, JSON.stringify(minutes), now)
+            .run();
+        } catch (e) {
+          console.error("saveFlowSummaries failed", e);
+        }
+      }
+      this.flowIncomplete.delete(ticker);
+      this.flow.forget(ticker);
     }
     this.flow.prune(now);
   }

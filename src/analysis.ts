@@ -146,6 +146,86 @@ export async function describeTrades(env: Env, rows: PositionRow[]): Promise<Tra
   });
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Money placed on each side of a contract (from the live trade feed, saved when each contract ended)
+// ---------------------------------------------------------------------------------------------------------------
+
+export interface FlowRow {
+  ticker: string;
+  asset: string;
+  open_ts: number;
+  close_ts: number;
+  yes_dollars: number;
+  no_dollars: number;
+  minutes: string; // JSON [[yes, no], ...] per minute
+}
+
+export interface MoneyFlow {
+  contractsRecorded: number;
+  /** newest first */
+  recentContracts: Array<{ asset: string; ended: string; yesDollars: number; noDollars: number; yesToNoRatio: number | null; finalResult: "yes" | "no" | null }>;
+  /** For each trade: money on our side vs the other side over the 3 minutes up to and including the entry minute, and over the whole contract. ratio = our side / other side (null when the other side had none). */
+  tradesWithMoney: Array<{ asset: string; side: "yes" | "no"; entered: string; result: string | null; ourSide3min: number; otherSide3min: number; ratio3min: number | null; ratioWholeContract: number | null }>;
+  winsVsLosses: { wins: { trades: number; medianRatio3min: number | null }; losses: { trades: number; medianRatio3min: number | null } };
+}
+
+const ratioOf = (a: number, b: number): number | null => (b > 0 ? Math.round((a / b) * 100) / 100 : null);
+const median = (xs: number[]): number | null => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : Math.round(((s[mid - 1] + s[mid]) / 2) * 100) / 100;
+};
+
+export function moneyFlowSummary(rows: FlowRow[], trades: Array<Pick<PositionRow, "ticker" | "outcome" | "opened_ts" | "result">>, results: Map<string, string | null>): MoneyFlow {
+  const byTicker = new Map(rows.map((r) => [r.ticker, r]));
+  const sorted = [...rows].sort((a, b) => b.close_ts - a.close_ts);
+  const recentContracts = sorted.slice(0, 12).map((r) => {
+    const res = results.get(r.ticker);
+    const finalResult: "yes" | "no" | null = res === "yes" ? "yes" : res === "no" ? "no" : null;
+    return { asset: r.asset, ended: etStamp(r.close_ts), yesDollars: r2(r.yes_dollars), noDollars: r2(r.no_dollars), yesToNoRatio: ratioOf(r.yes_dollars, r.no_dollars), finalResult };
+  });
+  const tradesWithMoney: MoneyFlow["tradesWithMoney"] = [];
+  const winRatios: number[] = [];
+  const lossRatios: number[] = [];
+  let wins = 0;
+  let losses = 0;
+  for (const t of trades) {
+    const r = byTicker.get(t.ticker);
+    if (!r) continue;
+    let minutes: Array<[number, number]>;
+    try {
+      minutes = JSON.parse(r.minutes);
+    } catch {
+      continue;
+    }
+    const idx = t.outcome === "yes" ? 0 : 1;
+    const entryMin = Math.min(minutes.length - 1, Math.max(0, Math.floor((t.opened_ts - r.open_ts) / 60_000)));
+    let ours = 0;
+    let other = 0;
+    for (let m = Math.max(0, entryMin - 2); m <= entryMin; m++) {
+      ours += minutes[m]?.[idx] ?? 0;
+      other += minutes[m]?.[1 - idx] ?? 0;
+    }
+    const whole = t.outcome === "yes" ? ratioOf(r.yes_dollars, r.no_dollars) : ratioOf(r.no_dollars, r.yes_dollars);
+    const ratio3 = ratioOf(ours, other);
+    tradesWithMoney.push({ asset: r.asset, side: t.outcome, entered: etStamp(t.opened_ts), result: t.result, ourSide3min: Math.round(ours), otherSide3min: Math.round(other), ratio3min: ratio3, ratioWholeContract: whole });
+    if (t.result === "win") {
+      wins++;
+      if (ratio3 !== null) winRatios.push(ratio3);
+    } else if (t.result === "loss") {
+      losses++;
+      if (ratio3 !== null) lossRatios.push(ratio3);
+    }
+  }
+  return {
+    contractsRecorded: rows.length,
+    recentContracts,
+    tradesWithMoney: tradesWithMoney.slice(0, 30),
+    winsVsLosses: { wins: { trades: wins, medianRatio3min: median(winRatios) }, losses: { trades: losses, medianRatio3min: median(lossRatios) } },
+  };
+}
+
 interface Reliability {
   contracts: number;
   reached: number; // times a side reached 80%+ in the tradeable part of a contract
@@ -187,6 +267,7 @@ export interface DayStats {
   perf: Performance;
   byEntryHour: Array<{ hour: string; trades: number; wins: number; losses: number; pnl: number }>;
   stopLossTakeProfitHindsight: Record<string, Hindsight>;
+  moneyFlow: MoneyFlow; // how much money was placed on YES and NO in each recorded contract, and at each trade's entry
   earlyExits: TradeDetail[]; // each trade closed early, with what the price did after the exit until the contract closed (up to 40)
   blockedBy: { contractsWatched: number; contractsTraded: number; share: Array<{ code: string; pctOfTime: number; example: string }> };
   reliability: { day: Reliability; byHour: Array<Reliability & { hour: number }>; previous7DaysAverage: Reliability | null };
@@ -243,6 +324,15 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
     .slice(0, 6)
     .map(([code, k]) => ({ code, pctOfTime: samples ? Math.round((100 * k) / samples) : 0, example: examples[code] }));
 
+  const flowRows = (await env.DB.prepare("SELECT ticker, asset, open_ts, close_ts, yes_dollars, no_dollars, minutes FROM contract_flow WHERE close_ts >= ? AND close_ts < ? ORDER BY close_ts DESC LIMIT 400").bind(start, end).all<FlowRow>()).results ?? [];
+  const flowResults = new Map<string, string | null>();
+  for (let i = 0; i < flowRows.length; i += 80) {
+    const c = flowRows.slice(i, i + 80).map((r) => r.ticker);
+    const res = await env.DB.prepare(`SELECT ticker, result FROM markets WHERE ticker IN (${c.map(() => "?").join(",")})`).bind(...c).all<{ ticker: string; result: string | null }>();
+    for (const m of res.results ?? []) flowResults.set(m.ticker, m.result);
+  }
+  const moneyFlow = moneyFlowSummary(flowRows, closed, flowResults);
+
   const day = await reliability(env, start, end);
   const prev = await reliability(env, start - 7 * 86_400_000, start);
   const prevDays = 7;
@@ -267,6 +357,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
     perf,
     byEntryHour: [...hours.entries()].sort((a, b) => a[0] - b[0]).map(([h, v]) => ({ hour: hourLabel(h), ...v, pnl: Math.round(v.pnl * 100) / 100 })),
     stopLossTakeProfitHindsight: hindsightFor(early),
+    moneyFlow,
     earlyExits: await describeTrades(env, closed.filter((p) => p.close_reason === "stop_loss" || p.close_reason === "take_profit").slice(0, 40)),
     blockedBy: { contractsWatched: notes.length, contractsTraded: tradedContracts, share },
     reliability: {
@@ -287,6 +378,7 @@ const PROMPT =
   "(2) blockedBy: what kept the bots from trading, and what share of the tradeable time each blocker accounted for; " +
   "(3) stopLossTakeProfitHindsight: for trades that were stopped out or took profit early, how many would have finished in our favor had they been held, and what holding would have made versus what they actually made (this is hindsight and ignores the risk the exit removed; say so). earlyExits lists each such trade in full, including finalResult (how the 15-minute contract finally settled), ifHeldPnl, and afterExit (our side's best, worst and last probability after the exit until the contract closed): use it to say whether stopped-out trades recovered; " +
   "(4) reliability: how often a side reached 80% and then lost, versus the previous 7-day daily average, and any hours that stand out; " +
+  "(4b) moneyFlow: how much money was placed on YES and on NO in each recorded contract, and whether the money on our side at entry (the ratio of our side to the other side over the 3 minutes up to the entry) looked different on winning trades than on losing ones; say how many trades each number rests on, and if contractsRecorded is 0 or the sample is small write 'not enough data'; " +
   "(5) at most three specific setting changes worth testing, each with the measured evidence and the sample size behind it. " +
   "HOW TO WRITE: plain text only. No markdown: no asterisks, no bold, no headings, no code formatting. Never use field names or technical words from the data, and do not write the words measured or hypothesis or tag points. One point per line starting with a dash, each starting with its conclusion, then the numbers behind it. If you are guessing, say 'My guess:' before it. If a sample is too small to conclude anything, write 'not enough data' instead of guessing. Never invent numbers or trades. No disclaimers or reminders about being advisory. Use the Kalshi rules below only to understand how contracts are defined and settled.\n\n";
 

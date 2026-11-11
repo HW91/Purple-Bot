@@ -68,6 +68,30 @@ export class FlowTracker {
     return { yes: Math.round(out.yes * 100) / 100, no: Math.round(out.no * 100) / 100 };
   }
 
+  /** Money on each side for every minute of a contract (minute 0 = the minute it opened). */
+  byMinute(ticker: string, openTs: number, closeTs: number): Array<[number, number]> {
+    const count = Math.max(1, Math.ceil((closeTs - openTs) / 60_000));
+    const rows: Array<[number, number]> = Array.from({ length: count }, () => [0, 0]);
+    const b = this.buckets.get(ticker);
+    if (b) {
+      for (const [sec, cell] of b) {
+        const ms = sec * 1000;
+        if (ms < openTs || ms >= closeTs) continue;
+        const i = Math.min(count - 1, Math.floor((ms - openTs) / 60_000));
+        rows[i][0] += cell.yes;
+        rows[i][1] += cell.no;
+      }
+    }
+    return rows.map(([y, n]) => [Math.round(y * 100) / 100, Math.round(n * 100) / 100]);
+  }
+
+  /** A finished contract has been saved: drop its trades. */
+  forget(ticker: string): void {
+    this.buckets.delete(ticker);
+    this.ids.delete(ticker);
+    this.readySet.delete(ticker);
+  }
+
   isReady(ticker: string): boolean {
     return this.readySet.has(ticker);
   }

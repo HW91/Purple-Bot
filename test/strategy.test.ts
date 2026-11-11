@@ -3,7 +3,7 @@ import { checklistFor } from "../src/checklist";
 import { FlowTracker, flowPasses } from "../src/flow";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
-import { hindsightFor, etDateString, enrichTrade } from "../src/analysis";
+import { hindsightFor, etDateString, enrichTrade, moneyFlowSummary } from "../src/analysis";
 import type { PositionRow } from "../src/db";
 import { cleanAiText } from "../src/notify";
 import { aggregateTrades, attachMarketProb } from "../src/volume";
@@ -140,6 +140,32 @@ describe("crypto entry", () => {
     const noViews = (flow: { yes: number; no: number }) => ASSETS.map((a) => ({ asset: a, market: mk(a), quote: q(mk(a).ticker, a === "BTC" ? 0.15 : 0.35, a === "BTC" ? 0.17 : 0.37, now), flow }));
     expect(evaluateEntry(flowCfg, noViews({ yes: 100, no: 250 }), now).trade?.outcome).toBe("no");
     expect(evaluateEntry(flowCfg, noViews({ yes: 250, no: 100 }), now).ok).toBe(false);
+  });
+
+  it("money per minute: byMinute splits a contract into minutes, and the AI summary compares winners with losers", () => {
+    const f = new FlowTracker();
+    const T0 = 1_000_000_000_000;
+    f.add("X", { id: "1", side: "yes", ts: T0 + 5_000, contracts: 10, yesPrice: 0.8, noPrice: 0.2 }); // minute 0: $8 YES
+    f.add("X", { id: "2", side: "no", ts: T0 + 65_000, contracts: 10, yesPrice: 0.8, noPrice: 0.2 }); // minute 1: $2 NO
+    f.add("X", { id: "3", side: "yes", ts: T0 + 70_000, contracts: 5, yesPrice: 0.8, noPrice: 0.2 }); // minute 1: $4 YES
+    expect(f.byMinute("X", T0, T0 + 3 * 60_000)).toEqual([[8, 0], [4, 2], [0, 0]]);
+    f.forget("X");
+    expect(f.totals("X", T0, T0 + 200_000)).toEqual({ yes: 0, no: 0 });
+    const rows = [
+      { ticker: "A", asset: "BTC", open_ts: T0, close_ts: T0 + 900_000, yes_dollars: 300, no_dollars: 100, minutes: JSON.stringify(Array.from({ length: 15 }, () => [20, 6.67])) },
+      { ticker: "B", asset: "BTC", open_ts: T0, close_ts: T0 + 1_800_000, yes_dollars: 100, no_dollars: 400, minutes: JSON.stringify(Array.from({ length: 15 }, () => [6.67, 26.67])) },
+    ];
+    const trades = [
+      { ticker: "A", outcome: "yes" as const, opened_ts: T0 + 6 * 60_000, result: "win" },
+      { ticker: "B", outcome: "yes" as const, opened_ts: T0 + 6 * 60_000, result: "loss" },
+      { ticker: "C", outcome: "no" as const, opened_ts: T0, result: "win" }, // no money record: left out
+    ];
+    const s = moneyFlowSummary(rows, trades, new Map([["A", "yes"], ["B", "no"]]));
+    expect(s.contractsRecorded).toBe(2);
+    expect(s.tradesWithMoney.length).toBe(2);
+    expect(s.tradesWithMoney[0]).toMatchObject({ side: "yes", ratio3min: 3, ratioWholeContract: 3, result: "win" });
+    expect(s.winsVsLosses).toEqual({ wins: { trades: 1, medianRatio3min: 3 }, losses: { trades: 1, medianRatio3min: 0.25 } });
+    expect(s.recentContracts[0]).toMatchObject({ yesToNoRatio: 0.25, finalResult: "no" });
   });
 
   it("order flow totals: add up by side and time frame, ignore repeats, and are not trusted until loaded", () => {

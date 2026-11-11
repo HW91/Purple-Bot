@@ -112,6 +112,14 @@ try {
   ok("the final result is saved for a contract the bot never traded (so early exits and backtests can use it)", !!dogeSaved, JSON.stringify((await api("/chart/periods?asset=DOGE")).j));
   const settled = await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === bots2), 90000);
   ok("ETH position held to expiry and settled as a win", !!settled && settled.close_reason === "settled" && settled.result === "win" && Math.abs(settled.realized_pnl - 0.65) < 0.011 && settled.exit_prob === 1, JSON.stringify(settled));
+  // the money placed on each side of the ETH contract was recorded from the trade feed and saved when it ended (the AI reads it)
+  const flowRow = await waitFor(async () => {
+    try {
+      const out = JSON.parse(execSync(`npx wrangler d1 execute purple-bot-db --local --persist-to ${persist} --json --command "SELECT ticker, yes_dollars, no_dollars, minutes FROM contract_flow"`, { cwd: root, stdio: ["ignore", "pipe", "ignore"] }).toString());
+      return (out[0]?.results ?? []).find((r) => r.ticker === T("ETH")) ?? null;
+    } catch { return null; }
+  }, 60000, 3000);
+  ok("the contract's money totals (YES $6.47, NO $10.60 in the fake exchange's trades) were saved when it ended, minute by minute", !!flowRow && Math.abs(flowRow.yes_dollars - 6.47) < 0.011 && Math.abs(flowRow.no_dollars - 10.6) < 0.011 && JSON.parse(flowRow.minutes).length >= 2, JSON.stringify(flowRow));
 
   // ---- G. emergency shutdown
   const dup2 = (await api(`/bots/${bot1}/duplicate`, "POST")).j.id;
@@ -129,7 +137,7 @@ try {
   ok("control events + orders are logged", logs.some((l) => l.kind === "control" && /START BOT/.test(l.message)) && logs.some((l) => l.kind === "order" && /ENTERED/.test(l.message)) && logs.some((l) => /EMERGENCY/.test(l.message)));
   ok("signal reasons recorded (why entered / skipped)", logs.some((l) => l.kind === "signal"));
   const ov = await api("/analyze", "POST");
-  ok("daily overview (today so far) runs on demand, sends the day's measured data, and keeps the AI's real answer", ov.status === 200 && ov.j.ai === true && /^Overview for today so far/.test(ov.j.text) && /\[has:blockedBy,stopLossTakeProfitHindsight,reliability,byEntryHour,earlyExits,rules\]/.test(ov.j.text), JSON.stringify(ov.j).slice(0, 300));
+  ok("daily overview (today so far) runs on demand, sends the day's measured data, and keeps the AI's real answer", ov.status === 200 && ov.j.ai === true && /^Overview for today so far/.test(ov.j.text) && /\[has:blockedBy,stopLossTakeProfitHindsight,reliability,byEntryHour,earlyExits,moneyFlow,rules\]/.test(ov.j.text), JSON.stringify(ov.j).slice(0, 300));
   const analyses = (await api("/analyses")).j;
   ok("the overview is saved and listed", analyses.length >= 1 && /MOCK AI ANSWER/.test(analyses[0].text));
   ok("the overview can't be spammed", (await api("/analyze", "POST")).status === 429);
@@ -138,7 +146,7 @@ try {
   const chat = await api("/chat", "POST", { message: "Why was the last trade a loss?", botId: bot1 });
   ok("AI chat answers via the coach worker and is saved", chat.status === 200 && chat.j.answer === "MOCK AI ANSWER" && (await api(`/chat/${chat.j.convId}`)).j.length === 2, JSON.stringify(chat.j));
   const chatData = await api("/chat", "POST", { message: "ECHO_DATA what does the stop loss do?" });
-  ok("chat receives the strategy data (hindsight, blocked reasons, entry hours) and the recent trades", chatData.status === 200 && /\[has:strategyStats,stopLossTakeProfitHindsight,blockedBy,byEntryHour,recentTrades,latestDailyOverview,rules,tradeDetail\]/.test(chatData.j.answer) && Number((chatData.j.answer.match(/trades:(\d+)/) || [])[1]) >= 4, chatData.j.answer);
+  ok("chat receives the strategy data (hindsight, blocked reasons, entry hours) and the recent trades", chatData.status === 200 && /\[has:strategyStats,stopLossTakeProfitHindsight,blockedBy,byEntryHour,moneyFlow,recentTrades,latestDailyOverview,rules,tradeDetail\]/.test(chatData.j.answer) && Number((chatData.j.answer.match(/trades:(\d+)/) || [])[1]) >= 4, chatData.j.answer);
   await api(`/chat/${chatData.j.convId}`, "DELETE");
   const chatFail = await api("/chat", "POST", { message: "FAIL_AI please", botId: bot1 });
   ok("the coach's apology reply is treated as a failure, not shown as an answer", chatFail.status === 200 && /couldn't reach the AI/.test(chatFail.j.answer) && !/having trouble connecting/.test(chatFail.j.answer), JSON.stringify(chatFail.j));
