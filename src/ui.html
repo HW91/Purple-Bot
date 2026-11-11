@@ -323,7 +323,7 @@ function vBots(){
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
       h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}})),
       h('div',{class:'row',style:'margin-top:10px'},botButtons(b,load)),
-      h('div',{class:'mute',text:'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')+(b.config.flowOn?' · money ratio ≥ '+b.config.flowRatio+' ('+(b.config.flowWindowMin>0?'last '+b.config.flowWindowMin+' min':'whole contract')+')':'')})));
+      h('div',{class:'mute',text:'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')+(b.config.noTradeWindows&&b.config.noTradeWindows.length?' · '+b.config.noTradeWindows.length+' no-trade window(s)':'')+(b.config.flowOn?' · money ratio ≥ '+b.config.flowRatio+' ('+(b.config.flowWindowMin>0?'last '+b.config.flowWindowMin+' min':'whole contract')+')':'')})));
   })})}
   function field(label,input,hint){return h('div',null,h('label',{text:label}),input,hint?h('small',{text:hint,style:'display:block;margin-top:2px'}):null)}
   function editBot(b,strategy){
@@ -361,11 +361,21 @@ function vBots(){
         field('Take profit ($ per position)',h('div',{class:'row'},tp,num('takeProfit'))),
         field('Email notifications',nt)));
       f.appendChild(h('div',{style:'margin-top:10px'},h('label',{text:'Assets'}),assets));
+      // no-trade windows: times of day (US Eastern) when this bot opens no new trades; tap + to add another
+      var winBox=h('div');
+      function addWin(w){
+        var s=h('input',{type:'time',value:w?w.start:'',style:'width:130px'}),e=h('input',{type:'time',value:w?w.end:'',style:'width:130px'});
+        var row=h('div',{class:'row','data-w':'1',style:'margin-bottom:6px'},s,h('span',{class:'mute',text:'to'}),e,h('button',{class:'btn gray',text:'✕',title:'Remove this window',onclick:function(){row.remove()}}));
+        row._s=s;row._e=e;winBox.appendChild(row);
+      }
+      (cfg.noTradeWindows||[]).forEach(addWin);
+      f.appendChild(h('div',{style:'margin-top:14px'},h('label',{text:'No-trade windows (US Eastern time)'}),h('small',{text:'The bot opens no new trades between these times, every day. Open positions are still managed. A window can run past midnight (for example 10:00 PM to 1:00 AM).',style:'display:block;margin-bottom:6px'}),winBox,h('button',{class:'btn gray',text:'+ Add window',onclick:function(){addWin(null)}})));
       f.appendChild(h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){
         var out={strategy:s,durationMin:cfg.durationMin};
         ['probThreshold','probMax'].forEach(function(k){out[k]=+inp[k].value/100});
         ['agreeCount','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
         out.flowOn=fl.checked;
+        out.noTradeWindows=[].slice.call(winBox.children).map(function(r){return {start:r._s.value,end:r._e.value}}).filter(function(w){return w.start||w.end});
         out.tradeAsset=tradeSel.value;
         out.stopLossOn=sl.checked;out.takeProfitOn=tp.checked;out.notify=nt.value;
         out.assets=[].slice.call(f.querySelectorAll('[data-a]')).filter(function(x){return x.checked}).map(function(x){return x.getAttribute('data-a')});

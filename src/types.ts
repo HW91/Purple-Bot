@@ -1,3 +1,5 @@
+import { MAX_WINDOWS, parseHHMM, type TimeWindow } from "./windows";
+
 export interface Env {
   DB: D1Database;
   ENGINE: DurableObjectNamespace;
@@ -42,6 +44,7 @@ export interface BotConfig {
   flowOn: boolean;
   flowWindowMin: number; // minutes of trades to add up (0 = the whole contract so far)
   flowRatio: number; // required (our side $) / (other side $), at least 1
+  noTradeWindows: TimeWindow[]; // times of day (US Eastern) when no new trade is opened
   notify: NotifyMode;
 }
 
@@ -116,6 +119,7 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     flowOn: false,
     flowWindowMin: 3,
     flowRatio: 1.5,
+    noTradeWindows: [],
     notify: "immediate",
   };
 }
@@ -160,6 +164,7 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     flowOn: bool(input.flowOn, d.flowOn),
     flowWindowMin: Math.round(num(input.flowWindowMin, d.flowWindowMin)),
     flowRatio: num(input.flowRatio, d.flowRatio),
+    noTradeWindows: (Array.isArray(input.noTradeWindows) ? input.noTradeWindows : d.noTradeWindows).map((w) => ({ start: String(w?.start ?? ""), end: String(w?.end ?? "") })),
     // the old "hourly" choice no longer exists (the AI overview is daily now), so saved hourly bots become daily
     notify: (input.notify as string) === "hourly" ? "daily" : (["immediate", "daily", "off"] as const).includes(input.notify as NotifyMode) ? (input.notify as NotifyMode) : d.notify,
   };
@@ -189,6 +194,13 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
   if (cfg.takeProfitOn && !(cfg.takeProfit > 0)) throw new Error("Take profit must be greater than zero");
   if (!(cfg.maxSpread > 0 && cfg.maxSpread < 1)) throw new Error("Max spread must be between $0 and $1");
   if (cfg.flowWindowMin < 0 || cfg.flowWindowMin > cfg.durationMin) throw new Error(`Order flow time frame must be between 0 (whole contract) and ${cfg.durationMin} minutes`);
+  if (cfg.noTradeWindows.length > MAX_WINDOWS) throw new Error(`At most ${MAX_WINDOWS} no-trade windows`);
+  for (const w of cfg.noTradeWindows) {
+    const s = parseHHMM(w.start);
+    const e = parseHHMM(w.end);
+    if (s === null || e === null) throw new Error("Each no-trade window needs a start and an end time");
+    if (s === e) throw new Error("A no-trade window's start and end times must be different");
+  }
   if (!(cfg.flowRatio >= 1 && cfg.flowRatio <= 1000)) throw new Error("Order flow ratio must be at least 1 (for example 1.5 means your side needs 1.5 times the other side's money)");
   return cfg;
 }

@@ -4,6 +4,7 @@
  * Display only: it never decides a trade. The "risk" line is filled in by the engine when it tests the limits.
  */
 import { dollars0, flowPasses, flowRatioText } from "./flow";
+import { activeWindow, windowText } from "./windows";
 import { directionOf, favorableProb, QUOTE_MAX_AGE_MS, yesProb, type AssetView, type Direction } from "./strategy";
 import type { BotConfig } from "./types";
 
@@ -30,6 +31,12 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number): C
   const tv = fresh.find((v) => v.asset === cfg.tradeAsset);
   const out: CheckLine[] = [];
   const line = (key: string, ok: boolean | null, text: string) => out.push({ key, ok, text });
+
+  // 0. no-trade windows (only shown when the bot has any)
+  if (cfg.noTradeWindows.length) {
+    const win = activeWindow(cfg.noTradeWindows, now);
+    line("window", win === null, win ? `Inside a no-trade window: ${windowText(win)}` : "Outside your no-trade windows");
+  }
 
   // 1. live prices
   const needed = cfg.strategy === "metals" ? cfg.assets : [cfg.tradeAsset];

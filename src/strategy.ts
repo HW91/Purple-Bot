@@ -9,6 +9,7 @@
  *    condition is true enters immediately. No indicators or extra filters.
  */
 import { dollars0, flowPasses, flowRatioText } from "./flow";
+import { activeWindow, windowText } from "./windows";
 import type { AccountLimits, BotConfig, MarketInfo, Quote } from "./types";
 
 export type Direction = "up" | "down";
@@ -27,7 +28,7 @@ export interface AssetView {
 }
 
 /** Machine-readable version of the reason, used to summarise why a contract had no trade. */
-export type EntryCode = "ok" | "flow" | "above_max" | "no_data" | "disagree" | "agreement" | "trade_asset_direction" | "threshold" | "delay" | "time_left" | "spread" | "price" | "size" | "liquidity" | "risk";
+export type EntryCode = "ok" | "window" | "flow" | "above_max" | "no_data" | "disagree" | "agreement" | "trade_asset_direction" | "threshold" | "delay" | "time_left" | "spread" | "price" | "size" | "liquidity" | "risk";
 
 export interface EntryDecision {
   ok: boolean;
@@ -54,6 +55,9 @@ export interface EntryDecision {
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): EntryDecision {
+  // a no-trade window (time of day, Eastern) blocks every new entry
+  const win = activeWindow(cfg.noTradeWindows, now);
+  if (win) return { ok: false, code: "window", reason: `No-trade window: ${windowText(win)}`, upCount: 0, downCount: 0 };
   const fresh = views.filter((v) => v.market && v.quote && now - v.quote.ts <= QUOTE_MAX_AGE_MS && v.quote.yesBid > 0 && v.quote.yesAsk > 0 && v.quote.yesAsk >= v.quote.yesBid);
   let up = 0;
   let down = 0;

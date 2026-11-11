@@ -220,6 +220,19 @@ try {
   await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === flowBot), 40000);
   await quote([T("BTC"), T("SOL"), T("XRP")], 0.83, 0.85);
 
+  // ---- L3. no-trade window: a window around the current Eastern time blocks entries; the checklist says so
+  const etNow = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date());
+  const etMin = Number(etNow.find((p) => p.type === "hour").value) * 60 + Number(etNow.find((p) => p.type === "minute").value);
+  const hhmm = (m) => { const x = ((m % 1440) + 1440) % 1440; return `${String(Math.floor(x / 60)).padStart(2, "0")}:${String(x % 60).padStart(2, "0")}`; };
+  const winBot = (await api(`/bots/${bot1}/duplicate`, "POST")).j.id;
+  const winSave = await api(`/bots/${winBot}`, "PUT", { name: "Window bot", config: { ...cfg, noTradeWindows: [{ start: hhmm(etMin - 90), end: hhmm(etMin + 90) }] } });
+  ok("no-trade window settings save", winSave.status === 200 && (await api("/bots")).j.find((b) => b.id === winBot)?.config?.noTradeWindows?.length === 1, JSON.stringify(winSave.j).slice(0, 200));
+  ok("a window with the same start and end is refused", (await api(`/bots/${winBot}`, "PUT", { name: "Window bot", config: { ...cfg, noTradeWindows: [{ start: "10:00", end: "10:00" }] } })).status >= 400);
+  await api(`/bots/${winBot}/start`, "POST");
+  const winChecks = await waitFor(async () => { const r = (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${winBot}`)).j; const w = r.checks?.find((c) => c.key === "window"); return w && w.ok === false ? r : null; }, 60000);
+  ok("inside a no-trade window the checklist shows it red and the bot takes no trade", !!winChecks && !(await api("/positions")).j.open.find((p) => p.bot_id === winBot), JSON.stringify(winChecks?.checks?.[0]));
+  await api(`/bots/${winBot}/stop`, "POST");
+
   // ---- H2. time-of-day view
   const hrs = (await api("/hours?days=7")).j;
   ok("time-of-day view: 24 hours, counts every recorded contract and trade", hrs.hours?.length === 24 && hrs.contracts >= 1 && hrs.trades >= 4 && hrs.hours.reduce((s, x) => s + x.trades, 0) === hrs.trades, JSON.stringify(hrs).slice(0, 300));

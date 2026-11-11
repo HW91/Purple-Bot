@@ -100,6 +100,28 @@ describe("crypto entry", () => {
     expect(low.liquidity).toBe(false);
   });
 
+  it("no-trade windows (Eastern): block new entries inside a window, including one that runs past midnight", () => {
+    // `now` is 21:52 Eastern
+    const views = ASSETS.map((a, i) => (i < 7 ? view(a, i === 0 ? 0.83 : 0.6, i === 0 ? 0.85 : 0.62, now) : view(a, 0.4, 0.42, now)));
+    expect(evaluateEntry(cfg, views, now).ok).toBe(true); // no windows: trades
+    const inside = evaluateEntry({ ...cfg, noTradeWindows: [{ start: "21:30", end: "22:30" }] }, views, now);
+    expect(inside.ok).toBe(false);
+    expect(inside.code).toBe("window");
+    expect(inside.reason).toMatch(/9:30 PM to 10:30 PM Eastern/);
+    expect(evaluateEntry({ ...cfg, noTradeWindows: [{ start: "22:00", end: "01:00" }] }, views, now).ok).toBe(true); // starts later tonight
+    expect(evaluateEntry({ ...cfg, noTradeWindows: [{ start: "21:50", end: "02:00" }] }, views, now).code).toBe("window"); // runs past midnight
+    expect(evaluateEntry({ ...cfg, noTradeWindows: [{ start: "02:00", end: "03:00" }, { start: "21:00", end: "22:00" }] }, views, now).code).toBe("window"); // any of several
+    expect(evaluateEntry({ ...cfg, noTradeWindows: [{ start: "21:30", end: "21:52" }] }, views, now).ok).toBe(true); // the end minute itself is free
+    // the checklist shows the window line only when windows exist
+    expect(checklistFor(cfg, views, now).some((c) => c.key === "window")).toBe(false);
+    expect(checklistFor({ ...cfg, noTradeWindows: [{ start: "21:30", end: "22:30" }] }, views, now).find((c) => c.key === "window")?.ok).toBe(false);
+    // validation
+    expect(() => validateBotConfig({ strategy: "crypto", noTradeWindows: [{ start: "25:00", end: "01:00" }] })).toThrow(/start and an end/);
+    expect(() => validateBotConfig({ strategy: "crypto", noTradeWindows: [{ start: "10:00", end: "10:00" }] })).toThrow(/different/);
+    expect(validateBotConfig({ strategy: "crypto", noTradeWindows: [{ start: "09:00", end: "10:30" }] }).noTradeWindows).toEqual([{ start: "09:00", end: "10:30" }]);
+    expect(validateBotConfig({ strategy: "crypto" }).noTradeWindows).toEqual([]);
+  });
+
   it("order flow: needs the money on our side to beat the other side by the ratio, and never passes without data", () => {
     const flowCfg = { ...cfg, flowOn: true, flowRatio: 2, flowWindowMin: 3 };
     const withFlow = (flow: { yes: number; no: number } | null) => ASSETS.map((a) => ({ asset: a, market: mk(a), quote: q(mk(a).ticker, a === "BTC" ? 0.83 : 0.6, a === "BTC" ? 0.85 : 0.62, now), flow }));
