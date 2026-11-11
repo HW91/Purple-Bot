@@ -56,7 +56,22 @@ export interface SimOptions {
   slippage: number;
 }
 
-export function simulate(cfg: BotConfig, markets: SimMarket[], obs: Map<string, Obs[]>, opt: SimOptions): SimReport {
+/** Money on each side from the per-minute record, counting only COMPLETED minutes before `ts` (no peeking at the minute still in progress). */
+function flowAt(rows: Array<[number, number]> | undefined, openTs: number, ts: number, windowMin: number): { yes: number; no: number } | null {
+  if (!rows) return null;
+  const k = Math.floor((ts - openTs) / 60_000);
+  const first = windowMin > 0 ? Math.max(0, k - windowMin) : 0;
+  let yes = 0;
+  let no = 0;
+  for (let i = first; i < k && i < rows.length; i++) {
+    yes += rows[i][0];
+    no += rows[i][1];
+  }
+  return { yes, no };
+}
+
+/** `flow` = saved money per minute for each contract (ticker -> [[yes$, no$], ...]); only needed when the bot's order-flow rule is on. */
+export function simulate(cfg: BotConfig, markets: SimMarket[], obs: Map<string, Obs[]>, opt: SimOptions, flow?: Map<string, Array<[number, number]>>): SimReport {
   const periods = new Map<number, SimMarket[]>();
   for (const m of markets) periods.set(m.openTs, [...(periods.get(m.openTs) ?? []), m]);
   const trades: SimTrade[] = [];
@@ -90,7 +105,7 @@ export function simulate(cfg: BotConfig, markets: SimMarket[], obs: Map<string, 
       if (!entered) {
         const views: AssetView[] = cfg.assets.map((asset) => {
           const m = group.find((g) => g.asset === asset) ?? null;
-          return { asset, market: m ? info(m) : null, quote: m ? quoteAt(m, ts) : null };
+          return { asset, market: m ? info(m) : null, quote: m ? quoteAt(m, ts) : null, flow: cfg.flowOn && m ? flowAt(flow?.get(m.ticker), m.openTs, ts, cfg.flowWindowMin) : null };
         });
         const d = evaluateEntry(cfg, views, ts);
         if (!d.ok || !d.trade) continue;
@@ -167,6 +182,9 @@ export function simulate(cfg: BotConfig, markets: SimMarket[], obs: Map<string, 
       `Fees assume $${opt.feePerContract.toFixed(3)} per contract per fill (from your real fills when available, otherwise a flat assumption).`,
       "Order-book depth is assumed to be sufficient (it was not recorded). Real fills may be worse or may not happen.",
       "Missing data stays missing: periods with gaps simply have fewer observations. Nothing is interpolated.",
+      ...(cfg.flowOn ? ["Order flow uses the per-minute money totals saved for contracts the bot watched live, counting only completed minutes. A contract with no saved record never passes the money rule, so this run can only trade on recorded contracts."] : []),
+      ...(cfg.noTradeWindows.length ? ["No-trade windows use US Eastern time."] : []),
+      "One trade per contract at most, as live. Account-wide limits across several bots are not applied; each run uses this bot's own limits.",
     ],
     periods: periods.size,
     trades,

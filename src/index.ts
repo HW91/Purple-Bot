@@ -547,6 +547,15 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const feeRow = await env.DB.prepare("SELECT SUM(fee) f, SUM(fill_count) n FROM orders WHERE fill_count > 0").first<{ f: number | null; n: number | null }>();
     const feePer = feeRow?.n ? (feeRow.f ?? 0) / feeRow.n : 0.02;
     const markets: SimMarket[] = mk.map((x) => ({ ticker: x.ticker, asset: x.asset, openTs: x.open_ts, closeTs: x.close_ts, result: x.result === "yes" || x.result === "no" ? x.result : null }));
+    // saved money-per-minute records (only contracts the bot watched live), for runs that use the order-flow rule
+    const flowMap = new Map<string, Array<[number, number]>>();
+    for (const r of (await env.DB.prepare("SELECT ticker, minutes FROM contract_flow WHERE open_ts>=? AND close_ts<=?").bind(from, to).all<{ ticker: string; minutes: string }>()).results ?? []) {
+      try {
+        flowMap.set(r.ticker, JSON.parse(r.minutes));
+      } catch {
+        /* unreadable record: that contract has no money data */
+      }
+    }
     const variants = [{ label: "Current settings", overrides: {} }, ...(b.variants ?? []).slice(0, 5).map((v) => ({ label: v.label ?? "Variant", overrides: v.overrides ?? {} }))];
     const reports = variants.map((v) => {
       let cfg;
@@ -555,7 +564,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       } catch (e) {
         return { label: v.label, error: (e as Error).message };
       }
-      return { label: v.label, overrides: v.overrides, report: simulate(cfg, markets, obs, { feePerContract: feePer, slippage: 0.01 }) };
+      return { label: v.label, overrides: v.overrides, report: simulate(cfg, markets, obs, { feePerContract: feePer, slippage: 0.01 }, flowMap) };
     });
     const id = uid();
     await env.DB.prepare("INSERT INTO backtests (id, bot_id, config, from_ts, to_ts, report, created_ts) VALUES (?,?,?,?,?,?,?)").bind(id, bot.id, JSON.stringify(bot.config), from, to, JSON.stringify(reports).slice(0, 900_000), Date.now()).run();

@@ -661,15 +661,53 @@ function vAI(){
 // ----------------------------------------------------------------- Backtest
 function vBacktest(){
   var root=$('#main');
-  var sel=h('select'),from=h('input',{type:'datetime-local'}),to=h('input',{type:'datetime-local'}),vp=h('input',{type:'number',placeholder:'e.g. 85',style:'width:90px'}),vd=h('input',{type:'number',placeholder:'e.g. 3',style:'width:90px'}),out=h('div'),saved=h('div');
+  var sel=h('select'),from=h('input',{type:'datetime-local'}),to=h('input',{type:'datetime-local'}),out=h('div'),saved=h('div'),variantsBox=h('div'),bots=[],editors=[];
   function iso(d){var z=new Date(d.getTime()-d.getTimezoneOffset()*60000);return z.toISOString().slice(0,16)}
   to.value=iso(new Date());from.value=iso(new Date(Date.now()-7*86400000));
-  api('/bots').then(function(b){b.forEach(function(x){sel.appendChild(h('option',{value:x.id,text:x.name}))})});
+  function curBotCfg(){var b=bots.find(function(x){return x.id===sel.value});return b?b.config:null}
+  api('/bots').then(function(b){bots=b;b.forEach(function(x){sel.appendChild(h('option',{value:x.id,text:x.name}))});resetVariants()});
+  sel.addEventListener('change',resetVariants);
+  // every setting a live bot has can be changed in a comparison; only the settings you change are tested against the bot's current ones
+  function variantEditor(base,n){
+    var inp={},box=h('div',{class:'card'});
+    var pctKeys=['probThreshold','probMax'];
+    var numFields=[['probThreshold','Probability threshold (%)',1],['probMax','Maximum probability to enter (%)',1],['timeDelaySec','Time Delay after open (seconds)',1],['minRemainingSec','Minimum time remaining (seconds)',1],['tradeAmount','Trade amount ($)','any'],['maxSpread','Max spread allowed ($)','any'],['agreeCount','Assets that must agree (crypto)',1],['maxPositions','Max simultaneous positions',1],['maxTradesPerHour','Max trades per hour',1],['dailyLossLimit','Daily loss limit ($)','any'],['dailyInvestLimit','Daily investment limit ($)','any'],['stopLoss','Stop loss ($ per position)','any'],['takeProfit','Take profit ($ per position)','any'],['flowWindowMin','Money time frame (minutes, 0 = whole contract)',1],['flowRatio','Required money ratio (your side ÷ other side)',0.1]];
+    var cells=[];
+    function val(k){return pctKeys.indexOf(k)>=0?+(base[k]*100).toFixed(2):base[k]}
+    numFields.forEach(function(f){inp[f[0]]=h('input',{type:'number',step:f[2],value:val(f[0]),style:'width:110px'});cells.push(h('div',null,h('label',{text:f[1]}),inp[f[0]]))});
+    ['stopLossOn','takeProfitOn','flowOn'].forEach(function(k){var cb=h('input',{type:'checkbox'});cb.checked=!!base[k];inp[k]=cb;cells.push(h('div',null,h('label',{class:'chk',text:({stopLossOn:'Use stop loss',takeProfitOn:'Use take profit',flowOn:'Use money on each side'})[k]+' '},cb)))});
+    var universe=base.strategy==='metals'?METALS:CRYPTO;
+    var tradeSel=h('select',null,universe.map(function(a){var o=h('option',{value:a,text:a});if(base.tradeAsset===a)o.selected=true;return o}));
+    cells.push(h('div',null,h('label',{text:'Asset to trade'}),tradeSel));
+    var assetBoxes=universe.map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=base.assets.indexOf(a)>=0;return h('label',{class:'chk'},cb,a)});
+    var winBox=h('div');
+    function addWin(w){var s1=h('input',{type:'time',value:w?w.start:'',style:'width:130px'}),e1=h('input',{type:'time',value:w?w.end:'',style:'width:130px'});var row=h('div',{class:'row',style:'margin-bottom:6px'},s1,h('span',{class:'mute',text:'to'}),e1,h('button',{class:'btn gray',text:'✕',onclick:function(){row.remove()}}));row._s=s1;row._e=e1;winBox.appendChild(row)}
+    (base.noTradeWindows||[]).forEach(addWin);
+    box.appendChild(h('div',{class:'row'},h('b',{text:'Comparison '+n}),h('span',{style:'flex:1'}),h('button',{class:'btn gray',text:'Remove',onclick:function(){editors=editors.filter(function(e){return e.box!==box});box.remove()}})));
+    box.appendChild(h('small',{class:'mute',text:'Starts as a copy of the bot\'s current settings. Change anything; only what you change is compared.',style:'display:block;margin:4px 0 8px'}));
+    box.appendChild(h('div',{class:'grid'},cells));
+    box.appendChild(h('div',{style:'margin-top:8px'},h('label',{text:'Assets checked'}),assetBoxes));
+    box.appendChild(h('div',{style:'margin-top:8px'},h('label',{text:'No-trade windows (US Eastern)'}),winBox,h('button',{class:'btn gray',text:'+ Add window',onclick:function(){addWin(null)}})));
+    function changes(){
+      var ov={},names=[];
+      numFields.forEach(function(f){var k=f[0],v=+inp[k].value;if(inp[k].value===''||isNaN(v))return;var nv=pctKeys.indexOf(k)>=0?v/100:v;if(Math.abs(nv-base[k])>1e-9){ov[k]=nv;names.push(f[1].replace(/ \(.*$/,''))}});
+      ['stopLossOn','takeProfitOn','flowOn'].forEach(function(k){if(inp[k].checked!==!!base[k]){ov[k]=inp[k].checked;names.push(k==='stopLossOn'?'stop loss '+(inp[k].checked?'on':'off'):k==='takeProfitOn'?'take profit '+(inp[k].checked?'on':'off'):'money rule '+(inp[k].checked?'on':'off'))}});
+      if(tradeSel.value!==base.tradeAsset){ov.tradeAsset=tradeSel.value;names.push('asset '+tradeSel.value)}
+      var as=[].slice.call(box.querySelectorAll('[data-a]')).filter(function(x){return x.checked}).map(function(x){return x.getAttribute('data-a')});
+      if(as.slice().sort().join()!==base.assets.slice().sort().join()){ov.assets=as;names.push('assets checked')}
+      var ws=[].slice.call(winBox.children).map(function(r){return {start:r._s.value,end:r._e.value}}).filter(function(w){return w.start||w.end});
+      if(JSON.stringify(ws)!==JSON.stringify(base.noTradeWindows||[])){ov.noTradeWindows=ws;names.push('no-trade windows')}
+      return {overrides:ov,names:names};
+    }
+    return {box:box,changes:changes};
+  }
+  function addVariant(){var base=curBotCfg();if(!base)return;if(editors.length>=5){toast('At most 5 comparisons per run',true);return}var e=variantEditor(base,editors.length+1);editors.push(e);variantsBox.appendChild(e.box)}
+  function resetVariants(){editors=[];variantsBox.textContent='';addVariant()}
   root.appendChild(h('div',{class:'card'},h('h2',{text:'Backtest Strategy'}),
-    h('p',{class:'mute',text:'Replays the probabilities this bot recorded, using the selected bot\'s exact entry rules, Time Delay, stop loss and take profit. Fills are estimated, not a real order-book replay. It never places orders or changes live settings.'}),
-    h('div',{class:'row'},h('div',null,h('label',{text:'Bot'}),sel),h('div',null,h('label',{text:'From'}),from),h('div',null,h('label',{text:'To'}),to)),
-    h('div',{class:'row',style:'margin-top:8px'},h('div',null,h('label',{text:'Compare: probability threshold % (optional)'}),vp),h('div',null,h('label',{text:'Compare: Time Delay minutes (optional)'}),vd),
-      h('button',{class:'btn',text:'Run backtest',onclick:run}))));
+    h('p',{class:'mute',text:'Replays the probabilities this bot recorded, using the selected bot\'s exact entry rules and every one of its settings. Fills are estimated, not a real order-book replay. It never places orders or changes live settings.'}),
+    h('div',{class:'row'},h('div',null,h('label',{text:'Bot'}),sel),h('div',null,h('label',{text:'From'}),from),h('div',null,h('label',{text:'To'}),to))));
+  root.appendChild(variantsBox);
+  root.appendChild(h('div',{class:'row',style:'margin:8px 0'},h('button',{class:'btn gray',text:'+ Add comparison',onclick:addVariant}),h('button',{class:'btn',text:'Run backtest',onclick:run})));
   root.appendChild(out);root.appendChild(saved);
   function render(reports,into){into.textContent='';reports.forEach(function(r){
     if(r.error){into.appendChild(h('div',{class:'card r',text:r.label+': '+r.error}));return}
@@ -681,8 +719,8 @@ function vBacktest(){
       h('details',null,h('summary',{text:'Assumptions (read these)'}),h('ul',null,p.assumptions.map(function(a){return h('li',{text:a})})))));
   })}
   function run(){
-    var variants=[];var ov={};if(vp.value)ov.probThreshold=+vp.value/100;if(vd.value)ov.timeDelaySec=+vd.value*60;
-    if(Object.keys(ov).length)variants.push({label:'Variant: '+Object.keys(ov).join(', '),overrides:ov});
+    var variants=[];
+    editors.forEach(function(e,i){var c=e.changes();if(c.names.length)variants.push({label:'Comparison '+(i+1)+': '+c.names.join(', '),overrides:c.overrides})});
     out.textContent='Running…';
     api('/backtest',{method:'POST',body:{botId:sel.value,fromTs:new Date(from.value).getTime(),toTs:new Date(to.value).getTime(),variants:variants}}).then(function(r){render(r.reports,out);if(r.dataNote)out.appendChild(h('div',{class:'banner',text:r.dataNote}));loadSaved()}).catch(function(e){out.textContent='';toast(e.message,true)})}
   function loadSaved(){api('/backtests').then(function(b){saved.textContent='';if(!b.length)return;saved.appendChild(h('div',{class:'card'},h('h2',{text:'Saved backtest reports'}),b.map(function(x){var d=h('div');return h('details',null,h('summary',{text:when(x.created_ts)+' · '+when(x.from_ts)+' → '+when(x.to_ts)}),d,h('button',{class:'btn gray',text:'Show',onclick:function(){render(x.report,d)}}))})))})}

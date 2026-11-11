@@ -318,6 +318,15 @@ try {
     await page.click("text=‹ Previous");
     await page.waitForSelector("text=Question 2 of 3", { timeout: 15000 });
     ok("Previous shows the one before it, still alone", (await page.locator(".msg.user").count()) === 1 && (await page.locator(".msg.user").first().textContent()) === "Multi question two");
+    // Backtest tab: every live setting can be changed in a comparison
+    await page.click("nav >> text=Backtest");
+    await page.waitForSelector("text=Comparison 1", { timeout: 15000 });
+    const btText = await page.textContent("#main");
+    ok("Backtest form offers every live setting (probability range, delay, size, stop loss, take profit, money rule, windows, assets)", ["Maximum probability to enter", "Minimum time remaining", "Trade amount", "Stop loss", "Take profit", "Required money ratio", "No-trade windows", "Assets checked", "Daily loss limit"].every((t) => btText.includes(t)), btText.slice(0, 300));
+    await page.locator("#main .card input[type=number]").first().fill("85");
+    await page.click("text=Run backtest");
+    await page.waitForSelector("text=Comparison 1: Probability threshold", { timeout: 30000 });
+    ok("a comparison that changes one setting is run next to the current settings", (await page.textContent("#main")).includes("Current settings"));
     ok("no JavaScript errors in the page", errors.length === 0, errors.join(" | "));
     await browser.close();
   } catch (e) {

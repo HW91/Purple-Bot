@@ -27,6 +27,23 @@ describe("backtest", () => {
     expect(r.netPnl).toBeGreaterThan(0);
   });
 
+  it("every live setting works in a run: order flow (saved money per minute), no-trade windows, maximum probability", () => {
+    const base = { ...cfg, takeProfitOn: false, stopLossOn: false };
+    const markets = [mkt("GOLD", "yes"), mkt("SILVER", "yes")];
+    const obs = new Map([["T-GOLD", series(0.83, 0.85)], ["T-SILVER", series(0.6, 0.62)]]);
+    // money rule on: with no saved money record the bot never trades; with a record where YES has 3x NO it does
+    const withRule = { ...base, flowOn: true, flowWindowMin: 0, flowRatio: 2 };
+    expect(simulate(withRule, markets, obs, opt).total).toBe(0);
+    const yesHeavy = new Map<string, Array<[number, number]>>([["T-GOLD", Array.from({ length: 15 }, () => [300, 100] as [number, number])]]);
+    expect(simulate(withRule, markets, obs, opt, yesHeavy).total).toBe(1);
+    const noHeavy = new Map<string, Array<[number, number]>>([["T-GOLD", Array.from({ length: 15 }, () => [100, 300] as [number, number])]]);
+    expect(simulate(withRule, markets, obs, opt, noHeavy).total).toBe(0);
+    // a no-trade window around the entry time (10:00 to 11:00 Eastern is 14:00 to 15:00 UTC in June) blocks it
+    expect(simulate({ ...base, noTradeWindows: [{ start: "09:30", end: "10:30" }] }, markets, obs, opt).total).toBe(0);
+    // the price (about 85%) is above a 80% to 84% range
+    expect(simulate({ ...base, probMax: 0.84 }, markets, obs, opt).total).toBe(0);
+  });
+
   it("settled loser counts as a loss; unsettled markets are excluded, not guessed", () => {
     const obs = new Map([["T-GOLD", series(0.83, 0.85)], ["T-SILVER", series(0.6, 0.62)]]);
     const off = { ...cfg, takeProfitOn: false, stopLossOn: false };
