@@ -303,6 +303,8 @@ try {
     await page.click("nav >> text=Charts");
     await page.waitForSelector("text=Volume behind this contract", { timeout: 25000 });
     const periodValue = async () => page.locator("#main select").nth(3).inputValue();
+    const fit = await page.evaluate(() => { const sel = document.querySelectorAll("#main select")[3]; const card = sel.closest(".card"); const a = sel.getBoundingClientRect(); const b = card.getBoundingClientRect(); return { selRight: Math.round(a.right), cardRight: Math.round(b.right), viewport: window.innerWidth }; });
+    ok("the contract-period dropdown stays inside its card and the screen (it does not run off to the right)", fit.selRight <= fit.cardRight && fit.selRight <= fit.viewport, JSON.stringify(fit));
     await page.locator("#main select").nth(1).selectOption("ETH");
     await page.waitForFunction(() => document.querySelectorAll("#main select")[3]?.value === "KXETH15M-T1", null, { timeout: 15000 });
     await page.waitForFunction(() => document.querySelector("#main")?.textContent.includes("current entry minimum"), null, { timeout: 15000 }).catch(() => {});
