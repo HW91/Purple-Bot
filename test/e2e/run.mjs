@@ -299,6 +299,19 @@ try {
     await page.waitForSelector("text=Volume behind this contract", { timeout: 25000 });
     const volText = await page.textContent("#main");
     ok("Charts tab shows the volume tables (summary and by minute, no block-trade row or share/gap line)", !volText.includes("Block trades") && !volText.includes("YES share of dollars") && !volText.includes("Gap =") && volText.includes("YES bets") && volText.includes("NO bets") && volText.includes("Total") && volText.includes("YES $ ÷ NO $") && volText.includes("Money ratio") && !volText.includes("Market YES prob.") && !volText.includes("Gap (pts)"), volText.slice(-400));
+    // Charts tab: choosing another asset loads that asset's own contract, and a refresh comes back to the same asset
+    await page.click("nav >> text=Charts");
+    await page.waitForSelector("text=Volume behind this contract", { timeout: 25000 });
+    const periodValue = async () => page.locator("#main select").nth(3).inputValue();
+    await page.locator("#main select").nth(1).selectOption("ETH");
+    await page.waitForFunction(() => document.querySelectorAll("#main select")[3]?.value === "KXETH15M-T1", null, { timeout: 15000 });
+    await page.locator("#main select").nth(1).selectOption("BTC");
+    await page.waitForFunction(() => document.querySelectorAll("#main select")[3]?.value === "KXBTC15M-T1", null, { timeout: 15000 });
+    ok("the Charts tab follows the selected asset (ETH loads the ETH contract, then BTC loads the BTC contract)", (await periodValue()) === "KXBTC15M-T1");
+    await page.reload();
+    await page.waitForSelector("text=Volume behind this contract", { timeout: 25000 });
+    await page.waitForFunction(() => document.querySelectorAll("#main select")[3]?.value === "KXBTC15M-T1", null, { timeout: 15000 });
+    ok("after a refresh the Charts tab comes back to the asset you last chose (BTC), not the running bot's default", (await page.locator("#main select").nth(1).inputValue()) === "BTC" && (await periodValue()) === "KXBTC15M-T1");
     // Time of day table: only your trades (wins, losses, win % and loss %, profit/loss); nothing about reversals
     await page.click("nav >> text=Trades");
     await page.waitForSelector("text=Time of day (US Eastern)", { timeout: 15000 });

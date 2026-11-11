@@ -450,10 +450,11 @@ function vCharts(){
   var data=null,chartBots=[];
   function curBot(){return chartBots.find(function(b){return b.id===botSel.value})||null}
   // picking a bot shows the asset that bot trades (its Time Delay line is drawn too)
-  botSel.addEventListener('change',function(){var b=curBot();if(b)asset.value=b.config.tradeAsset;loadPeriods()});
+  function remember(){try{localStorage.setItem('pb_chart_bot',botSel.value);localStorage.setItem('pb_chart_asset',asset.value)}catch(e){}}
+  botSel.addEventListener('change',function(){var b=curBot();if(b)asset.value=b.config.tradeAsset;remember();loadPeriods()});
   // a hover reading belongs to one contract: clear it whenever the bot, asset or contract changes
   function resetTip(){tip.textContent='Hover or tap the chart to inspect a data point.'}
-  asset.addEventListener('change',loadPeriods);period.addEventListener('change',function(){resetTip();loadChart()});
+  asset.addEventListener('change',function(){remember();loadPeriods()});period.addEventListener('change',function(){resetTip();loadChart()});
   var periodsAll=[];
   // how the chosen bot did on a contract: no trade / open / won / lost / flat
   function tradeKind(x){return !x.trades?'none':x.open_trades>0?'open':x.pnl>0.004?'win':x.pnl<-0.004?'loss':'flat'}
@@ -585,8 +586,12 @@ function vCharts(){
   api('/bots').then(function(bs){
     chartBots=bs;
     bs.forEach(function(b){botSel.appendChild(h('option',{value:b.id,text:b.name}))});
-    var pick=bs.find(function(b){return b.enabled})||bs[0];
+    // after a refresh, come back to the bot and asset that were chosen last (falls back to the running bot's asset the first time)
+    var savedBot='',savedAsset='';
+    try{savedBot=localStorage.getItem('pb_chart_bot')||'';savedAsset=localStorage.getItem('pb_chart_asset')||''}catch(e){}
+    var pick=bs.find(function(b){return b.id===savedBot})||bs.find(function(b){return b.enabled})||bs[0];
     if(pick){botSel.value=pick.id;asset.value=pick.config.tradeAsset}
+    if(savedAsset&&all.indexOf(savedAsset)>=0)asset.value=savedAsset;
     loadPeriods();
   }).catch(function(){loadPeriods()});
   pollTimer=setInterval(function(){if(period.selectedIndex===0)loadChart()},10000);
