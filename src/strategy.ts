@@ -86,7 +86,9 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number): 
     else if (down >= cfg.agreeCount) direction = "down";
     if (!direction) return { ok: false, code: "agreement", reason: `Only ${Math.max(up, down)} of ${cfg.assets.length} assets agree (need ${cfg.agreeCount})${missing.length ? `; no live data for ${missing.join(", ")}` : ""}`, ...base };
   }
-  const outcome: "yes" | "no" = direction === "up" ? "yes" : "no";
+  // the side the market favors; a low-probability bot buys the OTHER side (the cheap one), using the same probability range on that side
+  const favoredSide: "yes" | "no" = direction === "up" ? "yes" : "no";
+  const outcome: "yes" | "no" = cfg.betSide === "underdog" ? (favoredSide === "yes" ? "no" : "yes") : favoredSide;
 
   // The bot trades ONE chosen asset. The other assets only confirm the direction above; they are never traded.
   // Entry only inside the chosen probability range: at least the minimum, and not above the maximum.

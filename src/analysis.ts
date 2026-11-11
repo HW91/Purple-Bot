@@ -454,7 +454,7 @@ export interface DayStats {
   earlyExits: TradeDetail[]; // each trade closed early, with what the price did after the exit until the contract closed (up to 40)
   blockedBy: { contractsWatched: number; contractsTraded: number; share: Array<{ code: string; pctOfTime: number; example: string }> };
   reliability: { day: Reliability; byHour: Array<Reliability & { hour: number }>; previous7DaysAverage: Reliability | null };
-  bots: Array<{ name: string; enabled: boolean; tradeAsset: string; assets: string[]; probRange: string; delayMin: number; tradeAmount: number; stopLoss: string; takeProfit: string }>;
+  bots: Array<{ name: string; enabled: boolean; sideBought: string; tradeAsset: string; assets: string[]; probRange: string; delayMin: number; tradeAmount: number; stopLoss: string; takeProfit: string }>;
   openAtEnd: number;
 }
 
@@ -524,6 +524,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
     return {
       name: b.name,
       enabled: b.enabled === 1,
+      sideBought: c.betSide === "underdog" ? "the low-probability side (the probability range applies to that cheap side)" : "the favorite side",
       tradeAsset: c.tradeAsset,
       assets: c.assets,
       probRange: c.probMax !== undefined && c.probMax < 1 ? `${Math.round(c.probThreshold * 100)}%-${Math.round(c.probMax * 100)}%` : `${Math.round(c.probThreshold * 100)}%+`,

@@ -67,7 +67,9 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number): C
   }
 
   const own = tv ? dirs.get(tv.asset) : null;
-  const outcome: "yes" | "no" | null = direction ? (direction === "up" ? "yes" : "no") : own === "up" ? "yes" : own === "down" ? "no" : null;
+  const favored: "yes" | "no" | null = direction ? (direction === "up" ? "yes" : "no") : own === "up" ? "yes" : own === "down" ? "no" : null;
+  // a low-probability bot buys the side the market does NOT favor
+  const outcome: "yes" | "no" | null = favored && cfg.betSide === "underdog" ? (favored === "yes" ? "no" : "yes") : favored;
   if (!tv || !outcome) {
     const names: Array<[string, string]> = [
       ["probMin", "Probability at or above your minimum"],

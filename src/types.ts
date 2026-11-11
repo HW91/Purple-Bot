@@ -19,13 +19,16 @@ export const MIN_TRADE_AMOUNT = 1;
 
 export type Strategy = "crypto" | "metals";
 export type NotifyMode = "immediate" | "daily" | "off";
+/** favorite = buy the side the market leans toward; underdog = buy the other (low-probability) side. The probability range always applies to the side being bought. */
+export type BetSide = "favorite" | "underdog";
 
 export interface BotConfig {
   strategy: Strategy;
   assets: string[]; // compared for direction agreement (confirmation only)
   tradeAsset: string; // the ONE asset this bot actually trades; must be one of `assets`
   durationMin: number;
-  probThreshold: number; // 0..1, minimum probability to enter
+  betSide: BetSide;
+  probThreshold: number; // 0..1, minimum probability to enter (of the side being bought)
   probMax: number; // 0..1, do NOT enter above this probability (1 = no upper limit)
   agreeCount: number; // crypto: how many selected assets must agree
   timeDelaySec: number; // from contract open
@@ -101,6 +104,7 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     assets: strategy === "crypto" ? [...DEFAULT_CRYPTO_ASSETS] : ["GOLD", "SILVER"],
     tradeAsset: strategy === "crypto" ? "BTC" : "GOLD",
     durationMin: 15,
+    betSide: "favorite",
     probThreshold: 0.8,
     probMax: 1,
     agreeCount: strategy === "crypto" ? 7 : 2,
@@ -141,13 +145,17 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
   const tradeAsset = String(input.tradeAsset ?? (strategy === "metals" ? "GOLD" : uniq.includes("BTC") ? "BTC" : uniq[0])).toUpperCase();
   if (!uniq.includes(tradeAsset)) throw new Error(`The asset to trade (${tradeAsset}) must also be one of the selected assets`);
 
+  const betSide: BetSide = input.betSide === "underdog" ? "underdog" : "favorite";
+  // a low-probability bot starts from a low range (3% to 7%) unless one is given
+  const lowDefaults = betSide === "underdog" ? { probThreshold: 0.03, probMax: 0.07 } : { probThreshold: d.probThreshold, probMax: d.probMax };
   const cfg: BotConfig = {
     strategy,
     assets: uniq,
     tradeAsset,
     durationMin: Math.max(1, Math.round(num(input.durationMin, d.durationMin))),
-    probThreshold: num(input.probThreshold, d.probThreshold),
-    probMax: num(input.probMax, d.probMax),
+    betSide,
+    probThreshold: num(input.probThreshold, lowDefaults.probThreshold),
+    probMax: num(input.probMax, lowDefaults.probMax),
     agreeCount: Math.round(num(input.agreeCount, d.agreeCount)),
     timeDelaySec: Math.round(num(input.timeDelaySec, d.timeDelaySec)),
     minRemainingSec: Math.round(num(input.minRemainingSec, d.minRemainingSec)),
@@ -169,8 +177,13 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     notify: (input.notify as string) === "hourly" ? "daily" : (["immediate", "daily", "off"] as const).includes(input.notify as NotifyMode) ? (input.notify as NotifyMode) : d.notify,
   };
   if (strategy === "metals") cfg.agreeCount = cfg.assets.length; // every checked metal must agree
-  if (!(cfg.probThreshold > 0.5 && cfg.probThreshold < 1)) throw new Error("Probability threshold must be between 50% and 100%");
-  if (!(cfg.probMax > cfg.probThreshold && cfg.probMax <= 1)) throw new Error("Maximum probability must be above the minimum probability and no more than 100%");
+  if (cfg.betSide === "underdog") {
+    if (!(cfg.probThreshold > 0 && cfg.probThreshold < 0.5)) throw new Error("For the low-probability side, the minimum probability must be above 0% and below 50%");
+    if (!(cfg.probMax > cfg.probThreshold && cfg.probMax <= 0.5)) throw new Error("For the low-probability side, the maximum probability must be above the minimum and no more than 50%");
+  } else {
+    if (!(cfg.probThreshold > 0.5 && cfg.probThreshold < 1)) throw new Error("Probability threshold must be between 50% and 100%");
+    if (!(cfg.probMax > cfg.probThreshold && cfg.probMax <= 1)) throw new Error("Maximum probability must be above the minimum probability and no more than 100%");
+  }
   if (cfg.timeDelaySec < 0 || cfg.timeDelaySec > (cfg.durationMin - 1) * 60) {
     throw new Error(`Time Delay must be between 0 and ${cfg.durationMin - 1} minutes for ${cfg.durationMin}-minute contracts`);
   }

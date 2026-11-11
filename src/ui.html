@@ -325,7 +325,7 @@ function vBots(){
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
       h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}})),
       h('div',{class:'row',style:'margin-top:10px'},botButtons(b,load)),
-      h('div',{class:'mute',text:'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')+(b.config.noTradeWindows&&b.config.noTradeWindows.length?' · '+b.config.noTradeWindows.length+' no-trade window(s)':'')+(b.config.flowOn?' · money ratio ≥ '+b.config.flowRatio+' ('+(b.config.flowWindowMin>0?'last '+b.config.flowWindowMin+' min':'whole contract')+')':'')})));
+      h('div',{class:'mute',text:(b.config.betSide==='underdog'?'Low-probability side · ':'')+'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')+(b.config.noTradeWindows&&b.config.noTradeWindows.length?' · '+b.config.noTradeWindows.length+' no-trade window(s)':'')+(b.config.flowOn?' · money ratio ≥ '+b.config.flowRatio+' ('+(b.config.flowWindowMin>0?'last '+b.config.flowWindowMin+' min':'whole contract')+')':'')})));
   })})}
   function field(label,input,hint){return h('div',null,h('label',{text:label}),input,hint?h('small',{text:hint,style:'display:block;margin-top:2px'}):null)}
   function editBot(b,strategy){
@@ -337,6 +337,7 @@ function vBots(){
       function num(k,mult,step){return inp[k]=h('input',{type:'number',step:step||'any',value:+(cfg[k]*(mult||1)).toFixed(4),style:'width:110px'})}
       function chk(k){return inp[k]=h('input',{type:'checkbox'});}
       var assets=(s==='crypto'?CRYPTO:METALS).map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=cfg.assets.indexOf(a)>=0;return h('label',{class:'chk'},cb,a)});
+      var sideSel=h('select',null,[['favorite','Favorite (the side the market leans toward)'],['underdog','Low-probability side (the cheap side)']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.betSide||'favorite')===o[0])op.selected=true;return op}));
       var tradeSel=h('select',null,(s==='crypto'?CRYPTO:METALS).map(function(a){var op=h('option',{value:a,text:a});if(cfg.tradeAsset===a)op.selected=true;return op}));
       var fl=chk('flowOn');fl.checked=!!cfg.flowOn;
       var sl=chk('stopLossOn');sl.checked=cfg.stopLossOn;var tp=chk('takeProfitOn');tp.checked=cfg.takeProfitOn;
@@ -345,6 +346,7 @@ function vBots(){
       f.appendChild(h('div',{class:'grid'},
         field('Name',name),
         field('Asset to trade',tradeSel,'The only asset this bot buys. The other checked assets only confirm the direction.'),
+        field('Side to bet',sideSel,'Favorite buys the side the market leans toward. Low-probability buys the other, cheap side. The probability range below applies to the side being bought (for example 3% to 7% for the low side).'),
         field('Probability threshold (%)',num('probThreshold',100,1)),
         field('Maximum probability to enter (%)',num('probMax',100,1),'Skips the trade if the probability, or the price you would pay, is above this. 100 means no limit.'),
         s==='crypto'?field('Assets that must agree (of those selected)',num('agreeCount',1,1)):h('div',{class:'mute',text:'Every checked metal must lean the same direction before the bot trades.'}),
@@ -362,6 +364,8 @@ function vBots(){
         field('Stop loss ($ per position)',h('div',{class:'row'},sl,num('stopLoss'))),
         field('Take profit ($ per position)',h('div',{class:'row'},tp,num('takeProfit'))),
         field('Email notifications',nt)));
+      // switching the side moves the range to a sensible starting point (you can still edit it)
+      sideSel.addEventListener('change',function(){if(sideSel.value==='underdog'){if(+inp.probThreshold.value>=50){inp.probThreshold.value=3;inp.probMax.value=7}}else if(+inp.probThreshold.value<50){inp.probThreshold.value=80;inp.probMax.value=100}});
       f.appendChild(h('div',{style:'margin-top:10px'},h('label',{text:'Assets'}),assets));
       // no-trade windows: times of day (US Eastern) when this bot opens no new trades; tap + to add another
       var winBox=h('div');
@@ -376,6 +380,7 @@ function vBots(){
         var out={strategy:s,durationMin:cfg.durationMin};
         ['probThreshold','probMax'].forEach(function(k){out[k]=+inp[k].value/100});
         ['agreeCount','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
+        out.betSide=sideSel.value;
         out.flowOn=fl.checked;
         out.noTradeWindows=[].slice.call(winBox.children).map(function(r){return {start:r._s.value,end:r._e.value}}).filter(function(w){return w.start||w.end});
         out.tradeAsset=tradeSel.value;
@@ -672,6 +677,9 @@ function vBacktest(){
     ['stopLossOn','takeProfitOn','flowOn'].forEach(function(k){var cb=h('input',{type:'checkbox'});cb.checked=!!base[k];inp[k]=cb;cells.push(h('div',null,h('label',{class:'chk',text:({stopLossOn:'Use stop loss',takeProfitOn:'Use take profit',flowOn:'Use money on each side'})[k]+' '},cb)))});
     var universe=base.strategy==='metals'?METALS:CRYPTO;
     var tradeSel=h('select',null,universe.map(function(a){var o=h('option',{value:a,text:a});if(base.tradeAsset===a)o.selected=true;return o}));
+    var sideSel=h('select',null,[['favorite','Favorite side'],['underdog','Low-probability side']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((base.betSide||'favorite')===o[0])op.selected=true;return op}));
+    sideSel.addEventListener('change',function(){if(sideSel.value==='underdog'){if(+inp.probThreshold.value>=50){inp.probThreshold.value=3;inp.probMax.value=7}}else if(+inp.probThreshold.value<50){inp.probThreshold.value=80;inp.probMax.value=100}});
+    cells.push(h('div',null,h('label',{text:'Side to bet'}),sideSel));
     cells.push(h('div',null,h('label',{text:'Asset to trade'}),tradeSel));
     var assetBoxes=universe.map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=base.assets.indexOf(a)>=0;return h('label',{class:'chk'},cb,a)});
     var winBox=h('div');
@@ -686,6 +694,7 @@ function vBacktest(){
       var ov={},names=[];
       numFields.forEach(function(f){var k=f[0],v=+inp[k].value;if(inp[k].value===''||isNaN(v))return;var nv=pctKeys.indexOf(k)>=0?v/100:v;if(Math.abs(nv-base[k])>1e-9){ov[k]=nv;names.push(f[1].replace(/ \(.*$/,''))}});
       ['stopLossOn','takeProfitOn','flowOn'].forEach(function(k){if(inp[k].checked!==!!base[k]){ov[k]=inp[k].checked;names.push(k==='stopLossOn'?'stop loss '+(inp[k].checked?'on':'off'):k==='takeProfitOn'?'take profit '+(inp[k].checked?'on':'off'):'money rule '+(inp[k].checked?'on':'off'))}});
+      if(sideSel.value!==(base.betSide||'favorite')){ov.betSide=sideSel.value;names.push('side to bet')}
       if(tradeSel.value!==base.tradeAsset){ov.tradeAsset=tradeSel.value;names.push('asset '+tradeSel.value)}
       var as=[].slice.call(box.querySelectorAll('[data-a]')).filter(function(x){return x.checked}).map(function(x){return x.getAttribute('data-a')});
       if(as.slice().sort().join()!==base.assets.slice().sort().join()){ov.assets=as;names.push('assets checked')}
@@ -703,7 +712,7 @@ function vBacktest(){
   root.appendChild(variantsBox);
   root.appendChild(h('div',{class:'row',style:'margin:8px 0'},h('button',{class:'btn gray',text:'+ Add comparison',onclick:addVariant}),h('button',{class:'btn',text:'Run backtest',onclick:run})));
   root.appendChild(out);root.appendChild(saved);
-  var LBL={probThreshold:'Probability threshold',probMax:'Maximum probability',timeDelaySec:'Time Delay',minRemainingSec:'Minimum time remaining',tradeAmount:'Trade amount',maxSpread:'Max spread',agreeCount:'Assets that must agree',maxPositions:'Max positions',maxTradesPerHour:'Max trades per hour',dailyLossLimit:'Daily loss limit',dailyInvestLimit:'Daily investment limit',stopLossOn:'Stop loss',stopLoss:'Stop loss amount',takeProfitOn:'Take profit',takeProfit:'Take profit amount',flowOn:'Money rule',flowWindowMin:'Money time frame (min)',flowRatio:'Required money ratio',tradeAsset:'Asset to trade',assets:'Assets checked',noTradeWindows:'No-trade windows'};
+  var LBL={probThreshold:'Probability threshold',probMax:'Maximum probability',timeDelaySec:'Time Delay',minRemainingSec:'Minimum time remaining',tradeAmount:'Trade amount',maxSpread:'Max spread',agreeCount:'Assets that must agree',maxPositions:'Max positions',maxTradesPerHour:'Max trades per hour',dailyLossLimit:'Daily loss limit',dailyInvestLimit:'Daily investment limit',stopLossOn:'Stop loss',stopLoss:'Stop loss amount',takeProfitOn:'Take profit',takeProfit:'Take profit amount',flowOn:'Money rule',betSide:'Side to bet',flowWindowMin:'Money time frame (min)',flowRatio:'Required money ratio',tradeAsset:'Asset to trade',assets:'Assets checked',noTradeWindows:'No-trade windows'};
   function fmt(k,v){
     if(k==='probThreshold'||k==='probMax')return (+(v*100).toFixed(1))+'%';
     if(typeof v==='boolean')return v?'on':'off';
@@ -712,6 +721,7 @@ function vBacktest(){
     if(k==='assets')return v.join(', ');
     if(k==='noTradeWindows')return v&&v.length?v.map(function(w){return w.start+'-'+w.end}).join(', '):'none';
     if(k==='flowRatio')return v+'x';
+    if(k==='betSide')return v==='underdog'?'low-probability side':'favorite';
     return String(v);
   }
   // what was changed in a comparison: old value to new value
@@ -719,7 +729,7 @@ function vBacktest(){
   // the full set of settings a run used
   function settingsLine(c){
     if(!c)return '';
-    var out=['probThreshold','probMax','timeDelaySec','minRemainingSec','tradeAmount','maxSpread'].map(function(k){return LBL[k]+' '+fmt(k,c[k])});
+    var out=['betSide','probThreshold','probMax','timeDelaySec','minRemainingSec','tradeAmount','maxSpread'].map(function(k){return LBL[k]+' '+fmt(k,c[k])});
     if(c.strategy!=='metals')out.push(LBL.agreeCount+' '+c.agreeCount);
     out.push('Stop loss '+(c.stopLossOn?fmt('stopLoss',c.stopLoss):'off'));
     out.push('Take profit '+(c.takeProfitOn?fmt('takeProfit',c.takeProfit):'off'));

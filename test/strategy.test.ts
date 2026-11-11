@@ -100,6 +100,38 @@ describe("crypto entry", () => {
     expect(low.liquidity).toBe(false);
   });
 
+  it("low-probability bot: buys the cheap side inside its own range (3% to 7%), the opposite of the favorite", () => {
+    const low = { ...cfg, betSide: "underdog" as const, probThreshold: 0.03, probMax: 0.07 };
+    // BTC YES bid 0.94 / ask 0.96 (95%): the market favors YES, so the cheap side is NO at 5%
+    const views = ASSETS.map((a, i) => (i < 7 ? view(a, i === 0 ? 0.94 : 0.9, i === 0 ? 0.96 : 0.92, now) : view(a, 0.4, 0.42, now)));
+    const d = evaluateEntry(low, views, now);
+    expect(d.ok).toBe(true);
+    expect(d.trade!.outcome).toBe("no");
+    expect(d.trade!.orderSide).toBe("ask");
+    expect(d.trade!.orderPrice).toBe(0.94);
+    expect(d.trade!.costPerContract).toBeCloseTo(0.06, 10);
+    expect(d.trade!.prob).toBeCloseTo(0.05, 10);
+    expect(d.trade!.count).toBe(Math.floor(5 / 0.06)); // $5 buys 83 contracts at 6 cents
+    // a favorite bot with its own range is unchanged and would not trade this (95% is above its 80% to 89% range)
+    expect(evaluateEntry({ ...cfg, probMax: 0.89 }, views, now).ok).toBe(false);
+    // outside the low range (the cheap side is at 12%): no trade
+    const mid = ASSETS.map((a, i) => (i < 7 ? view(a, i === 0 ? 0.87 : 0.9, i === 0 ? 0.89 : 0.92, now) : view(a, 0.4, 0.42, now)));
+    expect(evaluateEntry(low, mid, now).ok).toBe(false);
+    // when the market favors NO, the cheap side is YES
+    const down = ASSETS.map((a, i) => (i < 8 ? view(a, i === 0 ? 0.04 : 0.1, i === 0 ? 0.06 : 0.12, now) : view(a, 0.6, 0.62, now)));
+    const dd = evaluateEntry({ ...low, agreeCount: 7 }, down, now);
+    expect(dd.trade?.outcome).toBe("yes");
+    expect(dd.trade?.orderSide).toBe("bid");
+    // the checklist reads the same side
+    expect(checklistFor(low, views, now).find((c) => c.key === "probMin")?.text).toMatch(/NO probability 5\.0%/);
+    // validation: the low side needs a range under 50%; the favorite side keeps its own rules
+    expect(validateBotConfig({ strategy: "crypto", betSide: "underdog" })).toMatchObject({ betSide: "underdog", probThreshold: 0.03, probMax: 0.07 });
+    expect(() => validateBotConfig({ strategy: "crypto", betSide: "underdog", probThreshold: 0.6, probMax: 0.9 })).toThrow(/low-probability/);
+    expect(() => validateBotConfig({ strategy: "crypto", betSide: "underdog", probThreshold: 0.07, probMax: 0.03 })).toThrow(/maximum/);
+    expect(validateBotConfig({ strategy: "crypto" }).betSide).toBe("favorite");
+    expect(() => validateBotConfig({ strategy: "crypto", probThreshold: 0.05, probMax: 0.1 })).toThrow(/between 50% and 100%/);
+  });
+
   it("no-trade windows (Eastern): block new entries inside a window, including one that runs past midnight", () => {
     // `now` is 21:52 Eastern
     const views = ASSETS.map((a, i) => (i < 7 ? view(a, i === 0 ? 0.83 : 0.6, i === 0 ? 0.85 : 0.62, now) : view(a, 0.4, 0.42, now)));

@@ -241,6 +241,11 @@ try {
   const winChecks = await waitFor(async () => { const r = (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${winBot}`)).j; const w = r.checks?.find((c) => c.key === "window"); return w && w.ok === false ? r : null; }, 60000);
   ok("inside a no-trade window the checklist shows it red and the bot takes no trade", !!winChecks && !(await api("/positions")).j.open.find((p) => p.bot_id === winBot), JSON.stringify(winChecks?.checks?.[0]));
   await api(`/bots/${winBot}/stop`, "POST");
+  // low-probability side: saves with a range under 50%, is refused with a favorite-style range
+  const lowSave = await api(`/bots/${winBot}`, "PUT", { name: "Low side bot", config: { ...cfg, betSide: "underdog", probThreshold: 0.03, probMax: 0.07 } });
+  const lowBotCfg = (await api("/bots")).j.find((b) => b.id === winBot)?.config;
+  ok("a bot can be saved to buy the low-probability side with a 3% to 7% range", lowSave.status === 200 && lowBotCfg?.betSide === "underdog" && Math.abs(lowBotCfg.probThreshold - 0.03) < 1e-9 && Math.abs(lowBotCfg.probMax - 0.07) < 1e-9, JSON.stringify(lowBotCfg));
+  ok("the low-probability side refuses a range above 50%", (await api(`/bots/${winBot}`, "PUT", { name: "Low side bot", config: { ...cfg, betSide: "underdog", probThreshold: 0.8, probMax: 0.9 } })).status >= 400);
 
   // ---- H2. time-of-day view
   const hrs = (await api("/hours?days=7")).j;
@@ -344,7 +349,7 @@ try {
     await savedBox.locator("text=Comparison 1").first().waitFor({ timeout: 15000 });
     const savedText = await savedBox.textContent();
     ok("an opened saved backtest shows only the tested changes, with the settings that were tested", savedText.includes("Comparison 1") && savedText.includes("Settings tested: Probability threshold") && savedText.includes("→ 85%") && !savedText.includes("Current settings") && !savedText.includes("Assumptions"), savedText.slice(0, 300));
-    ok("the current settings' result is shown once at the top of the saved reports, with its settings", (await page.locator("#main h2", { hasText: "Current settings" }).count()) >= 1 && (await page.textContent("#main")).includes("Settings: Probability threshold"));
+    ok("the current settings' result is shown once at the top of the saved reports, with its settings", (await page.locator("#main h2", { hasText: "Current settings" }).count()) >= 1 && (await page.textContent("#main")).includes("Probability threshold 80%"));
     ok("no JavaScript errors in the page", errors.length === 0, errors.join(" | "));
     await browser.close();
   } catch (e) {
