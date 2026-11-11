@@ -45,7 +45,7 @@ export async function getAccountLimits(env: Env): Promise<AccountLimits> {
   }
 }
 
-interface BotRow {
+export interface BotRow {
   id: string;
   name: string;
   strategy: string;

@@ -7,8 +7,9 @@
 import type { Env } from "./types";
 import { askAI, emailShell, esc } from "./notify";
 import { computePerformance, type Performance } from "./stats";
-import type { PositionRow } from "./db";
-import { log } from "./db";
+import type { BotRow, PositionRow } from "./db";
+import { getSetting, log, rowToBot, setSetting } from "./db";
+import { simulate, type Obs, type SimMarket, type SimReport } from "./backtest";
 import { KALSHI_RULES_PROMPT } from "./kalshi-rules";
 
 const ET = "America/New_York";
@@ -226,6 +227,91 @@ export function moneyFlowSummary(rows: FlowRow[], trades: Array<Pick<PositionRow
   };
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Metals bots: trades NOT taken because the checked metals did not lean the same way, and how they would have ended
+// ---------------------------------------------------------------------------------------------------------------
+
+export interface MissedByDisagreement {
+  note: string;
+  periodDays: number;
+  bots: Array<{
+    bot: string;
+    tradeAsset: string;
+    checkedMetals: string[];
+    contractsMissed: number;
+    wouldHaveWon: number;
+    wouldHaveLost: number;
+    hypotheticalPnl: number;
+    tradesActuallyTaken: number;
+    missed: Array<{ entered: string; side: "yes" | "no"; result: string; pnl: number }>; // up to 15, newest first
+  }>;
+}
+
+/**
+ * A "missed" trade is a contract where the bot's own rules (every checked metal must agree) took no trade, but the same rules
+ * with only the traded metal checked WOULD have. Both runs replay the recorded probabilities and Kalshi's settled results.
+ */
+export function summarizeMissed(botName: string, tradeAsset: string, checked: string[], actual: SimReport, withoutAgreement: SimReport): MissedByDisagreement["bots"][number] {
+  const takenTickers = new Set(actual.trades.map((t) => t.ticker));
+  const missed = withoutAgreement.trades.filter((t) => !takenTickers.has(t.ticker)).sort((a, b) => b.entryTs - a.entryTs);
+  return {
+    bot: botName,
+    tradeAsset,
+    checkedMetals: checked,
+    contractsMissed: missed.length,
+    wouldHaveWon: missed.filter((t) => t.result === "win").length,
+    wouldHaveLost: missed.filter((t) => t.result === "loss").length,
+    hypotheticalPnl: r2(missed.reduce((s, t) => s + t.pnl, 0)),
+    tradesActuallyTaken: actual.trades.length,
+    missed: missed.slice(0, 15).map((t) => ({ entered: etStamp(t.entryTs), side: t.outcome, result: t.result, pnl: t.pnl })),
+  };
+}
+
+const MISSED_MAX_DAYS = 3;
+const MISSED_CACHE_MS = 15 * 60_000;
+
+export async function missedByDisagreement(env: Env, start: number, end: number, botId?: string | null): Promise<MissedByDisagreement | null> {
+  const botRows = ((await env.DB.prepare("SELECT id, name, strategy, config, enabled FROM bots WHERE strategy = 'metals'").all<BotRow>()).results ?? []).map(rowToBot).filter((b) => b.config.assets.length > 1 && (!botId || b.id === botId));
+  if (!botRows.length) return null;
+  const from = Math.max(start, end - MISSED_MAX_DAYS * 86_400_000);
+  const cacheKey = `missed:${botId ?? "all"}:${botRows.map((b) => b.id).join(",")}:${Math.floor(from / 3_600_000)}:${Math.floor(end / 900_000)}`;
+  try {
+    const cached = await getSetting(env, "missed_cache");
+    if (cached) {
+      const c = JSON.parse(cached) as { key: string; at: number; data: MissedByDisagreement };
+      if (c.key === cacheKey && Date.now() - c.at < MISSED_CACHE_MS) return c.data;
+    }
+  } catch {
+    /* no usable cache: compute it */
+  }
+  const assets = [...new Set(botRows.flatMap((b) => b.config.assets))];
+  const mk = (await env.DB.prepare(`SELECT ticker, asset, open_ts, close_ts, result FROM markets WHERE open_ts >= ? AND close_ts <= ? AND asset IN (${assets.map(() => "?").join(",")}) ORDER BY open_ts`).bind(from, end, ...assets).all<{ ticker: string; asset: string; open_ts: number; close_ts: number; result: string | null }>()).results ?? [];
+  const markets: SimMarket[] = mk.map((x) => ({ ticker: x.ticker, asset: x.asset, openTs: x.open_ts, closeTs: x.close_ts, result: x.result === "yes" || x.result === "no" ? x.result : null }));
+  const obs = new Map<string, Obs[]>();
+  const obsRows = (await env.DB.prepare(`SELECT ticker, ts, yes_bid, yes_ask FROM observations WHERE ts >= ? AND ts <= ? AND ticker IN (SELECT ticker FROM markets WHERE open_ts >= ? AND close_ts <= ? AND asset IN (${assets.map(() => "?").join(",")})) ORDER BY ts`).bind(from, end, from, end, ...assets).all<{ ticker: string; ts: number; yes_bid: number; yes_ask: number }>()).results ?? [];
+  for (const o of obsRows) (obs.get(o.ticker) ?? obs.set(o.ticker, []).get(o.ticker)!).push({ ts: o.ts, bid: o.yes_bid, ask: o.yes_ask });
+  const feeRow = await env.DB.prepare("SELECT SUM(fee) f, SUM(fill_count) n FROM orders WHERE fill_count > 0").first<{ f: number | null; n: number | null }>();
+  const opt = { feePerContract: feeRow?.n ? (feeRow.f ?? 0) / feeRow.n : 0.02, slippage: 0.01 };
+  const bots = botRows.map((b) => {
+    // the order-flow rule is not applied: money per side was not recorded for past contracts
+    const base = { ...b.config, flowOn: false };
+    const actual = simulate(base, markets, obs, opt);
+    const without = simulate({ ...base, assets: [base.tradeAsset] }, markets, obs, opt);
+    return summarizeMissed(b.name, b.config.tradeAsset, b.config.assets, actual, without);
+  });
+  const data: MissedByDisagreement = {
+    note: "Estimated by replaying the recorded probabilities (about every 10 seconds) and Kalshi's final results with the bot's current settings, once with every checked metal required to agree and once with only the traded metal. Fills are estimated, and the money-on-each-side rule is not applied. Only contracts that have settled are counted.",
+    periodDays: Math.round(((end - from) / 86_400_000) * 10) / 10,
+    bots,
+  };
+  try {
+    await setSetting(env, "missed_cache", JSON.stringify({ key: cacheKey, at: Date.now(), data }));
+  } catch {
+    /* caching is optional */
+  }
+  return data;
+}
+
 interface Reliability {
   contracts: number;
   reached: number; // times a side reached 80%+ in the tradeable part of a contract
@@ -267,6 +353,7 @@ export interface DayStats {
   perf: Performance;
   byEntryHour: Array<{ hour: string; trades: number; wins: number; losses: number; pnl: number }>;
   stopLossTakeProfitHindsight: Record<string, Hindsight>;
+  missedByDisagreement: MissedByDisagreement | null; // metals bots: contracts skipped because the checked metals disagreed, and how they would have ended (null = no metals bots)
   moneyFlow: MoneyFlow; // how much money was placed on YES and NO in each recorded contract, and at each trade's entry
   earlyExits: TradeDetail[]; // each trade closed early, with what the price did after the exit until the contract closed (up to 40)
   blockedBy: { contractsWatched: number; contractsTraded: number; share: Array<{ code: string; pctOfTime: number; example: string }> };
@@ -357,6 +444,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
     perf,
     byEntryHour: [...hours.entries()].sort((a, b) => a[0] - b[0]).map(([h, v]) => ({ hour: hourLabel(h), ...v, pnl: Math.round(v.pnl * 100) / 100 })),
     stopLossTakeProfitHindsight: hindsightFor(early),
+    missedByDisagreement: await missedByDisagreement(env, start, end, botId),
     moneyFlow,
     earlyExits: await describeTrades(env, closed.filter((p) => p.close_reason === "stop_loss" || p.close_reason === "take_profit").slice(0, 40)),
     blockedBy: { contractsWatched: notes.length, contractsTraded: tradedContracts, share },
@@ -379,6 +467,7 @@ const PROMPT =
   "(3) stopLossTakeProfitHindsight: for trades that were stopped out or took profit early, how many would have finished in our favor had they been held, and what holding would have made versus what they actually made (this is hindsight and ignores the risk the exit removed; say so). earlyExits lists each such trade in full, including finalResult (how the 15-minute contract finally settled), ifHeldPnl, and afterExit (our side's best, worst and last probability after the exit until the contract closed): use it to say whether stopped-out trades recovered; " +
   "(4) reliability: how often a side reached 80% and then lost, versus the previous 7-day daily average, and any hours that stand out; " +
   "(4b) moneyFlow: how much money was placed on YES and on NO in each recorded contract, and whether the money on our side at entry (the ratio of our side to the other side over the 3 minutes up to the entry) looked different on winning trades than on losing ones; say how many trades each number rests on, and if contractsRecorded is 0 or the sample is small write 'not enough data'; " +
+  "(4c) missedByDisagreement (only when it is not null): how many contracts a metals bot skipped because gold and silver did not lean the same way, how many of those would have won or lost, and the estimated profit or loss had they been taken; say it is an estimate; " +
   "(5) at most three specific setting changes worth testing, each with the measured evidence and the sample size behind it. " +
   "HOW TO WRITE: plain text only. No markdown: no asterisks, no bold, no headings, no code formatting. Never use field names or technical words from the data, and do not write the words measured or hypothesis or tag points. One point per line starting with a dash, each starting with its conclusion, then the numbers behind it. If you are guessing, say 'My guess:' before it. If a sample is too small to conclude anything, write 'not enough data' instead of guessing. Never invent numbers or trades. No disclaimers or reminders about being advisory. Use the Kalshi rules below only to understand how contracts are defined and settled.\n\n";
 

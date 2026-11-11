@@ -3,7 +3,7 @@ import { checklistFor } from "../src/checklist";
 import { FlowTracker, flowPasses } from "../src/flow";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
-import { hindsightFor, etDateString, enrichTrade, moneyFlowSummary } from "../src/analysis";
+import { hindsightFor, etDateString, enrichTrade, moneyFlowSummary, summarizeMissed } from "../src/analysis";
 import type { PositionRow } from "../src/db";
 import { cleanAiText } from "../src/notify";
 import { aggregateTrades, attachMarketProb } from "../src/volume";
@@ -166,6 +166,16 @@ describe("crypto entry", () => {
     expect(s.tradesWithMoney[0]).toMatchObject({ side: "yes", ratio3min: 3, ratioWholeContract: 3, result: "win" });
     expect(s.winsVsLosses).toEqual({ wins: { trades: 1, medianRatio3min: 3 }, losses: { trades: 1, medianRatio3min: 0.25 } });
     expect(s.recentContracts[0]).toMatchObject({ yesToNoRatio: 0.25, finalResult: "no" });
+  });
+
+  it("missed by disagreement: counts contracts only the no-agreement rules would have traded, with how they ended", () => {
+    const trade = (ticker: string, result: "win" | "loss", pnl: number, entryTs: number) => ({ asset: "GOLD", ticker, outcome: "yes" as const, entryTs, entryProb: 0.85, count: 2, entryPrice: 0.86, exit: "settled" as const, exitTs: entryTs + 60_000, pnl, result });
+    const report = (trades: ReturnType<typeof trade>[]) => ({ assumptions: [], periods: 0, trades, skippedUnsettled: 0, total: trades.length, wins: 0, losses: 0, winRate: null, netPnl: 0, maxDrawdown: 0, byAsset: {}, byOutcome: {} });
+    const actual = report([trade("A", "win", 0.3, 1000)]);
+    const without = report([trade("A", "win", 0.3, 1000), trade("B", "win", 0.25, 2000), trade("C", "loss", -1.7, 3000), trade("D", "win", 0.2, 4000)]);
+    const s = summarizeMissed("Gold Bot", "GOLD", ["GOLD", "SILVER"], actual, without);
+    expect(s).toMatchObject({ contractsMissed: 3, wouldHaveWon: 2, wouldHaveLost: 1, hypotheticalPnl: -1.25, tradesActuallyTaken: 1 });
+    expect(s.missed.map((m) => m.result)).toEqual(["win", "loss", "win"]); // newest first: D, C, B
   });
 
   it("order flow totals: add up by side and time frame, ignore repeats, and are not trusted until loaded", () => {
