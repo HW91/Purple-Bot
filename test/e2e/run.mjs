@@ -294,6 +294,15 @@ try {
     await page.waitForSelector("text=Volume behind this contract", { timeout: 25000 });
     const volText = await page.textContent("#main");
     ok("Charts tab shows the volume tables (summary and by minute, no block-trade row or share/gap line)", !volText.includes("Block trades") && !volText.includes("YES share of dollars") && !volText.includes("Gap =") && volText.includes("YES bets") && volText.includes("NO bets") && volText.includes("Total") && volText.includes("YES $ ÷ NO $") && volText.includes("Money ratio") && !volText.includes("Market YES prob.") && !volText.includes("Gap (pts)"), volText.slice(-400));
+    // Time of day table: only your trades (wins, losses, win % and loss %, profit/loss); nothing about reversals
+    await page.click("nav >> text=Trades");
+    await page.waitForSelector("text=Time of day (US Eastern)", { timeout: 15000 });
+    await page.selectOption("select >> nth=0", { index: 0 }).catch(() => {});
+    const todCard = page.locator(".card:has(h2:text('Time of day (US Eastern)'))");
+    await todCard.locator("select").first().selectOption("30");
+    await todCard.locator("th:text('Win %')").first().waitFor({ timeout: 15000 });
+    const todText = await todCard.textContent();
+    ok("time-of-day table shows only your trades: wins, losses, win %, loss %, P/L (no reversal columns)", ["Hour (ET)", "Trades", "Wins", "Losses", "Win %", "Loss %", "P/L"].every((t) => todText.includes(t)) && !todText.includes("Reached 80%") && !todText.includes("Then lost") && !todText.includes("reversals"), todText.slice(0, 250));
     // AI chat list: white links, five per page, and only the opened chat shows (right under its own link)
     for (let i = 1; i <= 7; i++) await api("/chat", "POST", { message: `Page test chat ${i}` });
     const multi = (await api("/chat", "POST", { message: "Multi question one" })).j.convId;

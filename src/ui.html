@@ -400,17 +400,12 @@ function hoursCard(){
   function load(){
     api('/hours?days='+days.value+(asset.value?'&asset='+asset.value:'')).then(function(r){
       body.textContent='';
-      var rows=r.hours.filter(function(x){return x.contracts>0||x.trades>0});
-      if(!rows.length){body.appendChild(h('div',{class:'mute',text:'Nothing recorded in this period yet. The bot records prices while it is running or the dashboard is open.'}));return}
-      var rated=r.hours.filter(function(x){return x.reached>=8&&x.settled>0}).map(function(x){return {hour:x.hour,rate:x.reversed/x.reached,n:x.reached}});
-      if(rated.length>=2){
-        rated.sort(function(a,b){return a.rate-b.rate});
-        var lo=rated[0],hi=rated[rated.length-1];
-        body.appendChild(h('p',{text:'Fewest reversals: '+hl(lo.hour)+' ('+(lo.rate*100).toFixed(0)+'% of '+lo.n+' times). Most reversals: '+hl(hi.hour)+' ('+(hi.rate*100).toFixed(0)+'% of '+hi.n+' times). Only hours with at least 8 cases are compared.'}));
-      }else body.appendChild(h('p',{class:'mute',text:'Not enough data yet to compare hours (needs at least 8 cases in an hour). Keep the bot or the dashboard running and check again.'}));
-      body.appendChild(h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['Hour (ET)','Contracts','Reached 80%+','Then lost','Lost %','Your trades','Win rate','P/L'].map(function(x){return h('th',{text:x})}))),
-        h('tbody',null,rows.map(function(x){return h('tr',null,h('td',{text:hl(x.hour)}),h('td',{text:x.contracts}),h('td',{text:x.reached}),h('td',{text:x.reversed}),h('td',{text:x.reached&&x.settled?(x.reversed/x.reached*100).toFixed(0)+'%':'—'}),h('td',{text:x.trades}),h('td',{text:x.wins+x.losses?(x.wins/(x.wins+x.losses)*100).toFixed(0)+'%':'—'}),h('td',{class:pnlCls(x.pnl),text:usd(x.pnl)}))})))));
-      body.appendChild(h('small',{text:r.contracts+' contracts and '+r.trades+' of your trades in this period. "Reached 80%+" = in the part of a contract the bot can trade (after 5 minutes, before the last 2), one side reached 80%. "Then lost" = that side lost at settlement. Small counts are mostly noise.'}));
+      var rows=r.hours.filter(function(x){return x.trades>0});
+      if(!rows.length){body.appendChild(h('div',{class:'mute',text:'No completed trades in this period yet.'}));return}
+      function pc(n,d){return d?(n/d*100).toFixed(0)+'%':'—'}
+      body.appendChild(h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['Hour (ET)','Trades','Wins','Losses','Win %','Loss %','P/L'].map(function(x){return h('th',{text:x})}))),
+        h('tbody',null,rows.map(function(x){var done=x.wins+x.losses;return h('tr',null,h('td',{text:hl(x.hour)}),h('td',{text:x.trades}),h('td',{text:x.wins}),h('td',{text:x.losses}),h('td',{text:pc(x.wins,done)}),h('td',{text:pc(x.losses,done)}),h('td',{class:x.pnl>0?'g':x.pnl<0?'r':'',text:usd(x.pnl)}))})))));
+      body.appendChild(h('small',{text:r.trades+' of your completed trades in this period, grouped by the hour (US Eastern) each was entered.'}));
     }).catch(function(e){body.textContent=e.message})
   }
   days.addEventListener('change',load);asset.addEventListener('change',load);load();
