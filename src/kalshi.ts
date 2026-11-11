@@ -100,8 +100,11 @@ export class KalshiClient {
     return r.market;
   }
 
-  /** Every completed trade on one contract (Get Trades, newest first, up to `maxPages` pages of 1000). */
-  async trades(ticker: string, maxPages = 10): Promise<{ trades: RawTrade[]; truncated: boolean }> {
+  /**
+   * Every completed trade on one contract (Get Trades, newest first, 1000 per page). Kalshi sets no maximum total, so this keeps paging until
+   * the list ends; `maxPages` is only a safety stop (100 pages = 100,000 trades = about 1,000 request tokens). 429s are retried with backoff in request().
+   */
+  async trades(ticker: string, maxPages = 100): Promise<{ trades: RawTrade[]; truncated: boolean }> {
     const out: RawTrade[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < maxPages; page++) {

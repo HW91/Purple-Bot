@@ -487,7 +487,7 @@ export class Engine extends DurableObject<Env> {
       if (!m || this.flow.isReady(m.ticker) || !this.tradeSubscribed.has(m.ticker) || this.flowLoading.has(m.ticker)) continue;
       this.flowLoading.add(m.ticker);
       try {
-        const { trades, truncated } = await this.client.trades(m.ticker, 10);
+        const { trades, truncated } = await this.client.trades(m.ticker, 30);
         for (const t of trades) {
           this.flow.add(m.ticker, { id: t.trade_id, side: t.taker_outcome_side === "no" ? "no" : "yes", ts: Date.parse(t.created_time), contracts: num(t.count_fp), yesPrice: num(t.yes_price_dollars), noPrice: num(t.no_price_dollars) });
         }
