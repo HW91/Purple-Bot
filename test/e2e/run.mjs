@@ -294,6 +294,20 @@ try {
     await page.waitForSelector("text=Volume behind this contract", { timeout: 25000 });
     const volText = await page.textContent("#main");
     ok("Charts tab shows the volume tables (summary and by minute, no block-trade row or share/gap line)", !volText.includes("Block trades") && !volText.includes("YES share of dollars") && !volText.includes("Gap =") && volText.includes("YES bets") && volText.includes("NO bets") && volText.includes("Total") && volText.includes("YES $ ÷ NO $") && volText.includes("Money ratio") && !volText.includes("Market YES prob.") && !volText.includes("Gap (pts)"), volText.slice(-400));
+    // AI chat list: white links, five per page, and only the opened chat shows (right under its own link)
+    for (let i = 1; i <= 7; i++) await api("/chat", "POST", { message: `Page test chat ${i}` });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.click("nav >> text=AI");
+    await page.waitForSelector("a.chatlink", { timeout: 15000 });
+    ok("AI chat list shows five links per page with a page control", (await page.locator("a.chatlink").count()) === 5 && (await page.textContent("#main")).includes("Page 1 of 2"));
+    ok("chat links are white in dark mode", (await page.locator("a.chatlink").first().evaluate((el) => getComputedStyle(el).color)) === "rgb(255, 255, 255)");
+    await page.click("text=Older ›");
+    ok("the next page shows the remaining links", (await page.locator("a.chatlink").count()) >= 1 && (await page.textContent("#main")).includes("Page 2 of 2"));
+    await page.click("text=‹ Newer");
+    await page.locator("a.chatlink").nth(1).click();
+    await page.waitForSelector(".msg.user", { timeout: 15000 });
+    const placement = await page.evaluate(() => { const msgs = document.querySelectorAll(".msg.user"); const row = msgs[0].parentElement.previousElementSibling; return { users: msgs.length, rowHasLink: !!row.querySelector("a.chatlink"), rowIndex: [...document.querySelectorAll("a.chatlink")].indexOf(row.querySelector("a.chatlink")) }; });
+    ok("opening a chat shows only that chat, directly under its own link", placement.users === 1 && placement.rowHasLink && placement.rowIndex === 1, JSON.stringify(placement));
     ok("no JavaScript errors in the page", errors.length === 0, errors.join(" | "));
     await browser.close();
   } catch (e) {
