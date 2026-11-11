@@ -10,6 +10,15 @@ Read `README.md` first — it lists the design, the definitions, and what was NO
 - **handleChat returns HTTP 200 with an apology text when both AI providers fail** ("I'm having trouble connecting right now…").
   `askAI()` treats those texts as failures.
 
+- **Kalshi splits money across exchange shards, and API orders can only spend the shard their market lives on.** Crypto and
+  Commodities (gold, silver) are exchange index 2; most other markets are index 0
+  (https://docs.kalshi.com/getting_started/exchange_sharding.md). `GET /portfolio/balance` returns the TOTAL across all
+  shards (the per-shard split is in `balance_breakdown`), so the bot's own balance check passed while Kalshi refused gold
+  orders with `insufficient_balance`. The owner fixed it by turning on "Disable balance management" at
+  kalshi.com/account/exchange-indexes (the transfer controls appear only after that) and moving money into Exchange 2.
+  Do not tell the owner to leave that switch off: it hides the transfer controls, and the app/web auto-transfer never
+  applies to API orders anyway.
+
 ## Rules for working here
 - **Real money.** Never change order, risk, or reconcile logic without running `npm test` and `node test/e2e/run.mjs`.
 - **Bots only start OFF and only a person turns them on.** Nothing in the code may set `enabled = 1` except the
