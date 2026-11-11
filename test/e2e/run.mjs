@@ -309,6 +309,14 @@ try {
     const todText = await todCard.textContent();
     ok("time-of-day table shows only your trades: wins, losses, win %, loss %, P/L (no reversal columns)", ["Hour (ET)", "Trades", "Wins", "Losses", "Win %", "Loss %", "P/L"].every((t) => todText.includes(t)) && !todText.includes("Reached 80%") && !todText.includes("Then lost") && !todText.includes("reversals"), todText.slice(0, 250));
     ok("time-of-day table lists every hour of the day (24 rows), empty hours shown as 0 trades, a dash and $0.00", (await todCard.locator("tbody tr").count()) === 24 && (await todCard.locator("tbody tr").first().textContent()).includes("12 AM") && (await todCard.locator("tbody tr").last().textContent()).includes("11 PM"));
+    // the asset choice changes the table: each asset shows only its own trades
+    const tradeSum = async () => page.evaluate(() => { const card = [...document.querySelectorAll(".card")].find((c) => c.querySelector("h2")?.textContent.includes("Time of day")); return [...card.querySelectorAll("tbody tr")].reduce((s, r) => s + Number(r.children[1].textContent), 0); });
+    const pick = async (a) => { await todCard.locator("select").nth(1).selectOption(a); await page.waitForTimeout(1500); return tradeSum(); };
+    const allTrades = await pick("");
+    const btcTrades = await pick("BTC");
+    const ethTrades = await pick("ETH");
+    const dogeTrades = await pick("DOGE");
+    ok("the time-of-day table follows the selected asset (all, BTC, ETH and DOGE show different, matching trade counts)", allTrades >= btcTrades + ethTrades && btcTrades >= 1 && ethTrades >= 1 && btcTrades !== ethTrades && dogeTrades === 0, JSON.stringify({ allTrades, btcTrades, ethTrades, dogeTrades }));
     // AI chat list: white links, five per page, and only the opened chat shows (right under its own link)
     for (let i = 1; i <= 7; i++) await api("/chat", "POST", { message: `Page test chat ${i}` });
     const multi = (await api("/chat", "POST", { message: "Multi question one" })).j.convId;
