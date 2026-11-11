@@ -407,6 +407,90 @@ export async function missedByDisagreement(env: Env, start: number, end: number,
   return data;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Trade files: everything recorded about a trade, for the AI chat (the most recent trades only, to keep the prompt a sensible size)
+// ---------------------------------------------------------------------------------------------------------------
+
+export interface TradeFile {
+  bot: string | null;
+  asset: string;
+  side: "yes" | "no";
+  entered: string; // US Eastern
+  result: string | null;
+  pnl: number | null;
+  /** The probability range and Time Delay the bot used on this contract (saved while it ran). Its other settings are the bot's current ones. */
+  settingsOnThisContract: { minProbability: number; maxProbability: number; timeDelaySeconds: number | null } | null;
+  /** Each requirement as it stood at the moment of entry. */
+  checklistAtEntry: string[] | null;
+  /** The best prices just before entry, and how many contracts were on offer on the buy side (null = not recorded). */
+  atEntry: { yesBid: number; yesAsk: number; spread: number; contractsOnOffer: number | null } | null;
+  /** The other checked assets' YES probability at the entry moment. */
+  otherAssetsAtEntry: Array<{ asset: string; yesProbability: number }>;
+  /** [seconds from entry (negative = before), YES bid, YES ask], from 5 minutes before entry until the contract closed. */
+  pricesAround: Array<[number, number, number]>;
+}
+
+export function compactPrices(obs: Array<{ ts: number; bid: number; ask: number }>, entryTs: number): Array<[number, number, number]> {
+  const r3 = (x: number) => Math.round(x * 1000) / 1000;
+  return obs.map((o) => [Math.round((o.ts - entryTs) / 1000), r3(o.bid), r3(o.ask)]);
+}
+
+export function checklistStrings(raw: string | null): string[] | null {
+  if (!raw) return null;
+  try {
+    const lines = JSON.parse(raw) as Array<{ ok: boolean | null; text: string }>;
+    return lines.map((c) => `${c.ok === true ? "OK" : c.ok === false ? "FAILED" : "NOT TESTED"}: ${c.text}`);
+  } catch {
+    return null;
+  }
+}
+
+export async function buildTradeFiles(env: Env, rows: PositionRow[], max = 10): Promise<TradeFile[]> {
+  const take = rows.slice(0, max);
+  return Promise.all(
+    take.map(async (p): Promise<TradeFile> => {
+      const mk = await env.DB.prepare("SELECT open_ts, close_ts FROM markets WHERE ticker = ?").bind(p.ticker).first<{ open_ts: number; close_ts: number }>();
+      const closeTs = mk?.close_ts ?? p.market_close_ts;
+      const [obs, atEntryRow, cs, notes, bot] = await Promise.all([
+        env.DB.prepare("SELECT ts, yes_bid, yes_ask FROM observations WHERE ticker = ? AND ts >= ? AND ts <= ? ORDER BY ts LIMIT 400").bind(p.ticker, p.opened_ts - 300_000, closeTs).all<{ ts: number; yes_bid: number; yes_ask: number }>(),
+        env.DB.prepare("SELECT yes_bid, yes_ask, yes_bid_size, yes_ask_size FROM observations WHERE ticker = ? AND ts <= ? ORDER BY ts DESC LIMIT 1").bind(p.ticker, p.opened_ts).first<{ yes_bid: number; yes_ask: number; yes_bid_size: number | null; yes_ask_size: number | null }>(),
+        env.DB.prepare("SELECT prob_min, prob_max, delay_sec FROM contract_settings WHERE bot_id = ? AND ticker = ?").bind(p.bot_id, p.ticker).first<{ prob_min: number; prob_max: number; delay_sec: number | null }>(),
+        env.DB.prepare("SELECT checks FROM contract_notes WHERE bot_id = ? AND ticker = ?").bind(p.bot_id, p.ticker).first<{ checks: string | null }>(),
+        env.DB.prepare("SELECT name, config FROM bots WHERE id = ?").bind(p.bot_id).first<{ name: string; config: string }>(),
+      ]);
+      let others: Array<{ asset: string; yesProbability: number }> = [];
+      try {
+        const assets = (bot ? (JSON.parse(bot.config) as { assets?: string[] }).assets : null) ?? [];
+        const rest = assets.filter((a) => a !== p.asset);
+        if (mk && rest.length) {
+          const res = await env.DB.prepare(
+            `SELECT m.asset, (SELECT (o.yes_bid + o.yes_ask) / 2 FROM observations o WHERE o.ticker = m.ticker AND o.ts <= ? ORDER BY o.ts DESC LIMIT 1) p FROM markets m WHERE m.open_ts = ? AND m.asset IN (${rest.map(() => "?").join(",")})`,
+          )
+            .bind(p.opened_ts, mk.open_ts, ...rest)
+            .all<{ asset: string; p: number | null }>();
+          others = (res.results ?? []).filter((r) => r.p !== null).map((r) => ({ asset: r.asset, yesProbability: Math.round((r.p as number) * 1000) / 1000 }));
+        }
+      } catch {
+        /* the other assets are optional context */
+      }
+      const buySize = atEntryRow ? (p.outcome === "yes" ? atEntryRow.yes_ask_size : atEntryRow.yes_bid_size) : null;
+      return {
+        bot: bot?.name ?? null,
+        asset: p.asset,
+        side: p.outcome,
+        entered: etStamp(p.opened_ts),
+        result: p.result,
+        pnl: p.realized_pnl,
+        settingsOnThisContract: cs ? { minProbability: cs.prob_min, maxProbability: cs.prob_max, timeDelaySeconds: cs.delay_sec } : null,
+        checklistAtEntry: checklistStrings(notes?.checks ?? null),
+        atEntry: atEntryRow ? { yesBid: atEntryRow.yes_bid, yesAsk: atEntryRow.yes_ask, spread: Math.round((atEntryRow.yes_ask - atEntryRow.yes_bid) * 1000) / 1000, contractsOnOffer: buySize ?? null } : null,
+        otherAssetsAtEntry: others,
+        pricesAround: compactPrices((obs.results ?? []).map((o) => ({ ts: o.ts, bid: o.yes_bid, ask: o.yes_ask })), p.opened_ts),
+      };
+    }),
+  );
+}
+
 interface Reliability {
   contracts: number;
   reached: number; // times a side reached 80%+ in the tradeable part of a contract

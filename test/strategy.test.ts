@@ -3,7 +3,7 @@ import { checklistFor } from "../src/checklist";
 import { FlowTracker, flowPasses } from "../src/flow";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
-import { hindsightFor, etDateString, enrichTrade, moneyFlowSummary, summarizeMissed, exitEarlyHindsight } from "../src/analysis";
+import { hindsightFor, etDateString, enrichTrade, moneyFlowSummary, summarizeMissed, exitEarlyHindsight, compactPrices, checklistStrings } from "../src/analysis";
 import type { PositionRow } from "../src/db";
 import { cleanAiText } from "../src/notify";
 import { aggregateTrades, attachMarketProb } from "../src/volume";
@@ -243,6 +243,14 @@ describe("crypto entry", () => {
     expect(three.tradesWorseOff).toBe(1);
     // a trade with no price recorded near that moment is left out, never guessed
     expect(exitEarlyHindsight([trades[0]], new Map(), 0.02).options[0].tradesCompared).toBe(0);
+  });
+
+  it("trade files: prices are compacted to [seconds from entry, bid, ask] and the saved checklist is readable", () => {
+    const T0 = 1_000_000_000_000;
+    expect(compactPrices([{ ts: T0 - 20_000, bid: 0.8301, ask: 0.8499 }, { ts: T0 + 10_000, bid: 0.9, ask: 0.92 }], T0)).toEqual([[-20, 0.83, 0.85], [10, 0.9, 0.92]]);
+    expect(checklistStrings(JSON.stringify([{ key: "a", ok: true, text: "Live prices available" }, { key: "b", ok: false, text: "Spread too wide" }, { key: "c", ok: null, text: "Risk limits" }]))).toEqual(["OK: Live prices available", "FAILED: Spread too wide", "NOT TESTED: Risk limits"]);
+    expect(checklistStrings(null)).toBeNull();
+    expect(checklistStrings("not json")).toBeNull();
   });
 
   it("missed by disagreement: counts contracts only the no-agreement rules would have traded, with how they ended", () => {

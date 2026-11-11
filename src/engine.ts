@@ -102,7 +102,7 @@ export class Engine extends DurableObject<Env> {
   private posCache = new Map<string, PositionRow>();
   private dirtyPos = new Set<string>();
   private lastFav = new Map<string, number>();
-  private obsBuf: Array<[string, number, number, number, number]> = [];
+  private obsBuf: Array<[string, number, number, number, number, number | null, number | null]> = [];
   private lastObs = new Map<string, number>();
   private lastObsKey = new Map<string, string>();
 
@@ -619,7 +619,7 @@ export class Engine extends DurableObject<Env> {
     if (q.ts - last < OBS_MIN_INTERVAL_MS) return; // batch + throttle D1 writes
     this.lastObs.set(q.ticker, q.ts);
     this.lastObsKey.set(q.ticker, key);
-    this.obsBuf.push([q.ticker, q.ts, q.yesBid, q.yesAsk, q.last]);
+    this.obsBuf.push([q.ticker, q.ts, q.yesBid, q.yesAsk, q.last, q.yesBidSize > 0 ? q.yesBidSize : null, q.yesAskSize > 0 ? q.yesAskSize : null]);
   }
 
   /** Track favorable-direction probability extremes while a position is open (from live updates only). */
@@ -644,7 +644,7 @@ export class Engine extends DurableObject<Env> {
   private async flush(): Promise<void> {
     const stmts: D1PreparedStatement[] = [];
     if (this.obsBuf.length) {
-      const ins = this.env.DB.prepare("INSERT INTO observations (ticker, ts, yes_bid, yes_ask, last) VALUES (?,?,?,?,?)");
+      const ins = this.env.DB.prepare("INSERT INTO observations (ticker, ts, yes_bid, yes_ask, last, yes_bid_size, yes_ask_size) VALUES (?,?,?,?,?,?,?)");
       for (const o of this.obsBuf) stmts.push(ins.bind(...o));
       this.obsBuf = [];
     }
