@@ -723,7 +723,14 @@ function vBacktest(){
     editors.forEach(function(e,i){var c=e.changes();if(c.names.length)variants.push({label:'Comparison '+(i+1)+': '+c.names.join(', '),overrides:c.overrides})});
     out.textContent='Running…';
     api('/backtest',{method:'POST',body:{botId:sel.value,fromTs:new Date(from.value).getTime(),toTs:new Date(to.value).getTime(),variants:variants}}).then(function(r){render(r.reports,out);if(r.dataNote)out.appendChild(h('div',{class:'banner',text:r.dataNote}));loadSaved()}).catch(function(e){out.textContent='';toast(e.message,true)})}
-  function loadSaved(){api('/backtests').then(function(b){saved.textContent='';if(!b.length)return;saved.appendChild(h('div',{class:'card'},h('h2',{text:'Saved backtest reports'}),b.map(function(x){var d=h('div');return h('details',null,h('summary',{text:when(x.created_ts)+' · '+when(x.from_ts)+' → '+when(x.to_ts)}),d,h('button',{class:'btn gray',text:'Show',onclick:function(){render(x.report,d)}}))})))})}
+  function loadSaved(){api('/backtests').then(function(b){saved.textContent='';if(!b.length)return;
+    saved.appendChild(h('div',{class:'card'},h('h2',{text:'Saved backtest reports'}),h('small',{class:'mute',style:'display:block;margin-bottom:6px',text:'Each line shows how the current settings did over that period. Open one to see only the changes that were tested.'}),b.map(function(x){
+      var reps=x.report||[],hasBase=reps.length&&reps[0].label==='Current settings';
+      var base=hasBase&&reps[0].report?reps[0].report:null;
+      var head=base?' · current settings: '+base.total+' trades, '+usd(base.netPnl):'';
+      var d=h('div'),det=h('details',null,h('summary',{text:when(x.created_ts)+' · '+when(x.from_ts)+' → '+when(x.to_ts)+head}),d);
+      det.addEventListener('toggle',function(){if(det.open&&!d.firstChild)render(hasBase&&reps.length>1?reps.slice(1):reps,d)});
+      return det})))})}
   loadSaved();
 }
 

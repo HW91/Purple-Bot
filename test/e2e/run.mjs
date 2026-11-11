@@ -327,6 +327,13 @@ try {
     await page.click("text=Run backtest");
     await page.waitForSelector("text=Comparison 1: Probability threshold", { timeout: 30000 });
     ok("a comparison that changes one setting is run next to the current settings", (await page.textContent("#main")).includes("Current settings"));
+    // saved backtests: the current settings show once in the heading line; opening one shows only the changes that were tested
+    await page.waitForSelector("summary:has-text('current settings:')", { timeout: 15000 });
+    await page.locator("summary:has-text('current settings:')").first().click();
+    const savedBox = page.locator("details:has(summary:has-text('current settings:'))").first();
+    await savedBox.locator("text=Comparison 1").first().waitFor({ timeout: 15000 });
+    const savedText = await savedBox.textContent();
+    ok("an opened saved backtest shows only the tested changes, not the current settings again", savedText.includes("Comparison 1") && !savedText.includes("Current settings"), savedText.slice(0, 200));
     ok("no JavaScript errors in the page", errors.length === 0, errors.join(" | "));
     await browser.close();
   } catch (e) {
