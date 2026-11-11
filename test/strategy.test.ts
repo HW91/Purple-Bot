@@ -112,6 +112,9 @@ describe("crypto entry", () => {
     expect(d.trade!.costPerContract).toBeCloseTo(0.06, 10);
     expect(d.trade!.prob).toBeCloseTo(0.05, 10);
     expect(d.trade!.count).toBe(Math.floor(5 / 0.06)); // $5 buys 83 contracts at 6 cents
+    // a small trade amount buys one contract (at 6 cents, $0.10 buys 1), and an amount below one contract's price buys nothing
+    expect(evaluateEntry({ ...low, tradeAmount: 0.1 }, views, now).trade?.count).toBe(1);
+    expect(evaluateEntry({ ...low, tradeAmount: 0.05 }, views, now).code).toBe("size");
     // a favorite bot with its own range is unchanged and would not trade this (95% is above its 80% to 89% range)
     expect(evaluateEntry({ ...cfg, probMax: 0.89 }, views, now).ok).toBe(false);
     // outside the low range (the cheap side is at 12%): no trade
@@ -523,7 +526,8 @@ describe("config validation + day boundary", () => {
     expect(() => validateBotConfig({ strategy: "crypto", timeDelaySec: 15 * 60 })).toThrow(/Time Delay/);
     expect(() => validateBotConfig({ strategy: "crypto", agreeCount: 12 })).toThrow(/agreement/);
     expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0 })).toThrow(/Trade amount/);
-    expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0.5 })).toThrow(/at least/);
+    expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0.005 })).toThrow(/at least/);
+    expect(validateBotConfig({ strategy: "crypto", tradeAmount: 0.1 }).tradeAmount).toBe(0.1); // one cheap contract
     expect(() => validateBotConfig({ strategy: "crypto", probThreshold: 0.8, probMax: 0.8 })).toThrow(/Maximum probability/);
     expect(validateBotConfig({ strategy: "crypto", probMax: 0.9 }).probMax).toBe(0.9);
     expect(validateBotConfig({ strategy: "crypto" }).probMax).toBe(1);

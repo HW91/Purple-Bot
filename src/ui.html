@@ -352,7 +352,7 @@ function vBots(){
         s==='crypto'?field('Assets that must agree (of those selected)',num('agreeCount',1,1)):h('div',{class:'mute',text:'Every checked metal must lean the same direction before the bot trades.'}),
         field('Time Delay after open (seconds, 0–'+((cfg.durationMin-1)*60)+')',num('timeDelaySec',1,1)),
         field('Minimum time remaining (seconds)',num('minRemainingSec',1,1)),
-        field('Trade amount ($)',num('tradeAmount'),'Smallest: $1 (the bot buys whole contracts; one costs up to $0.99 plus fees). Kalshi sets no fixed largest amount. Your balance, your daily limits, and how many contracts are available at your price limit it.'),
+        field('Trade amount ($)',num('tradeAmount'),'The bot buys whole contracts: as many as this amount pays for at the price (fees are extra). To buy one contract, enter at least its price and less than double it, for example $0.10 for a contract at 6 cents. Below one contract price, nothing is bought. Kalshi sets no fixed largest amount; your balance and your daily limits cap it.'),
         field('Max simultaneous positions',num('maxPositions',1,1)),
         field('Max trades per hour',num('maxTradesPerHour',1,1)),
         field('Daily loss limit ($)',num('dailyLossLimit')),
