@@ -566,8 +566,10 @@ function vCharts(){
       c.strokeStyle=css('--accent');c.lineWidth=1;c.setLineDash([4,4]);c.beginPath();c.moveTo(X(td),g.t);c.lineTo(X(td),g.t+ph);c.stroke();c.setLineDash([]);c.lineWidth=1;
     }
     // solid line at the probability minimum this bot used on THIS contract (saved per contract, so old charts don't change)
-    if(data.settings&&data.settings.probMin>0&&data.settings.probMin<1){
-      c.strokeStyle=css('--start');c.lineWidth=1.5;c.setLineDash([]);c.beginPath();c.moveTo(g.l,Y(data.settings.probMin));c.lineTo(g.w-g.r,Y(data.settings.probMin));c.stroke();c.lineWidth=1;
+    // the entry minimum: the value saved for this contract when the bot traded this asset, otherwise the selected bot's current setting (so every asset's chart shows it)
+    var minLine=data.settings&&data.settings.probMin>0?data.settings.probMin:(tb?tb.config.probThreshold:0);
+    if(minLine>0&&minLine<1){
+      c.strokeStyle=css('--start');c.lineWidth=1.5;c.setLineDash([]);c.beginPath();c.moveTo(g.l,Y(minLine));c.lineTo(g.w-g.r,Y(minLine));c.stroke();c.lineWidth=1;
     }
     // every recorded price (about one every 10 seconds)
     var mpts=data.points;
@@ -577,6 +579,7 @@ function vCharts(){
     var last=mpts[mpts.length-1];
     info.textContent='';if(last){info.appendChild(h('span',{class:'g',text:'YES '+pct(last.yes)}));info.appendChild(h('span',{class:'r',text:'NO '+pct(1-last.yes)}));info.appendChild(h('span',{class:'mute',text:mpts.length+' recorded points · '+data.market.title}))}
     if(data.settings)info.appendChild(h('span',{class:'mute',text:'White line = entry minimum for this contract: '+pct(data.settings.probMin)}));
+    else if(curBot())info.appendChild(h('span',{class:'mute',text:'White line = '+curBot().name+'\'s current entry minimum: '+pct(curBot().config.probThreshold)}));
     if(hoverTs){var best=null;mpts.forEach(function(p){if(!best||Math.abs(p.ts-hoverTs)<Math.abs(best.ts-hoverTs))best=p});if(best){c.strokeStyle=css('--text');c.beginPath();c.moveTo(X(best.ts),g.t);c.lineTo(X(best.ts),g.t+ph);c.stroke();tip.textContent=new Date(best.ts).toLocaleTimeString()+' — YES '+pct(best.yes)+' (bid '+best.bid.toFixed(2)+' / ask '+best.ask.toFixed(2)+') · NO '+pct(1-best.yes)}}
   }
   function hover(e){if(!data)return;var r=canvas.getBoundingClientRect();var x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;var pw=r.width-44-10;var ts=data.market.open_ts+(x-44)/pw*(data.market.close_ts-data.market.open_ts);draw(ts)}

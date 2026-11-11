@@ -305,6 +305,8 @@ try {
     const periodValue = async () => page.locator("#main select").nth(3).inputValue();
     await page.locator("#main select").nth(1).selectOption("ETH");
     await page.waitForFunction(() => document.querySelectorAll("#main select")[3]?.value === "KXETH15M-T1", null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelector("#main")?.textContent.includes("current entry minimum"), null, { timeout: 15000 }).catch(() => {});
+    ok("another asset's chart shows the selected bot's entry minimum line (its current setting) too", (await page.textContent("#main")).includes("current entry minimum"), (await page.textContent("#main")).slice(0, 700));
     await page.locator("#main select").nth(1).selectOption("BTC");
     await page.waitForFunction(() => document.querySelectorAll("#main select")[3]?.value === "KXBTC15M-T1", null, { timeout: 15000 });
     ok("the Charts tab follows the selected asset (ETH loads the ETH contract, then BTC loads the BTC contract)", (await periodValue()) === "KXBTC15M-T1");
