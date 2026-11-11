@@ -3,7 +3,7 @@ import { checklistFor } from "../src/checklist";
 import { FlowTracker, flowPasses } from "../src/flow";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
-import { hindsightFor, etDateString, enrichTrade, moneyFlowSummary, summarizeMissed } from "../src/analysis";
+import { hindsightFor, etDateString, enrichTrade, moneyFlowSummary, summarizeMissed, exitEarlyHindsight } from "../src/analysis";
 import type { PositionRow } from "../src/db";
 import { cleanAiText } from "../src/notify";
 import { aggregateTrades, attachMarketProb } from "../src/volume";
@@ -166,6 +166,33 @@ describe("crypto entry", () => {
     expect(s.tradesWithMoney[0]).toMatchObject({ side: "yes", ratio3min: 3, ratioWholeContract: 3, result: "win" });
     expect(s.winsVsLosses).toEqual({ wins: { trades: 1, medianRatio3min: 3 }, losses: { trades: 1, medianRatio3min: 0.25 } });
     expect(s.recentContracts[0]).toMatchObject({ yesToNoRatio: 0.25, finalResult: "no" });
+  });
+
+  it("exit early hindsight: re-prices settled trades at the bid 3 and 2 minutes before the close", () => {
+    const C = 1_000_000_000_000 + 900_000; // contract close
+    const at = (min: number) => C - min * 60_000;
+    // YES winner entered at 0.85 x2: the bid was 0.93 at 3 min and 0.96 at 2 min. YES loser entered 0.85 x2: the bid was 0.40 then 0.20.
+    const obs = new Map([
+      ["W", [{ ts: at(3) - 5_000, bid: 0.93, ask: 0.95 }, { ts: at(2) - 5_000, bid: 0.96, ask: 0.97 }]],
+      ["L", [{ ts: at(3) - 5_000, bid: 0.4, ask: 0.42 }, { ts: at(2) - 5_000, bid: 0.2, ask: 0.22 }]],
+    ]);
+    const trades = [
+      { ticker: "W", outcome: "yes" as const, qty: 2, avgEntry: 0.85, entryFee: 0.04, pnl: 0.26, openedTs: at(10), closeTs: C }, // 2 x 0.15 - 0.04
+      { ticker: "L", outcome: "yes" as const, qty: 2, avgEntry: 0.85, entryFee: 0.04, pnl: -1.74, openedTs: at(10), closeTs: C }, // -1.70 - 0.04
+      { ticker: "W", outcome: "yes" as const, qty: 2, avgEntry: 0.85, entryFee: 0.04, pnl: 0.26, openedTs: at(1), closeTs: C }, // entered after the exit moment: left out
+    ];
+    const h = exitEarlyHindsight(trades, obs, 0.02, 0.01, [3, 2]);
+    const three = h.options[0];
+    expect(three.tradesCompared).toBe(2);
+    // winner sold at 0.93 - 0.01 = 0.92: (0.07 x 2) - 0.04 entry fee - 0.04 exit fee = 0.06, versus 0.26 actual (gave up 0.20)
+    expect(three.winnersGaveUp).toBeCloseTo(-0.2, 2);
+    // loser sold at 0.40 - 0.01 = 0.39: (-0.46 x 2) - 0.04 - 0.04 = -1.00, versus -1.74 actual (saved 0.74)
+    expect(three.losersSaved).toBeCloseTo(0.74, 2);
+    expect(three.difference).toBeCloseTo(0.54, 2);
+    expect(three.tradesBetterOff).toBe(1);
+    expect(three.tradesWorseOff).toBe(1);
+    // a trade with no price recorded near that moment is left out, never guessed
+    expect(exitEarlyHindsight([trades[0]], new Map(), 0.02).options[0].tradesCompared).toBe(0);
   });
 
   it("missed by disagreement: counts contracts only the no-agreement rules would have traded, with how they ended", () => {

@@ -267,6 +267,101 @@ export function summarizeMissed(botName: string, tradeAsset: string, checked: st
   };
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Hindsight: what would selling a few minutes before the contract closed have done, for trades held to settlement
+// ---------------------------------------------------------------------------------------------------------------
+
+export interface ExitEarlyOption {
+  minutesBeforeClose: number;
+  tradesCompared: number;
+  actualPnl: number;
+  pnlIfSoldEarly: number;
+  difference: number; // pnlIfSoldEarly - actualPnl (positive = selling early would have made more)
+  winnersGaveUp: number; // total difference on trades that actually won (negative)
+  losersSaved: number; // total difference on trades that actually lost (positive)
+  tradesBetterOff: number;
+  tradesWorseOff: number;
+}
+
+export interface ExitEarlyHindsight {
+  note: string;
+  tradesHeldToSettlement: number;
+  options: ExitEarlyOption[];
+}
+
+export interface HeldTrade {
+  ticker: string;
+  outcome: "yes" | "no";
+  qty: number;
+  avgEntry: number;
+  entryFee: number;
+  pnl: number; // actual, after fees
+  openedTs: number;
+  closeTs: number; // when the contract ended
+}
+
+/** Our side's price we could have sold at: the YES bid for a YES trade, 1 - YES ask for a NO trade. */
+function sellPrice(outcome: "yes" | "no", o: Obs): number {
+  return Math.max(0, outcome === "yes" ? o.bid : 1 - o.ask);
+}
+
+export function exitEarlyHindsight(trades: HeldTrade[], obs: Map<string, Obs[]>, feePerContract: number, slippage = 0.01, minutesList = [3, 2]): ExitEarlyHindsight {
+  const options: ExitEarlyOption[] = minutesList.map((min) => {
+    let compared = 0;
+    let actual = 0;
+    let early = 0;
+    let gave = 0;
+    let saved = 0;
+    let better = 0;
+    let worse = 0;
+    for (const t of trades) {
+      const at = t.closeTs - min * 60_000;
+      if (t.openedTs >= at) continue; // it was entered after that moment: nothing to sell yet
+      const list = obs.get(t.ticker) ?? [];
+      let o: Obs | null = null;
+      for (const x of list) if (x.ts <= at) o = x;
+      if (!o || at - o.ts > 60_000) continue; // no recorded price close enough to that moment: never guess
+      const price = Math.max(0, sellPrice(t.outcome, o) - slippage);
+      const hypo = (price - t.avgEntry) * t.qty - t.entryFee - t.qty * feePerContract;
+      const diff = hypo - t.pnl;
+      compared++;
+      actual += t.pnl;
+      early += hypo;
+      if (diff > 0.005) better++;
+      else if (diff < -0.005) worse++;
+      if (t.pnl > 0) gave += diff;
+      else saved += diff;
+    }
+    return { minutesBeforeClose: min, tradesCompared: compared, actualPnl: r2(actual), pnlIfSoldEarly: r2(early), difference: r2(early - actual), winnersGaveUp: r2(gave), losersSaved: r2(saved), tradesBetterOff: better, tradesWorseOff: worse };
+  });
+  return {
+    note: "Replay estimate for trades that were held to settlement: each is re-priced as if sold at the best bid recorded that many minutes before the contract closed (minus a 1 cent slippage allowance and an exit fee per contract). Trades with no recorded price close to that moment are left out. It is hindsight and does not say the sale would have filled.",
+    tradesHeldToSettlement: trades.length,
+    options,
+  };
+}
+
+async function exitEarlyFor(env: Env, closed: PositionRow[]): Promise<ExitEarlyHindsight> {
+  const held: HeldTrade[] = closed
+    .filter((p) => p.close_reason === "settled" && p.realized_pnl !== null && p.entry_qty > 0 && p.avg_entry !== null)
+    .slice(0, 200)
+    .map((p) => ({ ticker: p.ticker, outcome: p.outcome, qty: p.entry_qty, avgEntry: p.avg_entry!, entryFee: p.entry_fee, pnl: p.realized_pnl!, openedTs: p.opened_ts, closeTs: p.market_close_ts }));
+  const obs = new Map<string, Obs[]>();
+  const tickers = [...new Set(held.map((h) => h.ticker))];
+  for (let i = 0; i < tickers.length; i += 40) {
+    const c = tickers.slice(i, i + 40);
+    // only the last few minutes of each contract are needed
+    const rows = (
+      await env.DB.prepare(`SELECT o.ticker, o.ts, o.yes_bid, o.yes_ask FROM observations o JOIN markets m ON m.ticker = o.ticker WHERE o.ticker IN (${c.map(() => "?").join(",")}) AND o.ts >= m.close_ts - 300000 AND o.ts <= m.close_ts ORDER BY o.ts`)
+        .bind(...c)
+        .all<{ ticker: string; ts: number; yes_bid: number; yes_ask: number }>()
+    ).results ?? [];
+    for (const r of rows) (obs.get(r.ticker) ?? obs.set(r.ticker, []).get(r.ticker)!).push({ ts: r.ts, bid: r.yes_bid, ask: r.yes_ask });
+  }
+  const feeRow = await env.DB.prepare("SELECT SUM(fee) f, SUM(fill_count) n FROM orders WHERE fill_count > 0").first<{ f: number | null; n: number | null }>();
+  return exitEarlyHindsight(held, obs, feeRow?.n ? (feeRow.f ?? 0) / feeRow.n : 0.02);
+}
+
 const MISSED_MAX_DAYS = 3;
 const MISSED_CACHE_MS = 15 * 60_000;
 
@@ -353,6 +448,7 @@ export interface DayStats {
   perf: Performance;
   byEntryHour: Array<{ hour: string; trades: number; wins: number; losses: number; pnl: number }>;
   stopLossTakeProfitHindsight: Record<string, Hindsight>;
+  exitEarlyHindsight: ExitEarlyHindsight; // trades held to settlement: what selling 3 or 2 minutes before the close would have done (hindsight estimate)
   missedByDisagreement: MissedByDisagreement | null; // metals bots: contracts skipped because the checked metals disagreed, and how they would have ended (null = no metals bots)
   moneyFlow: MoneyFlow; // how much money was placed on YES and NO in each recorded contract, and at each trade's entry
   earlyExits: TradeDetail[]; // each trade closed early, with what the price did after the exit until the contract closed (up to 40)
@@ -444,6 +540,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
     perf,
     byEntryHour: [...hours.entries()].sort((a, b) => a[0] - b[0]).map(([h, v]) => ({ hour: hourLabel(h), ...v, pnl: Math.round(v.pnl * 100) / 100 })),
     stopLossTakeProfitHindsight: hindsightFor(early),
+    exitEarlyHindsight: await exitEarlyFor(env, closed),
     missedByDisagreement: await missedByDisagreement(env, start, end, botId),
     moneyFlow,
     earlyExits: await describeTrades(env, closed.filter((p) => p.close_reason === "stop_loss" || p.close_reason === "take_profit").slice(0, 40)),
@@ -467,6 +564,7 @@ const PROMPT =
   "(3) stopLossTakeProfitHindsight: for trades that were stopped out or took profit early, how many would have finished in our favor had they been held, and what holding would have made versus what they actually made (this is hindsight and ignores the risk the exit removed; say so). earlyExits lists each such trade in full, including finalResult (how the 15-minute contract finally settled), ifHeldPnl, and afterExit (our side's best, worst and last probability after the exit until the contract closed): use it to say whether stopped-out trades recovered; " +
   "(4) reliability: how often a side reached 80% and then lost, versus the previous 7-day daily average, and any hours that stand out; " +
   "(4b) moneyFlow: how much money was placed on YES and on NO in each recorded contract, and whether the money on our side at entry (the ratio of our side to the other side over the 3 minutes up to the entry) looked different on winning trades than on losing ones; say how many trades each number rests on, and if contractsRecorded is 0 or the sample is small write 'not enough data'; " +
+  "(4d) exitEarlyHindsight: for trades held to settlement, whether selling 3 or 2 minutes before the contract closed would have made more or less in total, how much the winners would have given up versus how much the losers would have saved, and how many trades each way; say it is hindsight and an estimate and give the sample size; " +
   "(4c) missedByDisagreement (only when it is not null): how many contracts a metals bot skipped because gold and silver did not lean the same way, how many of those would have won or lost, and the estimated profit or loss had they been taken; say it is an estimate; " +
   "(5) at most three specific setting changes worth testing, each with the measured evidence and the sample size behind it. " +
   "HOW TO WRITE: plain text only. No markdown: no asterisks, no bold, no headings, no code formatting. Never use field names or technical words from the data, and do not write the words measured or hypothesis or tag points. One point per line starting with a dash, each starting with its conclusion, then the numbers behind it. If you are guessing, say 'My guess:' before it. If a sample is too small to conclude anything, write 'not enough data' instead of guessing. Never invent numbers or trades. No disclaimers or reminders about being advisory. Use the Kalshi rules below only to understand how contracts are defined and settled.\n\n";
