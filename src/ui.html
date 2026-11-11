@@ -393,7 +393,7 @@ function vBots(){
 // ----------------------------------------------------------------- Trades + performance
 // Time-of-day view (US Eastern): how reliable the 80% signal was by hour, and how your own trades did
 function hoursCard(){
-  var days=h('select',null,[3,7,14,30].map(function(d){var o=h('option',{value:d,text:'Last '+d+' days'});if(d===7)o.selected=true;return o})),
+  var days=h('select',null,[1,7,14,30].map(function(d){var o=h('option',{value:d,text:d===1?'Last 1 day':'Last '+d+' days'});if(d===7)o.selected=true;return o})),
       asset=h('select',null,[h('option',{value:'',text:'All assets'})].concat(CRYPTO.concat(METALS).map(function(a){return h('option',{value:a,text:a})}))),
       body=h('div');
   function hl(n){return (n%12===0?12:n%12)+(n<12?' AM':' PM')}
