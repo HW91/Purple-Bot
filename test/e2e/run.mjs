@@ -306,8 +306,8 @@ try {
     await page.click("text=‹ Newer");
     await page.locator("a.chatlink").nth(1).click();
     await page.waitForSelector(".msg.user", { timeout: 15000 });
-    const placement = await page.evaluate(() => { const msgs = document.querySelectorAll(".msg.user"); const row = msgs[0].parentElement.previousElementSibling; return { users: msgs.length, rowHasLink: !!row.querySelector("a.chatlink"), rowIndex: [...document.querySelectorAll("a.chatlink")].indexOf(row.querySelector("a.chatlink")) }; });
-    ok("opening a chat shows only that chat, directly under its own link", placement.users === 1 && placement.rowHasLink && placement.rowIndex === 1, JSON.stringify(placement));
+    const placement = await page.evaluate(() => { const msgs = document.querySelectorAll(".msg.user"); const links = [...document.querySelectorAll("a.chatlink")]; return { users: msgs.length, linksAllAbove: links.length === 5 && links.every((a) => !!(a.compareDocumentPosition(msgs[0]) & Node.DOCUMENT_POSITION_FOLLOWING)) }; });
+    ok("opening a chat shows only that chat, below the list of links", placement.users === 1 && placement.linksAllAbove, JSON.stringify(placement));
     ok("no JavaScript errors in the page", errors.length === 0, errors.join(" | "));
     await browser.close();
   } catch (e) {

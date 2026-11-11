@@ -610,17 +610,15 @@ function vAI(){
   root.appendChild(box);
   function loadAna(){api('/analyses').then(function(a){ana.textContent='';if(!a.length)ana.appendChild(h('div',{class:'mute',text:'No overview yet. The first one is written after midnight Eastern, or press the button to run one for today so far.'}));a.forEach(function(x,i){ana.appendChild(h('details',{open:i===0},h('summary',{text:when(x.ts)}),h('div',{class:'msg',text:x.text})))})})}
   loadAna();
-  // the list of chats: five per page; the chat you open appears right under its own link
+  // the list of chats: five links per page; the chat you open appears below the links
   var convList=[],page=0,PER=5,pager=h('div',{class:'row',style:'margin-top:6px'});
   function loadConvs(){api('/chat').then(function(c){convList=c;renderConvs()})}
   function renderConvs(){
     var pages=Math.max(1,Math.ceil(convList.length/PER));
     if(page>=pages)page=pages-1;if(page<0)page=0;
     convs.textContent='';
-    var shown=false;
     convList.slice(page*PER,page*PER+PER).forEach(function(x){
       convs.appendChild(h('div',{class:'row'},h('a',{class:'chatlink',href:'#',text:x.title,onclick:function(e){e.preventDefault();open(x.id)}}),h('small',{text:when(x.updated_ts)}),h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete this conversation?'))act('/chat/'+x.id,{method:'DELETE'}).then(function(){if(cur===x.id){cur=null;thread.textContent=''}loadConvs()})}})));
-      if(cur===x.id){convs.appendChild(thread);shown=true}
     });
     pager.textContent='';
     if(pages>1){
@@ -629,7 +627,7 @@ function vAI(){
       pager.appendChild(h('button',{class:'btn gray',text:'Older ›',disabled:page>=pages-1,onclick:function(){page++;renderConvs()}}));
     }
     convs.appendChild(pager);
-    if(!shown)convs.appendChild(thread); // a new chat (or one on another page) is shown below the list
+    convs.appendChild(thread); // the opened chat (or a new one) is shown below the links, never between them
   }
   function open(id){cur=id;renderConvs();api('/chat/'+id).then(function(m){if(cur!==id)return;thread.textContent='';m.forEach(function(x){thread.appendChild(h('div',{class:'msg '+x.role,text:x.content}))})})}
   function send(){var t=input.value.trim();if(!t)return;input.value='';thread.appendChild(h('div',{class:'msg user',text:t}));var wait=h('div',{class:'msg mute',text:'Thinking…'});thread.appendChild(wait);
