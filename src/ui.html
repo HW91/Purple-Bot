@@ -709,27 +709,63 @@ function vBacktest(){
   root.appendChild(variantsBox);
   root.appendChild(h('div',{class:'row',style:'margin:8px 0'},h('button',{class:'btn gray',text:'+ Add comparison',onclick:addVariant}),h('button',{class:'btn',text:'Run backtest',onclick:run})));
   root.appendChild(out);root.appendChild(saved);
-  function render(reports,into){into.textContent='';reports.forEach(function(r){
+  var LBL={probThreshold:'Probability threshold',probMax:'Maximum probability',timeDelaySec:'Time Delay',minRemainingSec:'Minimum time remaining',tradeAmount:'Trade amount',maxSpread:'Max spread',agreeCount:'Assets that must agree',maxPositions:'Max positions',maxTradesPerHour:'Max trades per hour',dailyLossLimit:'Daily loss limit',dailyInvestLimit:'Daily investment limit',stopLossOn:'Stop loss',stopLoss:'Stop loss amount',takeProfitOn:'Take profit',takeProfit:'Take profit amount',flowOn:'Money rule',flowWindowMin:'Money time frame (min)',flowRatio:'Required money ratio',tradeAsset:'Asset to trade',assets:'Assets checked',noTradeWindows:'No-trade windows'};
+  function fmt(k,v){
+    if(k==='probThreshold'||k==='probMax')return (+(v*100).toFixed(1))+'%';
+    if(typeof v==='boolean')return v?'on':'off';
+    if(k==='timeDelaySec'||k==='minRemainingSec')return v+'s';
+    if(['tradeAmount','maxSpread','dailyLossLimit','dailyInvestLimit','stopLoss','takeProfit'].indexOf(k)>=0)return '$'+v;
+    if(k==='assets')return v.join(', ');
+    if(k==='noTradeWindows')return v&&v.length?v.map(function(w){return w.start+'-'+w.end}).join(', '):'none';
+    if(k==='flowRatio')return v+'x';
+    return String(v);
+  }
+  // what was changed in a comparison: old value to new value
+  function changeLines(ov,base){return Object.keys(ov||{}).map(function(k){return (LBL[k]||k)+': '+(base&&base[k]!==undefined?fmt(k,base[k])+' → ':'')+fmt(k,ov[k])})}
+  // the full set of settings a run used
+  function settingsLine(c){
+    if(!c)return '';
+    var out=['probThreshold','probMax','timeDelaySec','minRemainingSec','tradeAmount','maxSpread'].map(function(k){return LBL[k]+' '+fmt(k,c[k])});
+    if(c.strategy!=='metals')out.push(LBL.agreeCount+' '+c.agreeCount);
+    out.push('Stop loss '+(c.stopLossOn?fmt('stopLoss',c.stopLoss):'off'));
+    out.push('Take profit '+(c.takeProfitOn?fmt('takeProfit',c.takeProfit):'off'));
+    out.push('Money rule '+(c.flowOn?fmt('flowRatio',c.flowRatio)+' over '+(c.flowWindowMin>0?c.flowWindowMin+' min':'whole contract'):'off'));
+    out.push('Trades '+c.tradeAsset+', checks '+c.assets.join(', '));
+    out.push('No-trade windows '+fmt('noTradeWindows',c.noTradeWindows));
+    out.push('Limits: '+c.maxTradesPerHour+'/hour, loss '+fmt('dailyLossLimit',c.dailyLossLimit)+', invest '+fmt('dailyInvestLimit',c.dailyInvestLimit));
+    return out.join(' · ');
+  }
+  function render(reports,into,baseCfg){into.textContent='';reports.forEach(function(r){
     if(r.error){into.appendChild(h('div',{class:'card r',text:r.label+': '+r.error}));return}
     var p=r.report;
+    var isBase=r.label==='Current settings';
+    var info=isBase?(baseCfg?'Settings: '+settingsLine(baseCfg):''):(r.overrides&&Object.keys(r.overrides).length?'Settings tested: '+changeLines(r.overrides,baseCfg).join(' · '):'');
     into.appendChild(h('div',{class:'card'},h('h2',{text:r.label}),
+      info?h('p',{class:'mute',text:info}):null,
       h('div',{class:'grid'},[['Trades',p.total],['Wins / losses',p.wins+' / '+p.losses],['Win rate',p.winRate==null?'—':(p.winRate*100).toFixed(0)+'%'],['Net P/L after estimated fees',usd(p.netPnl)],['Max drawdown',usd(p.maxDrawdown)],['Contract periods seen',p.periods],['Excluded (not settled yet)',p.skippedUnsettled]].map(function(x){return h('div',null,h('small',{text:x[0]}),h('div',{text:String(x[1])}))})),
       h('p',{text:'By asset: '+(Object.keys(p.byAsset).map(function(k){return k+' '+p.byAsset[k].trades+' trades '+usd(p.byAsset[k].pnl)}).join(' · ')||'none')}),
       h('p',{text:'YES vs NO: '+(Object.keys(p.byOutcome).map(function(k){return k+' '+p.byOutcome[k].trades+' trades '+usd(p.byOutcome[k].pnl)}).join(' · ')||'none')}),
-      h('details',null,h('summary',{text:'Assumptions (read these)'}),h('ul',null,p.assumptions.map(function(a){return h('li',{text:a})})))));
+      p.slippage!==undefined?h('small',{class:'mute',text:'Estimated fills: entry '+Math.round(p.slippage*100)+' cent worse than quoted, early exit '+Math.round(p.slippage*100)+' cent worse; fee $'+p.feePerContract.toFixed(3)+' per contract.'}):null));
   })}
   function run(){
     var variants=[];
     editors.forEach(function(e,i){var c=e.changes();if(c.names.length)variants.push({label:'Comparison '+(i+1)+': '+c.names.join(', '),overrides:c.overrides})});
     out.textContent='Running…';
-    api('/backtest',{method:'POST',body:{botId:sel.value,fromTs:new Date(from.value).getTime(),toTs:new Date(to.value).getTime(),variants:variants}}).then(function(r){render(r.reports,out);if(r.dataNote)out.appendChild(h('div',{class:'banner',text:r.dataNote}));loadSaved()}).catch(function(e){out.textContent='';toast(e.message,true)})}
+    api('/backtest',{method:'POST',body:{botId:sel.value,fromTs:new Date(from.value).getTime(),toTs:new Date(to.value).getTime(),variants:variants}}).then(function(r){render(r.reports,out,curBotCfg());if(r.dataNote)out.appendChild(h('div',{class:'banner',text:r.dataNote}));loadSaved()}).catch(function(e){out.textContent='';toast(e.message,true)})}
   function loadSaved(){api('/backtests').then(function(b){saved.textContent='';if(!b.length)return;
-    saved.appendChild(h('div',{class:'card'},h('h2',{text:'Saved backtest reports'}),h('small',{class:'mute',style:'display:block;margin-bottom:6px',text:'Each line shows how the current settings did over that period. Open one to see only the changes that were tested.'}),b.map(function(x){
+    // the current settings' result, once, at the top (from the newest saved run)
+    var lr=b[0].report||[];
+    if(lr.length&&lr[0].label==='Current settings'&&lr[0].report){
+      var topBox=h('div');
+      saved.appendChild(h('small',{class:'mute',style:'display:block;margin-top:12px',text:'Current settings, newest saved run: '+when(b[0].from_ts)+' → '+when(b[0].to_ts)}));
+      saved.appendChild(topBox);render([lr[0]],topBox,b[0].config);
+    }
+    saved.appendChild(h('div',{class:'card'},h('h2',{text:'Saved backtest reports'}),h('small',{class:'mute',style:'display:block;margin-bottom:6px',text:'Each line shows how the current settings did over that period. Open one to see only the changes that were tested, with the settings used.'}),b.map(function(x){
       var reps=x.report||[],hasBase=reps.length&&reps[0].label==='Current settings';
       var base=hasBase&&reps[0].report?reps[0].report:null;
       var head=base?' · current settings: '+base.total+' trades, '+usd(base.netPnl):'';
       var d=h('div'),det=h('details',null,h('summary',{text:when(x.created_ts)+' · '+when(x.from_ts)+' → '+when(x.to_ts)+head}),d);
-      det.addEventListener('toggle',function(){if(det.open&&!d.firstChild)render(hasBase&&reps.length>1?reps.slice(1):reps,d)});
+      det.addEventListener('toggle',function(){if(det.open&&!d.firstChild)render(hasBase&&reps.length>1?reps.slice(1):reps,d,x.config)});
       return det})))})}
   loadSaved();
 }

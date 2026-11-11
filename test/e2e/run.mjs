@@ -333,7 +333,8 @@ try {
     const savedBox = page.locator("details:has(summary:has-text('current settings:'))").first();
     await savedBox.locator("text=Comparison 1").first().waitFor({ timeout: 15000 });
     const savedText = await savedBox.textContent();
-    ok("an opened saved backtest shows only the tested changes, not the current settings again", savedText.includes("Comparison 1") && !savedText.includes("Current settings"), savedText.slice(0, 200));
+    ok("an opened saved backtest shows only the tested changes, with the settings that were tested", savedText.includes("Comparison 1") && savedText.includes("Settings tested: Probability threshold") && savedText.includes("→ 85%") && !savedText.includes("Current settings") && !savedText.includes("Assumptions"), savedText.slice(0, 300));
+    ok("the current settings' result is shown once at the top of the saved reports, with its settings", (await page.locator("#main h2", { hasText: "Current settings" }).count()) >= 1 && (await page.textContent("#main")).includes("Settings: Probability threshold"));
     ok("no JavaScript errors in the page", errors.length === 0, errors.join(" | "));
     await browser.close();
   } catch (e) {

@@ -531,7 +531,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
   }
 
   // ---------------- backtests (never touch live orders or live settings)
-  if (path === "/api/backtests" && m === "GET") return json((await env.DB.prepare("SELECT id, bot_id, from_ts, to_ts, created_ts, report FROM backtests ORDER BY created_ts DESC LIMIT 30").all()).results.map((r) => ({ ...r, report: JSON.parse(String((r as { report: string }).report)) })));
+  if (path === "/api/backtests" && m === "GET") return json((await env.DB.prepare("SELECT id, bot_id, from_ts, to_ts, created_ts, report, config FROM backtests ORDER BY created_ts DESC LIMIT 30").all()).results.map((r) => { const x = r as { report: string; config: string }; let config: unknown = null; try { config = JSON.parse(String(x.config)); } catch { /* old row without readable settings */ } return { ...r, report: JSON.parse(String(x.report)), config }; }));
   if (path === "/api/backtest" && m === "POST") {
     const b = await body<{ botId?: string; fromTs?: number; toTs?: number; variants?: Array<{ label?: string; overrides?: Record<string, unknown> }> }>(req);
     const row = await env.DB.prepare("SELECT id, name, strategy, config, enabled FROM bots WHERE id=?").bind(b.botId ?? "").first<{ id: string; name: string; strategy: string; config: string; enabled: number }>();

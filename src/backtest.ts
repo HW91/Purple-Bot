@@ -38,6 +38,8 @@ export interface SimTrade {
 }
 export interface SimReport {
   assumptions: string[];
+  slippage: number; // dollars per contract, worse than the quoted price on entry and on an early exit
+  feePerContract: number; // dollars per contract per fill
   periods: number;
   trades: SimTrade[];
   skippedUnsettled: number;
@@ -186,6 +188,8 @@ export function simulate(cfg: BotConfig, markets: SimMarket[], obs: Map<string, 
       ...(cfg.noTradeWindows.length ? ["No-trade windows use US Eastern time."] : []),
       "One trade per contract at most, as live. Account-wide limits across several bots are not applied; each run uses this bot's own limits.",
     ],
+    slippage: opt.slippage,
+    feePerContract: opt.feePerContract,
     periods: periods.size,
     trades,
     skippedUnsettled: skipped,
