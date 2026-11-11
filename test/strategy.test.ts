@@ -127,6 +127,21 @@ describe("crypto entry", () => {
     expect(dd.trade?.orderSide).toBe("bid");
     // the checklist reads the same side
     expect(checklistFor(low, views, now).find((c) => c.key === "probMin")?.text).toMatch(/NO probability 5\.0%/);
+    // the checklist is built from the bot's own settings: its range, side, amount, delay, spread and time left
+    const lines = checklistFor({ ...low, tradeAmount: 0.1 }, views, now);
+    expect(lines.find((c) => c.key === "side")).toMatchObject({ ok: null });
+    expect(lines.find((c) => c.key === "side")?.text).toMatch(/low-probability side: NO \(the market leans YES\)/);
+    expect(lines.find((c) => c.key === "probMax")?.text).toMatch(/within your 7\.0% maximum/);
+    expect(lines.find((c) => c.key === "size")?.text).toBe("Trade amount $0.10 buys 1 contract");
+    const waiting = checklistFor({ ...low, tradeAmount: 0.1, timeDelaySec: 120, minRemainingSec: 90, maxSpread: 0.03 }, [], now).map((c) => c.text);
+    expect(waiting).toContain("Low-side probability at least 3.0%");
+    expect(waiting).toContain("Low-side probability and price paid at most 7.0%");
+    expect(waiting).toContain("Time Delay of 120s passed");
+    expect(waiting).toContain("At least 90s left in the contract");
+    expect(waiting).toContain("Spread within 3.0%");
+    expect(waiting).toContain("Trade amount $0.10 buys at least 1 contract");
+    // a favorite bot has no side line and keeps its own wording
+    expect(checklistFor(cfg, views, now).some((c) => c.key === "side")).toBe(false);
     // validation: the low side needs a range under 50%; the favorite side keeps its own rules
     expect(validateBotConfig({ strategy: "crypto", betSide: "underdog" })).toMatchObject({ betSide: "underdog", probThreshold: 0.03, probMax: 0.07 });
     expect(() => validateBotConfig({ strategy: "crypto", betSide: "underdog", probThreshold: 0.6, probMax: 0.9 })).toThrow(/low-probability/);

@@ -16,6 +16,8 @@ export interface CheckLine {
 }
 
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+/** A dollar amount exactly as set ($0.10, $2.50, $5), never rounded to whole dollars. */
+const amt = (x: number) => "$" + (Number.isInteger(x) ? String(x) : x.toFixed(2));
 
 export function checklistFor(cfg: BotConfig, views: AssetView[], now: number): CheckLine[] {
   const fresh = views.filter((v) => v.market && v.quote && now - v.quote.ts <= QUOTE_MAX_AGE_MS && v.quote.yesBid > 0 && v.quote.yesAsk > 0 && v.quote.yesAsk >= v.quote.yesBid);
@@ -71,15 +73,18 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number): C
   // a low-probability bot buys the side the market does NOT favor
   const outcome: "yes" | "no" | null = favored && cfg.betSide === "underdog" ? (favored === "yes" ? "no" : "yes") : favored;
   if (!tv || !outcome) {
+    const low = cfg.betSide === "underdog";
+    const span = cfg.flowWindowMin > 0 ? `last ${cfg.flowWindowMin} min` : "whole contract";
     const names: Array<[string, string]> = [
-      ["probMin", "Probability at or above your minimum"],
-      ["probMax", "Probability and price paid within your maximum"],
-      ...(cfg.flowOn ? ([["flow", "Money on your side beats the other side"]] as Array<[string, string]>) : []),
-      ["delay", "Time Delay passed"],
-      ["timeLeft", "Enough time left in the contract"],
-      ["spread", "Spread within your limit"],
+      ...(low ? ([["side", "Buys the low-probability side (the opposite of where the market leans)"]] as Array<[string, string]>) : []),
+      ["probMin", `${low ? "Low-side probability" : "Probability"} at least ${pct(cfg.probThreshold)}`],
+      ["probMax", `${low ? "Low-side probability and price paid" : "Probability and price paid"} at most ${pct(cfg.probMax)}`],
+      ...(cfg.flowOn ? ([["flow", `Money on your side at least ${cfg.flowRatio}x the other side (${span})`]] as Array<[string, string]>) : []),
+      ["delay", `Time Delay of ${cfg.timeDelaySec}s passed`],
+      ["timeLeft", `At least ${cfg.minRemainingSec}s left in the contract`],
+      ["spread", `Spread within ${pct(cfg.maxSpread)}`],
       ["price", "Price not too extreme"],
-      ["size", "Trade amount buys at least 1 contract"],
+      ["size", `Trade amount ${amt(cfg.tradeAmount)} buys at least 1 contract`],
       ["liquidity", "Enough contracts available at the price"],
       ["risk", "Risk limits"],
     ];
@@ -93,6 +98,7 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number): C
   const p = favorableProb(outcome, yesProb(q));
   const cost = outcome === "yes" ? q.yesAsk : 1 - q.yesBid;
 
+  if (cfg.betSide === "underdog") line("side", null, `Buys the low-probability side: ${OUT} (the market leans ${favored === "yes" ? "YES" : "NO"})`);
   const minOk = p >= cfg.probThreshold;
   line("probMin", minOk, minOk ? `${cfg.tradeAsset} ${OUT} probability ${pct(p)} meets your ${pct(cfg.probThreshold)} minimum` : `${cfg.tradeAsset} ${OUT} probability ${pct(p)} is below your ${pct(cfg.probThreshold)} minimum`);
   const maxOk = p <= cfg.probMax + 1e-9 && cost <= cfg.probMax + 1e-9;
@@ -122,7 +128,7 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number): C
   const priceOk = cost > 0.01 && cost < 0.99;
   line("price", priceOk, priceOk ? "Price not too extreme" : `Price ${cost.toFixed(2)} is too extreme to trade`);
   const wanted = priceOk ? Math.floor(cfg.tradeAmount / cost) : 0;
-  line("size", wanted >= 1, wanted >= 1 ? `Trade amount buys ${wanted} contract(s)` : `Trade amount ${dollars0(cfg.tradeAmount)} buys less than 1 contract`);
+  line("size", wanted >= 1, wanted >= 1 ? `Trade amount ${amt(cfg.tradeAmount)} buys ${wanted} contract${wanted === 1 ? "" : "s"}` : `Trade amount ${amt(cfg.tradeAmount)} buys less than 1 contract`);
   const depth = Math.floor(outcome === "yes" ? q.yesAskSize : q.yesBidSize);
   line("liquidity", depth >= 1, depth >= 1 ? `${depth} contracts available at the price` : "No contracts available at the price");
   line("risk", null, "Risk limits");
