@@ -296,6 +296,9 @@ try {
     ok("Charts tab shows the volume tables (summary and by minute, no block-trade row or share/gap line)", !volText.includes("Block trades") && !volText.includes("YES share of dollars") && !volText.includes("Gap =") && volText.includes("YES bets") && volText.includes("NO bets") && volText.includes("Total") && volText.includes("YES $ ÷ NO $") && volText.includes("Money ratio") && !volText.includes("Market YES prob.") && !volText.includes("Gap (pts)"), volText.slice(-400));
     // AI chat list: white links, five per page, and only the opened chat shows (right under its own link)
     for (let i = 1; i <= 7; i++) await api("/chat", "POST", { message: `Page test chat ${i}` });
+    const multi = (await api("/chat", "POST", { message: "Multi question one" })).j.convId;
+    await api("/chat", "POST", { convId: multi, message: "Multi question two" });
+    await api("/chat", "POST", { convId: multi, message: "Multi question three" });
     await page.emulateMedia({ colorScheme: "dark" });
     await page.click("nav >> text=AI");
     await page.waitForSelector("a.chatlink", { timeout: 15000 });
@@ -308,6 +311,13 @@ try {
     await page.waitForSelector(".msg.user", { timeout: 15000 });
     const placement = await page.evaluate(() => { const msgs = document.querySelectorAll(".msg.user"); const links = [...document.querySelectorAll("a.chatlink")]; return { users: msgs.length, linksAllAbove: links.length === 5 && links.every((a) => !!(a.compareDocumentPosition(msgs[0]) & Node.DOCUMENT_POSITION_FOLLOWING)) }; });
     ok("opening a chat shows only that chat, below the list of links", placement.users === 1 && placement.linksAllAbove, JSON.stringify(placement));
+    // a conversation with several questions is shown one question-and-answer at a time, newest first, with Previous / Next
+    await page.locator("a.chatlink").nth(0).click();
+    await page.waitForSelector("text=Question 3 of 3", { timeout: 15000 });
+    ok("a chat with three questions opens on the newest one, alone", (await page.locator(".msg.user").count()) === 1 && (await page.locator(".msg.user").first().textContent()) === "Multi question three");
+    await page.click("text=‹ Previous");
+    await page.waitForSelector("text=Question 2 of 3", { timeout: 15000 });
+    ok("Previous shows the one before it, still alone", (await page.locator(".msg.user").count()) === 1 && (await page.locator(".msg.user").first().textContent()) === "Multi question two");
     ok("no JavaScript errors in the page", errors.length === 0, errors.join(" | "));
     await browser.close();
   } catch (e) {

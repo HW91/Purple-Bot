@@ -606,7 +606,7 @@ function vAI(){
   }});
   root.appendChild(h('div',{class:'card'},h('h2',{text:'Daily overview (AI, advisory only)'}),
     h('p',{class:'mute',text:'Written once a day, after midnight Eastern, for the day that just ended. It skips trade-by-trade recaps and looks at what is hard to see by eye: what blocked trades, whether stop loss and take profit helped in hindsight, which hours were reliable, and what is worth testing.'}),runBtn,ana));
-  var box=h('div',{class:'card'},h('h2',{text:'AI chat'}),h('div',{class:'row'},h('button',{class:'btn gray',text:'New chat',onclick:function(){cur=null;thread.textContent='';renderConvs()}}),h('label',{class:'chk',text:'About: '},botSel)),convs,input,h('p',null,h('button',{class:'btn',text:'Send',onclick:send}),h('small',{text:'  The AI explains and recommends. It cannot change settings, start/stop bots, or place orders — you apply any change yourself.'})));
+  var box=h('div',{class:'card'},h('h2',{text:'AI chat'}),h('div',{class:'row'},h('button',{class:'btn gray',text:'New chat',onclick:function(){cur=null;exs=[];exI=0;renderThread();renderConvs()}}),h('label',{class:'chk',text:'About: '},botSel)),convs,input,h('p',null,h('button',{class:'btn',text:'Send',onclick:send}),h('small',{text:'  The AI explains and recommends. It cannot change settings, start/stop bots, or place orders — you apply any change yourself.'})));
   root.appendChild(box);
   function loadAna(){api('/analyses').then(function(a){ana.textContent='';if(!a.length)ana.appendChild(h('div',{class:'mute',text:'No overview yet. The first one is written after midnight Eastern, or press the button to run one for today so far.'}));a.forEach(function(x,i){ana.appendChild(h('details',{open:i===0},h('summary',{text:when(x.ts)}),h('div',{class:'msg',text:x.text})))})})}
   loadAna();
@@ -618,7 +618,7 @@ function vAI(){
     if(page>=pages)page=pages-1;if(page<0)page=0;
     convs.textContent='';
     convList.slice(page*PER,page*PER+PER).forEach(function(x){
-      convs.appendChild(h('div',{class:'row'},h('a',{class:'chatlink',href:'#',text:x.title,onclick:function(e){e.preventDefault();open(x.id)}}),h('small',{text:when(x.updated_ts)}),h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete this conversation?'))act('/chat/'+x.id,{method:'DELETE'}).then(function(){if(cur===x.id){cur=null;thread.textContent=''}loadConvs()})}})));
+      convs.appendChild(h('div',{class:'row'},h('a',{class:'chatlink',href:'#',text:x.title,onclick:function(e){e.preventDefault();open(x.id)}}),h('small',{text:when(x.updated_ts)}),h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete this conversation?'))act('/chat/'+x.id,{method:'DELETE'}).then(function(){if(cur===x.id){cur=null;exs=[];exI=0;renderThread()}loadConvs()})}})));
     });
     pager.textContent='';
     if(pages>1){
@@ -629,9 +629,32 @@ function vAI(){
     convs.appendChild(pager);
     convs.appendChild(thread); // the opened chat (or a new one) is shown below the links, never between them
   }
-  function open(id){cur=id;renderConvs();api('/chat/'+id).then(function(m){if(cur!==id)return;thread.textContent='';m.forEach(function(x){thread.appendChild(h('div',{class:'msg '+x.role,text:x.content}))})})}
-  function send(){var t=input.value.trim();if(!t)return;input.value='';thread.appendChild(h('div',{class:'msg user',text:t}));var wait=h('div',{class:'msg mute',text:'Thinking…'});thread.appendChild(wait);
-    api('/chat',{method:'POST',body:{convId:cur,botId:botSel.value||null,message:t}}).then(function(r){cur=r.convId;wait.className='msg';wait.textContent=r.answer;loadConvs()}).catch(function(e){wait.textContent=e.message})}
+  // an opened chat is shown one question-and-answer at a time (a card), with Previous / Next to click through them
+  var exs=[],exI=0;
+  function renderThread(){
+    thread.textContent='';
+    if(!exs.length)return;
+    if(exI>=exs.length)exI=exs.length-1;if(exI<0)exI=0;
+    var e=exs[exI];
+    thread.appendChild(h('div',{class:'msg user',text:e.q}));
+    thread.appendChild(h('div',{class:e.a===null?'msg mute':'msg assistant',text:e.a===null?'Thinking…':(e.a||'No answer was saved for this question.')}));
+    if(exs.length>1){
+      thread.appendChild(h('div',{class:'row',style:'margin-top:6px'},
+        h('button',{class:'btn gray',text:'‹ Previous',disabled:exI===0,onclick:function(){exI--;renderThread()}}),
+        h('span',{class:'mute',text:'Question '+(exI+1)+' of '+exs.length}),
+        h('button',{class:'btn gray',text:'Next ›',disabled:exI>=exs.length-1,onclick:function(){exI++;renderThread()}})));
+    }
+  }
+  function open(id){cur=id;renderConvs();api('/chat/'+id).then(function(m){
+    if(cur!==id)return;
+    exs=[];
+    m.forEach(function(x){if(x.role==='user')exs.push({q:x.content,a:''});else if(exs.length)exs[exs.length-1].a=x.content});
+    exI=exs.length-1; // start on the newest question
+    renderThread();
+  })}
+  function send(){var t=input.value.trim();if(!t)return;input.value='';
+    var list=exs,item={q:t,a:null};list.push(item);exI=list.length-1;renderThread();
+    api('/chat',{method:'POST',body:{convId:cur,botId:botSel.value||null,message:t}}).then(function(r){cur=r.convId;item.a=r.answer;if(exs===list){exI=list.indexOf(item);renderThread()}loadConvs()}).catch(function(e){item.a=e.message;if(exs===list)renderThread()})}
   loadConvs();
 }
 
