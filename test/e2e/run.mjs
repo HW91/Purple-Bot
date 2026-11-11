@@ -303,6 +303,7 @@ try {
     await todCard.locator("th:text('Win %')").first().waitFor({ timeout: 15000 });
     const todText = await todCard.textContent();
     ok("time-of-day table shows only your trades: wins, losses, win %, loss %, P/L (no reversal columns)", ["Hour (ET)", "Trades", "Wins", "Losses", "Win %", "Loss %", "P/L"].every((t) => todText.includes(t)) && !todText.includes("Reached 80%") && !todText.includes("Then lost") && !todText.includes("reversals"), todText.slice(0, 250));
+    ok("time-of-day table lists every hour of the day (24 rows), empty hours shown as 0 trades, a dash and $0.00", (await todCard.locator("tbody tr").count()) === 24 && (await todCard.locator("tbody tr").first().textContent()).includes("12 AM") && (await todCard.locator("tbody tr").last().textContent()).includes("11 PM"));
     // AI chat list: white links, five per page, and only the opened chat shows (right under its own link)
     for (let i = 1; i <= 7; i++) await api("/chat", "POST", { message: `Page test chat ${i}` });
     const multi = (await api("/chat", "POST", { message: "Multi question one" })).j.convId;

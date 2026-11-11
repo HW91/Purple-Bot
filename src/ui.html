@@ -400,8 +400,7 @@ function hoursCard(){
   function load(){
     api('/hours?days='+days.value+(asset.value?'&asset='+asset.value:'')).then(function(r){
       body.textContent='';
-      var rows=r.hours.filter(function(x){return x.trades>0});
-      if(!rows.length){body.appendChild(h('div',{class:'mute',text:'No completed trades in this period yet.'}));return}
+      var rows=r.hours; // every hour of the day, including hours with no trades
       function pc(n,d){return d?(n/d*100).toFixed(0)+'%':'—'}
       body.appendChild(h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['Hour (ET)','Trades','Wins','Losses','Win %','Loss %','P/L'].map(function(x){return h('th',{text:x})}))),
         h('tbody',null,rows.map(function(x){var done=x.wins+x.losses;return h('tr',null,h('td',{text:hl(x.hour)}),h('td',{text:x.trades}),h('td',{text:x.wins}),h('td',{text:x.losses}),h('td',{text:pc(x.wins,done)}),h('td',{text:pc(x.losses,done)}),h('td',{class:x.pnl>0?'g':x.pnl<0?'r':'',text:usd(x.pnl)}))})))));
