@@ -68,5 +68,8 @@ Expiration Value: The Expiration Value is the value of the Underlying as documen
 
 Contingencies: Before Settlement, Kalshi may, at its sole discretion, initiate the Market Outcome Review Process pursuant to Rule 7.1 of the Rulebook. If an Expiration Value cannot be determined on the Expiration Date, Kalshi has the right to determine payouts pursuant to Rule 7.1 in the Rulebook.`;
 
+/** Kalshi's own wording for 15-minute crypto contracts (their CRYPTO terms file). The gold 15-minute terms were not found, so nothing is claimed for gold. */
+const KALSHI_CRYPTO_15M_NOTE = "15-MINUTE CRYPTO CONTRACTS (Kalshi's crypto terms): the Underlying is the spot price of the coin according to a simple average of the CF Benchmarks index for the 60 seconds before the contract's time, so the last minute of prices is averaged rather than one print; if no data is available or it is incomplete at expiration, affected strikes resolve to No. The exact settlement wording for the gold and silver 15-minute contracts was not available, so do not state how those settle beyond the general commodity terms below.";
+
 /** The block placed in the AI's prompt. */
-export const KALSHI_RULES_PROMPT = `KALSHI CONTRACT RULES (reference only)\n${KALSHI_RULES_NOTE}\n\n${KALSHI_COMMODITY_RULES}`;
+export const KALSHI_RULES_PROMPT = `KALSHI CONTRACT RULES (reference only)\n${KALSHI_RULES_NOTE}\n\n${KALSHI_CRYPTO_15M_NOTE}\n\n${KALSHI_COMMODITY_RULES}`;

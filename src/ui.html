@@ -575,9 +575,19 @@ function vCharts(){
     var mpts=data.points;
     function line(key,color){c.strokeStyle=color;c.lineWidth=2;c.beginPath();var first=true;mpts.forEach(function(p){var v=key==='yes'?p.yes:1-p.yes;if(first){c.moveTo(X(p.ts),Y(v));first=false}else c.lineTo(X(p.ts),Y(v))});c.stroke();c.lineWidth=1}
     line('yes',css('--green'));line('no',css('--red'));
+    // a finished contract ends at its settled value: dashed from the last recorded price to the close (YES 100% / NO 0%, or the reverse)
+    var fin=data.market.result==='yes'?1:data.market.result==='no'?0:null;
+    if(fin!==null&&mpts.length){
+      var lp=mpts[mpts.length-1];
+      [['yes',css('--green'),fin],['no',css('--red'),1-fin]].forEach(function(l){
+        var v0=l[0]==='yes'?lp.yes:1-lp.yes;
+        c.strokeStyle=l[1];c.lineWidth=2;c.setLineDash([5,4]);c.beginPath();c.moveTo(X(lp.ts),Y(v0));c.lineTo(X(t1),Y(l[2]));c.stroke();c.setLineDash([]);c.lineWidth=1;
+      });
+    }
     data.trades.forEach(function(t){c.fillStyle=css('--accent');c.beginPath();c.arc(X(t.opened_ts),t.avg_entry!=null?Y(t.avg_entry):g.t+6,4,0,7);c.fill()});
     var last=mpts[mpts.length-1];
     info.textContent='';if(last){info.appendChild(h('span',{class:'g',text:'YES '+pct(last.yes)}));info.appendChild(h('span',{class:'r',text:'NO '+pct(1-last.yes)}));info.appendChild(h('span',{class:'mute',text:mpts.length+' recorded points · '+data.market.title}))}
+    if(fin!==null)info.appendChild(h('span',{class:'mute',text:'Dashed = settled '+data.market.result.toUpperCase()+' at close'}));
     if(data.settings)info.appendChild(h('span',{class:'mute',text:'White line = entry minimum for this contract: '+pct(data.settings.probMin)}));
     else if(curBot())info.appendChild(h('span',{class:'mute',text:'White line = '+curBot().name+'\'s current entry minimum: '+pct(curBot().config.probThreshold)}));
     if(hoverTs){var best=null;mpts.forEach(function(p){if(!best||Math.abs(p.ts-hoverTs)<Math.abs(best.ts-hoverTs))best=p});if(best){c.strokeStyle=css('--text');c.beginPath();c.moveTo(X(best.ts),g.t);c.lineTo(X(best.ts),g.t+ph);c.stroke();tip.textContent=new Date(best.ts).toLocaleTimeString()+' — YES '+pct(best.yes)+' (bid '+best.bid.toFixed(2)+' / ask '+best.ask.toFixed(2)+') · NO '+pct(1-best.yes)}}
