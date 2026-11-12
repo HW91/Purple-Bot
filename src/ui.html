@@ -332,7 +332,7 @@ function vBots(){
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
       h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}})),
       h('div',{class:'row',style:'margin-top:10px'},botButtons(b,load)),
-      h('div',{class:'mute',text:(b.config.entryRule==='edge'?'Edge rule: min '+(b.config.minEdge*100).toFixed(1)+'¢ per contract, '+b.config.edgeMinSamples+' contracts needed':(b.config.betSide==='underdog'?'Low-probability side · ':'')+'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold)))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')+(b.config.noTradeWindows&&b.config.noTradeWindows.length?' · '+b.config.noTradeWindows.length+' no-trade window(s)':'')+(b.config.flowOn?' · money ratio ≥ '+b.config.flowRatio+' ('+(b.config.flowWindowMin>0?'last '+b.config.flowWindowMin+' min':'whole contract')+')':'')})));
+      h('div',{class:'mute',text:(b.config.entryRule==='edge'?'Edge rule: min '+(b.config.minEdge*100).toFixed(1)+'¢ per contract, '+b.config.edgeMinSamples+' contracts needed':(b.config.betSide==='underdog'?'Against Crowd · ':'')+'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold)))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')+(b.config.noTradeWindows&&b.config.noTradeWindows.length?' · '+b.config.noTradeWindows.length+' no-trade window(s)':'')+(b.config.flowOn?' · money ratio ≥ '+b.config.flowRatio+' ('+(b.config.flowWindowMin>0?'last '+b.config.flowWindowMin+' min':'whole contract')+')':'')})));
   })})}
   function field(label,input,hint){return h('div',null,h('label',{text:label}),input,hint?h('small',{text:hint,style:'display:block;margin-top:2px'}):null)}
   function editBot(b,strategy){
@@ -346,7 +346,7 @@ function vBots(){
       function boxes(list){return list.map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=cfg.assets.indexOf(a)>=0;return h('label',{class:'chk'},cb,a)})}
       var assets=[h('div',{class:'mute',text:'Metals'})].concat(boxes(METALS_AZ),[h('div',{class:'mute',style:'margin-top:6px',text:'Cryptocurrencies'})],boxes(CRYPTO_AZ));
       var ruleSel=h('select',null,[['range','Probability'],['edge','Edge']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.entryRule||'range')===o[0])op.selected=true;return op}));
-      var sideSel=h('select',null,[['favorite','Favorite (the side the market leans toward)'],['underdog','Low-probability side (the cheap side)']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.betSide||'favorite')===o[0])op.selected=true;return op}));
+      var sideSel=h('select',null,[['favorite','With Crowd (high probability)'],['underdog','Against Crowd (low probability)']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.betSide||'favorite')===o[0])op.selected=true;return op}));
       var tradeSel=h('select',null,assetGroups(cfg.tradeAsset));
       var fl=chk('flowOn');fl.checked=!!cfg.flowOn;
       var sl=chk('stopLossOn');sl.checked=cfg.stopLossOn;var tp=chk('takeProfitOn');tp.checked=cfg.takeProfitOn;
@@ -362,7 +362,7 @@ function vBots(){
         field('Entry rule',ruleSel,'Probability buys when the probability is inside your range. Edge buys the side whose real win rate, learned from this app\'s own recorded history, beats its price plus fee by your minimum edge. With Edge, the side and probability range below are not used; the Edge report on the Trades tab shows what the history says.'),
         E(field('Edge rule: minimum edge (cents per contract, after fees)',num('minEdge',100,0.1))),
         E(field('Edge rule: contracts needed behind a win rate',num('edgeMinSamples',1,1),'The win rate is only trusted when at least this many contracts were counted at that price and time.')),
-        R(field('Side to bet',sideSel,'Favorite buys the side the market leans toward. Low-probability buys the other, cheap side. The probability range below applies to the side being bought (for example 3% to 7% for the low side).')),
+        R(field('Side to bet',sideSel,'With Crowd buys the side the market leans toward (high probability). Against Crowd buys the other, cheap side (low probability). The probability range below applies to the side being bought (for example 3% to 7% for the low side).')),
         R(field('Probability threshold (%)',num('probThreshold',100,1))),
         R(field('Maximum probability to enter (%)',num('probMax',100,1),'Skips the trade if the probability, or the price you would pay, is above this. 100 means no limit.')),
         R(field('Assets that must agree (0 = do not check)',num('agreeCount',1,1),'How many of the checked assets must lean the same way before the bot trades. 0 turns the check off, so the asset it trades decides on its own.')),
@@ -779,7 +779,7 @@ function vBacktest(){
     ['stopLossOn','takeProfitOn','flowOn'].forEach(function(k){var cb=h('input',{type:'checkbox'});cb.checked=!!base[k];inp[k]=cb;cells.push(h('div',null,h('label',{class:'chk',text:({stopLossOn:'Use stop loss',takeProfitOn:'Use take profit',flowOn:'Use money on each side'})[k]+' '},cb)))});
     var universe=ASSETS_AZ;
     var tradeSel=h('select',null,assetGroups(base.tradeAsset));
-    var sideSel=h('select',null,[['favorite','Favorite side'],['underdog','Low-probability side']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((base.betSide||'favorite')===o[0])op.selected=true;return op}));
+    var sideSel=h('select',null,[['favorite','With Crowd (high probability)'],['underdog','Against Crowd (low probability)']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((base.betSide||'favorite')===o[0])op.selected=true;return op}));
     sideSel.addEventListener('change',function(){if(sideSel.value==='underdog'){if(+inp.probThreshold.value>=50){inp.probThreshold.value=3;inp.probMax.value=7}}else if(+inp.probThreshold.value<50){inp.probThreshold.value=80;inp.probMax.value=100}});
     cells.push(h('div',null,h('label',{text:'Side to bet'}),sideSel));
     cells.push(h('div',null,h('label',{text:'Asset to trade'}),tradeSel));
@@ -823,7 +823,7 @@ function vBacktest(){
     if(k==='assets')return v.join(', ');
     if(k==='noTradeWindows')return v&&v.length?v.map(function(w){return w.start+'-'+w.end}).join(', '):'none';
     if(k==='flowRatio')return v+'x';
-    if(k==='betSide')return v==='underdog'?'low-probability side':'favorite';
+    if(k==='betSide')return v==='underdog'?'Against Crowd':'With Crowd';
     return String(v);
   }
   // what was changed in a comparison: old value to new value
