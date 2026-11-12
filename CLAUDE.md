@@ -19,6 +19,11 @@ Read `README.md` first — it lists the design, the definitions, and what was NO
   Do not tell the owner to leave that switch off: it hides the transfer controls, and the app/web auto-transfer never
   applies to API orders anyway.
 
+## How to work with this owner
+- **Answer in the first sentence, in plain words, then stop.** Do not add background, caveats or tables unless asked. If the owner
+  states the answer in their own words and it is right, say "Yes" — do not re-explain (past failure: a one-line meaning of the
+  Edge report's "expensive" and "cheap" verdicts took four replies because each one added more words).
+
 ## Rules for working here
 - **Real money.** Never change order, risk, or reconcile logic without running `npm test` and `node test/e2e/run.mjs`.
 - **Bots only start OFF and only a person turns them on.** Nothing in the code may set `enabled = 1` except the
