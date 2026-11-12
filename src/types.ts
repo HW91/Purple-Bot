@@ -51,7 +51,7 @@ export interface BotConfig {
   flowRatio: number; // required (our side $) / (other side $), at least 1
   noTradeWindows: TimeWindow[]; // times of day (US Eastern) when no new trade is opened
   notify: NotifyMode;
-  notifyEveryTrades: number; // send an email summary after every this many finished trades (0 = off)
+  notifyEveryTrades: number; // send an email when the last this many finished trades were all wins, then again after this many new ones that all won (0 = off)
 }
 
 export interface Bot {

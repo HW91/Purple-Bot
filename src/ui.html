@@ -374,7 +374,7 @@ function vBots(){
         field('Stop loss ($ per position)',h('div',{class:'row'},sl,num('stopLoss'))),
         field('Take profit ($ per position)',h('div',{class:'row'},tp,num('takeProfit'))),
         field('Email notifications',nt),
-        field('Email me after this many trades (0 = off)',num('notifyEveryTrades',1,1),'Sends one email each time this many trades have finished, with the wins, losses, profit, your current trade amount and your balance, so you can decide whether to change the trade size.')));
+        field('Email me after this many winning trades in a row (0 = off)',num('notifyEveryTrades',1,1),'Sends one email when the bot\'s last trades, this many of them, were all wins. It then waits for this many new trades that all won before it emails again. The email shows the profit, your current trade amount and your balance, so you can decide whether to change the trade size.')));
       // the first time a minimum edge is typed in, settings still at the standard defaults move to safer starting values (small trades, tight spread, hold to settlement); anything you already changed is left alone
       var edgeWas=+inp.minEdge.value>0;
       inp.minEdge.addEventListener('change',function(){

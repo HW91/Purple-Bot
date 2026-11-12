@@ -1058,14 +1058,15 @@ export class Engine extends DurableObject<Env> {
     }
     const every = bot?.config.notifyEveryTrades ?? 0;
     if (bot && every > 0) {
-      const total = (await this.env.DB.prepare("SELECT COUNT(*) AS n FROM positions WHERE bot_id=? AND status IN ('closed','settled')").bind(bot.id).first<{ n: number }>())?.n ?? 0;
-      if (total > 0 && total % every === 0) {
-        const rows = (await this.env.DB.prepare("SELECT realized_pnl, result FROM positions WHERE bot_id=? AND status IN ('closed','settled') ORDER BY closed_ts DESC LIMIT ?").bind(bot.id, every).all<{ realized_pnl: number | null; result: string | null }>()).results ?? [];
-        const wins = rows.filter((r) => r.result === "win").length;
-        const losses = rows.filter((r) => r.result === "loss").length;
+      // email only when the bot's last N finished trades were ALL wins, and only once per run: the next email needs N new trades after the newest one already reported
+      const rows = (await this.env.DB.prepare("SELECT realized_pnl, result, closed_ts FROM positions WHERE bot_id=? AND status IN ('closed','settled') ORDER BY closed_ts DESC LIMIT ?").bind(bot.id, every).all<{ realized_pnl: number | null; result: string | null; closed_ts: number }>()).results ?? [];
+      const key = `win_streak_notified_${bot.id}`;
+      const lastTs = Number((await getSetting(this.env, key)) ?? 0) || 0;
+      if (rows.length === every && rows.every((r) => r.result === "win") && Math.min(...rows.map((r) => r.closed_ts)) > lastTs) {
+        await setSetting(this.env, key, String(Math.max(...rows.map((r) => r.closed_ts))));
         const net = rows.reduce((s, r) => s + (r.realized_pnl ?? 0), 0);
         const bal = this.balance != null ? ` Account balance: $${this.balance.value.toFixed(2)}.` : "";
-        await sendEmail(this.env, `Purple Bot: ${every} more trades finished (${esc(bot.name)})`, emailShell("Trade batch finished", `<p><b>${esc(bot.name)}</b> finished ${every} trades: <b>${wins}</b> won, <b>${losses}</b> lost, net <b>$${net.toFixed(2)}</b> after fees.</p><p>Current trade amount: $${bot.config.tradeAmount.toFixed(2)}.${bal} Total finished trades for this bot: ${total}.</p>`));
+        await sendEmail(this.env, `Purple Bot: ${every} winning trades in a row (${bot.name})`, emailShell("Winning streak", `<p><b>${esc(bot.name)}</b> won its last <b>${every}</b> trades, net <b>$${net.toFixed(2)}</b> after fees.</p><p>Current trade amount: $${bot.config.tradeAmount.toFixed(2)}.${bal}</p>`));
       }
     }
   }
