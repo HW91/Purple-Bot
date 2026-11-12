@@ -702,7 +702,7 @@ function vCharts(){
 // ----------------------------------------------------------------- AI
 function vAI(){
   var root=$('#main');
-  var ana=h('div'),convs=h('div'),thread=h('div'),input=h('textarea',{rows:3,placeholder:'Ask about trades, signals, positions, why something was skipped, probabilities, errors…'});
+  var ana=h('div'),convs=h('div'),thread=h('div'),input=h('textarea',{rows:3,style:'resize:vertical;min-height:60px',placeholder:'Ask about trades, signals, positions, why something was skipped, probabilities, errors…'});
   var botSel=h('select',null,h('option',{value:'',text:'Whole account'}));
   var cur=null;
   api('/bots').then(function(b){b.forEach(function(x){botSel.appendChild(h('option',{value:x.id,text:x.name}))})});
