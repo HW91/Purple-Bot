@@ -528,7 +528,25 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     }
     const mkRow = mk as unknown as { open_ts: number; close_ts: number };
     const minutes = (await minuteProbs(env, ticker, mkRow.open_ts, mkRow.close_ts)).map((m) => ({ minute: m.minute, prob: Math.round(m.prob * 10_000) / 10_000, n: m.n }));
-    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), minutes, trades, why, checks, settings });
+    // a finished contract: the final price minus the target price, from Kalshi (asked once per contract, then saved)
+    let final: { value: number; target: number; diff: number } | null = null;
+    if ((mk as { result?: string }).result && mkRow.close_ts < Date.now()) {
+      const key = `final_${ticker}`;
+      const saved = await getSetting(env, key);
+      if (saved) final = JSON.parse(saved) as { value: number; target: number; diff: number };
+      else {
+        try {
+          const client = await kalshiClient(env);
+          const km = client ? await client.market(ticker) : null;
+          const value = Number(km?.expiration_value), target = Number(km?.floor_strike);
+          if (km && km.expiration_value && km.floor_strike != null && Number.isFinite(value) && Number.isFinite(target)) {
+            final = { value, target, diff: Math.round((value - target) * 100) / 100 };
+            await setSetting(env, key, JSON.stringify(final));
+          }
+        } catch { /* Kalshi did not give it (for example an archived contract): leave it blank */ }
+      }
+    }
+    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), minutes, trades, why, checks, settings, final });
   }
 
   // ---------------- AI chat (only calls AI when the user sends a message)

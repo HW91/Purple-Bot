@@ -680,6 +680,7 @@ function vCharts(){
       // the trade's result in dollars on this contract (all trades on it added up, after fees), right after the NO percentage
       var tdone=(data.trades||[]).filter(function(t){return t.realized_pnl!=null});
       if(tdone.length){var tpl=0;tdone.forEach(function(t){tpl+=t.realized_pnl});info.appendChild(h('span',{class:tpl>=0?'g':'r',text:'Trade '+(tpl>=0?'+':'-')+'$'+Math.abs(tpl).toFixed(2)}))}
+      else if(data.final)info.appendChild(h('span',{class:data.final.diff>=0?'g':'r',text:'Closed '+(data.final.diff>=0?'+':'-')+'$'+Math.abs(data.final.diff).toFixed(2)+' vs target'}));
       info.appendChild(h('span',{class:'mute',text:mpts.length+' recorded points · '+data.market.title}))}
     if(fin!==null)info.appendChild(h('span',{class:'mute',text:'Dashed = settled '+data.market.result.toUpperCase()+' at close'}));
     if(data.settings)info.appendChild(h('span',{class:'mute',text:'White lines = probability range for this contract: '+pct(data.settings.probMin)+' to '+pct(data.settings.probMax>0?data.settings.probMax:1)}));

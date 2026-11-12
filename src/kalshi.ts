@@ -25,6 +25,8 @@ export interface KalshiMarket {
   yes_bid_dollars?: string;
   yes_ask_dollars?: string;
   last_price_dollars?: string;
+  expiration_value?: string; // the final value used to settle the contract
+  floor_strike?: number | null; // the target: at or above this value, YES wins
 }
 
 export interface OrderResult {
