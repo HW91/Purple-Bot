@@ -345,7 +345,7 @@ function vBots(){
       function chk(k){return inp[k]=h('input',{type:'checkbox'});}
       function boxes(list){return list.map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=cfg.assets.indexOf(a)>=0;return h('label',{class:'chk'},cb,a)})}
       var assets=[h('div',{class:'mute',text:'Metals'})].concat(boxes(METALS_AZ),[h('div',{class:'mute',style:'margin-top:6px',text:'Cryptocurrencies'})],boxes(CRYPTO_AZ));
-      var ruleSel=h('select',null,[['range','Probability range (the original rule)'],['edge','Edge: price vs history']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.entryRule||'range')===o[0])op.selected=true;return op}));
+      var ruleSel=h('select',null,[['range','Probability'],['edge','Edge']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.entryRule||'range')===o[0])op.selected=true;return op}));
       var sideSel=h('select',null,[['favorite','Favorite (the side the market leans toward)'],['underdog','Low-probability side (the cheap side)']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.betSide||'favorite')===o[0])op.selected=true;return op}));
       var tradeSel=h('select',null,assetGroups(cfg.tradeAsset));
       var fl=chk('flowOn');fl.checked=!!cfg.flowOn;
@@ -359,7 +359,7 @@ function vBots(){
       f.appendChild(h('div',{class:'grid'},
         field('Name',name),
         field('Asset to trade',tradeSel,'The only asset this bot buys. The other checked assets only confirm the direction.'),
-        field('Entry rule',ruleSel,'Probability range buys when the probability is inside your range. Edge buys the side whose real win rate, learned from this app\'s own recorded history, beats its price plus fee by your minimum edge. With Edge, the side and probability range below are not used; the Edge report on the Trades tab shows what the history says.'),
+        field('Entry rule',ruleSel,'Probability buys when the probability is inside your range. Edge buys the side whose real win rate, learned from this app\'s own recorded history, beats its price plus fee by your minimum edge. With Edge, the side and probability range below are not used; the Edge report on the Trades tab shows what the history says.'),
         E(field('Edge rule: minimum edge (cents per contract, after fees)',num('minEdge',100,0.1))),
         E(field('Edge rule: contracts needed behind a win rate',num('edgeMinSamples',1,1),'The win rate is only trusted when at least this many contracts were counted at that price and time.')),
         R(field('Side to bet',sideSel,'Favorite buys the side the market leans toward. Low-probability buys the other, cheap side. The probability range below applies to the side being bought (for example 3% to 7% for the low side).')),
