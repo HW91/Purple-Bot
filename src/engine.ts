@@ -1056,6 +1056,18 @@ export class Engine extends DurableObject<Env> {
     if (bot?.config.notify === "immediate") {
       await sendEmail(this.env, `Purple Bot closed ${p.asset}: ${result} $${pnl.toFixed(2)}`, emailShell("Trade closed", `<p><b>${esc(bot.name)}</b> closed ${esc(p.asset)} ${p.outcome.toUpperCase()} (${esc(reason)}).</p><p>Result: <b>${result.toUpperCase()}</b> $${pnl.toFixed(2)} after fees.</p>`));
     }
+    const every = bot?.config.notifyEveryTrades ?? 0;
+    if (bot && every > 0) {
+      const total = (await this.env.DB.prepare("SELECT COUNT(*) AS n FROM positions WHERE bot_id=? AND status IN ('closed','settled')").bind(bot.id).first<{ n: number }>())?.n ?? 0;
+      if (total > 0 && total % every === 0) {
+        const rows = (await this.env.DB.prepare("SELECT realized_pnl, result FROM positions WHERE bot_id=? AND status IN ('closed','settled') ORDER BY closed_ts DESC LIMIT ?").bind(bot.id, every).all<{ realized_pnl: number | null; result: string | null }>()).results ?? [];
+        const wins = rows.filter((r) => r.result === "win").length;
+        const losses = rows.filter((r) => r.result === "loss").length;
+        const net = rows.reduce((s, r) => s + (r.realized_pnl ?? 0), 0);
+        const bal = this.balance != null ? ` Account balance: $${this.balance.value.toFixed(2)}.` : "";
+        await sendEmail(this.env, `Purple Bot: ${every} more trades finished (${esc(bot.name)})`, emailShell("Trade batch finished", `<p><b>${esc(bot.name)}</b> finished ${every} trades: <b>${wins}</b> won, <b>${losses}</b> lost, net <b>$${net.toFixed(2)}</b> after fees.</p><p>Current trade amount: $${bot.config.tradeAmount.toFixed(2)}.${bal} Total finished trades for this bot: ${total}.</p>`));
+      }
+    }
   }
 
   // ---------------------------------------------------------------- settlement + reconciliation

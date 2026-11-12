@@ -373,7 +373,8 @@ function vBots(){
         field('Required ratio (your side ÷ other side)',num('flowRatio',1,0.1),'1.5 means the money on the side being bought must be at least 1.5 times the money on the other side. Must be 1 or more.'),
         field('Stop loss ($ per position)',h('div',{class:'row'},sl,num('stopLoss'))),
         field('Take profit ($ per position)',h('div',{class:'row'},tp,num('takeProfit'))),
-        field('Email notifications',nt)));
+        field('Email notifications',nt),
+        field('Email me after this many trades (0 = off)',num('notifyEveryTrades',1,1),'Sends one email each time this many trades have finished, with the wins, losses, profit, your current trade amount and your balance, so you can decide whether to change the trade size.')));
       // the first time a minimum edge is typed in, settings still at the standard defaults move to safer starting values (small trades, tight spread, hold to settlement); anything you already changed is left alone
       var edgeWas=+inp.minEdge.value>0;
       inp.minEdge.addEventListener('change',function(){
@@ -402,7 +403,7 @@ function vBots(){
       f.appendChild(h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){
         var out={strategy:s,durationMin:cfg.durationMin};
         ['probThreshold','probMax','minEdge'].forEach(function(k){out[k]=+inp[k].value/100});
-        ['agreeCount','edgeMinSamples','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
+        ['notifyEveryTrades','agreeCount','edgeMinSamples','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
         out.betSide=sideSel.value;
         out.flowOn=fl.checked;
         out.noTradeWindows=[].slice.call(winBox.children).map(function(r){return {start:r._s.value,end:r._e.value}}).filter(function(w){return w.start||w.end});

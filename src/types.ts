@@ -51,6 +51,7 @@ export interface BotConfig {
   flowRatio: number; // required (our side $) / (other side $), at least 1
   noTradeWindows: TimeWindow[]; // times of day (US Eastern) when no new trade is opened
   notify: NotifyMode;
+  notifyEveryTrades: number; // send an email summary after every this many finished trades (0 = off)
 }
 
 export interface Bot {
@@ -129,6 +130,7 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     flowRatio: 1.5,
     noTradeWindows: [],
     notify: "immediate",
+    notifyEveryTrades: 0,
   };
 }
 
@@ -189,7 +191,9 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     noTradeWindows: (Array.isArray(input.noTradeWindows) ? input.noTradeWindows : d.noTradeWindows).map((w) => ({ start: String(w?.start ?? ""), end: String(w?.end ?? "") })),
     // the old "hourly" choice no longer exists (the AI overview is daily now), so saved hourly bots become daily
     notify: (input.notify as string) === "hourly" ? "daily" : (["immediate", "daily", "off"] as const).includes(input.notify as NotifyMode) ? (input.notify as NotifyMode) : d.notify,
+    notifyEveryTrades: Math.round(num(input.notifyEveryTrades, d.notifyEveryTrades)),
   };
+  if (!(cfg.notifyEveryTrades >= 0 && cfg.notifyEveryTrades <= 1000)) throw new Error("Notify after this many trades must be a whole number from 0 (off) to 1000");
   // older metals bots (and new ones that give no number) keep "every checked asset must agree"; 0 means do not check agreement at all
   if (startFrom === "metals" && input.agreeCount === undefined) cfg.agreeCount = cfg.assets.length;
   if (!(cfg.minEdge >= 0 && cfg.minEdge <= 0.5)) throw new Error("Minimum edge must be between $0.00 and $0.50 per contract (0 turns the edge check off)");
