@@ -199,12 +199,9 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
   }
   if (cfg.entryRule === "edge") {
     // the edge rule picks its own side from history, so the probability range is not used
-  } else if (cfg.betSide === "underdog") {
-    if (!(cfg.probThreshold > 0 && cfg.probThreshold < 0.5)) throw new Error("For the low-probability side, the minimum probability must be above 0% and below 50%");
-    if (!(cfg.probMax > cfg.probThreshold && cfg.probMax <= 0.5)) throw new Error("For the low-probability side, the maximum probability must be above the minimum and no more than 50%");
-  } else {
-    if (!(cfg.probThreshold > 0.5 && cfg.probThreshold < 1)) throw new Error("Probability threshold must be between 50% and 100%");
-    if (!(cfg.probMax > cfg.probThreshold && cfg.probMax <= 1)) throw new Error("Maximum probability must be above the minimum probability and no more than 100%");
+  } else if (!(cfg.probThreshold >= 0 && cfg.probThreshold < cfg.probMax && cfg.probMax <= 1)) {
+    // 0% to 100% means no limit; the side being bought is either the high or the low probability side, so any range inside 0% to 100% is allowed
+    throw new Error("Probability range must run from 0% or more up to 100% or less, with the first number below the second");
   }
   if (cfg.timeDelaySec < 0 || cfg.timeDelaySec > (cfg.durationMin - 1) * 60) {
     throw new Error(`Time Delay must be between 0 and ${cfg.durationMin - 1} minutes for ${cfg.durationMin}-minute contracts`);

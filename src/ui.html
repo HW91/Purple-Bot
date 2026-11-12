@@ -363,8 +363,7 @@ function vBots(){
         E(field('Edge rule: minimum edge (cents per contract, after fees)',num('minEdge',100,0.1))),
         E(field('Edge rule: contracts needed behind a win rate',num('edgeMinSamples',1,1),'The win rate is only trusted when at least this many contracts were counted at that price and time.')),
         R(field('Side to bet',sideSel,'High probability buys the side the market leans toward. Low probability buys the other, cheap side. The probability range below applies to the side being bought (for example 3% to 7% for the low side).')),
-        R(field('Probability threshold (%)',num('probThreshold',100,1))),
-        R(field('Maximum probability to enter (%)',num('probMax',100,1),'Skips the trade if the probability, or the price you would pay, is above this. 100 means no limit.')),
+        R(field('Probability range (%)',h('div',{class:'row'},num('probThreshold',100,1),h('span',{class:'mute',text:'to'}),num('probMax',100,1)),'The bot only buys when the probability of the side it buys is inside this range, and skips if the price you would pay is above the top number. 0 to 100 means no limit.')),
         R(field('Assets that must agree (0 = do not check)',num('agreeCount',1,1),'How many of the checked assets must lean the same way before the bot trades. 0 turns the check off, so the asset it trades decides on its own.')),
         field('Time Delay after open (seconds, 0–'+((cfg.durationMin-1)*60)+')',num('timeDelaySec',1,1)),
         field('Minimum time remaining (seconds)',num('minRemainingSec',1,1)),
@@ -384,8 +383,6 @@ function vBots(){
       ruleSel.addEventListener('change',applyRule);applyRule();
       // choosing the Edge rule fills in its recommended starting values (small trades, tight spread, hold to settlement); you can still edit every one
       ruleSel.addEventListener('change',function(){if(ruleSel.value==='edge'){inp.edgeMinSamples.value=300;inp.minEdge.value=3;inp.tradeAmount.value=1;inp.dailyLossLimit.value=3;inp.dailyInvestLimit.value=20;inp.maxSpread.value=0.03;inp.timeDelaySec.value=60;inp.minRemainingSec.value=120;sl.checked=false;tp.checked=false}});
-      // switching the side moves the range to a sensible starting point (you can still edit it)
-      sideSel.addEventListener('change',function(){if(sideSel.value==='underdog'){if(+inp.probThreshold.value>=50){inp.probThreshold.value=3;inp.probMax.value=7}}else if(+inp.probThreshold.value<50){inp.probThreshold.value=80;inp.probMax.value=100}});
       f.appendChild(h('div',{style:'margin-top:10px'},h('label',{text:'Assets to check for agreement (tick the ones that may have to lean the same way)'}),assets));
       // no-trade windows: times of day (US Eastern) when this bot opens no new trades; tap + to add another
       var winBox=h('div');

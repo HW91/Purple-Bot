@@ -145,10 +145,9 @@ describe("crypto entry", () => {
     expect(checklistFor(cfg, views, now).some((c) => c.key === "side")).toBe(false);
     // validation: the low side needs a range under 50%; the favorite side keeps its own rules
     expect(validateBotConfig({ strategy: "crypto", betSide: "underdog" })).toMatchObject({ betSide: "underdog", probThreshold: 0.03, probMax: 0.07 });
-    expect(() => validateBotConfig({ strategy: "crypto", betSide: "underdog", probThreshold: 0.6, probMax: 0.9 })).toThrow(/low-probability/);
-    expect(() => validateBotConfig({ strategy: "crypto", betSide: "underdog", probThreshold: 0.07, probMax: 0.03 })).toThrow(/maximum/);
+    expect(() => validateBotConfig({ strategy: "crypto", betSide: "underdog", probThreshold: 0.07, probMax: 0.03 })).toThrow(/Probability range/);
     expect(validateBotConfig({ strategy: "crypto" }).betSide).toBe("favorite");
-    expect(() => validateBotConfig({ strategy: "crypto", probThreshold: 0.05, probMax: 0.1 })).toThrow(/between 50% and 100%/);
+    expect(validateBotConfig({ strategy: "crypto", probThreshold: 0, probMax: 1 })).toMatchObject({ probThreshold: 0, probMax: 1 }); // 0 to 100 = no limit
   });
 
   it("no-trade windows (Eastern): block new entries inside a window, including one that runs past midnight", () => {
@@ -669,7 +668,7 @@ describe("config validation + day boundary", () => {
     expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0 })).toThrow(/Trade amount/);
     expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0.005 })).toThrow(/at least/);
     expect(validateBotConfig({ strategy: "crypto", tradeAmount: 0.1 }).tradeAmount).toBe(0.1); // one cheap contract
-    expect(() => validateBotConfig({ strategy: "crypto", probThreshold: 0.8, probMax: 0.8 })).toThrow(/Maximum probability/);
+    expect(() => validateBotConfig({ strategy: "crypto", probThreshold: 0.8, probMax: 0.8 })).toThrow(/Probability range/);
     expect(validateBotConfig({ strategy: "crypto", probMax: 0.9 }).probMax).toBe(0.9);
     expect(validateBotConfig({ strategy: "crypto" }).probMax).toBe(1);
     expect(validateBotConfig({ strategy: "crypto", tradeAmount: 1 }).tradeAmount).toBe(1);

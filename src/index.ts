@@ -177,7 +177,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       notifyEmail: (await getSetting(env, "notify_email")) ?? "",
       accountLimits: await getAccountLimits(env),
       seriesMap: JSON.parse((await getSetting(env, "series_map")) ?? "{}"),
-      defaults: { crypto: defaultBotConfig("crypto"), metals: defaultBotConfig("metals"), bot: { ...defaultBotConfig("crypto"), assets: ["BTC"], tradeAsset: "BTC", agreeCount: 0 }, account: DEFAULT_ACCOUNT_LIMITS },
+      defaults: { crypto: defaultBotConfig("crypto"), metals: defaultBotConfig("metals"), bot: { ...defaultBotConfig("crypto"), assets: ["BTC"], tradeAsset: "BTC", agreeCount: 0, probThreshold: 0, probMax: 1 }, account: DEFAULT_ACCOUNT_LIMITS },
     });
   }
   if (path === "/api/settings" && m === "POST") {

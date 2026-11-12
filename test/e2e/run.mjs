@@ -248,7 +248,6 @@ try {
   const lowSave = await api(`/bots/${winBot}`, "PUT", { name: "Low side bot", config: { ...cfg, betSide: "underdog", probThreshold: 0.03, probMax: 0.07 } });
   const lowBotCfg = (await api("/bots")).j.find((b) => b.id === winBot)?.config;
   ok("a bot can be saved to buy the low-probability side with a 3% to 7% range", lowSave.status === 200 && lowBotCfg?.betSide === "underdog" && Math.abs(lowBotCfg.probThreshold - 0.03) < 1e-9 && Math.abs(lowBotCfg.probMax - 0.07) < 1e-9, JSON.stringify(lowBotCfg));
-  ok("the low-probability side refuses a range above 50%", (await api(`/bots/${winBot}`, "PUT", { name: "Low side bot", config: { ...cfg, betSide: "underdog", probThreshold: 0.8, probMax: 0.9 } })).status >= 400);
 
   // ---- L4. edge rule: buys when the history behind the price says the price is wrong by enough, and shows its checklist
   const edgeBot = (await api(`/bots/${bot1}/duplicate`, "POST")).j.id;
@@ -421,9 +420,9 @@ try {
     await page.locator("button:text-is('Edit')").first().click();
     await page.waitForSelector("label:text('Entry rule')", { timeout: 15000 });
     const vis = async (t) => page.locator(`label:text-is('${t}')`).first().isVisible();
-    const before = { side: await vis("Side to bet"), prob: await vis("Probability threshold (%)"), edge: await vis("Edge rule: minimum edge (cents per contract, after fees)") };
+    const before = { side: await vis("Side to bet"), prob: await vis("Probability range (%)"), edge: await vis("Edge rule: minimum edge (cents per contract, after fees)") };
     await page.locator("label:text('Entry rule')").locator("..").locator("select").selectOption("edge");
-    const after = { side: await vis("Side to bet"), prob: await vis("Probability threshold (%)"), money: await vis("Use money on each side"), edge: await vis("Edge rule: minimum edge (cents per contract, after fees)"), spread: await vis("Max spread allowed ($)") };
+    const after = { side: await vis("Side to bet"), prob: await vis("Probability range (%)"), money: await vis("Use money on each side"), edge: await vis("Edge rule: minimum edge (cents per contract, after fees)"), spread: await vis("Max spread allowed ($)") };
     ok("choosing the Edge rule hides the side, probability and money-rule fields and shows the edge fields", before.side && before.prob && !before.edge && !after.side && !after.prob && !after.money && after.edge && after.spread, JSON.stringify({ before, after }));
     // one New bot button; any asset from a single list: metals first (A to Z), then cryptocurrencies (A to Z); agreement is a number, 0 = off
     await page.click("nav >> text=Bots");
