@@ -22,7 +22,7 @@ export default {
       }
       // the dashboard chat: report whether the strategy data reached the AI
       if (/inside a personal Kalshi trading-bot dashboard/.test(b.message) && /ECHO_DATA/.test(b.message)) {
-        const keys = ["strategyStats", "stopLossTakeProfitHindsight", "blockedBy", "byEntryHour", "moneyFlow", "recentTrades", "tradeFiles", "latestDailyOverview"].filter((k) => b.message.includes('"' + k + '"'));
+        const keys = ["strategyStats", "stopLossTakeProfitHindsight", "blockedBy", "byEntryHour", "moneyFlow", "recentTrades", "priceVsProbability", "tradeFiles", "latestDailyOverview"].filter((k) => b.message.includes('"' + k + '"'));
         if (b.message.includes('"missedByDisagreement":{"note"')) keys.push("missedMetals"); // metals bots exist: the skipped-because-they-disagreed estimate was sent
         if (b.message.includes('"pricesAround":[[') && b.message.includes('"checklistAtEntry"')) keys.push("tradeSeries"); // a trade file with its price series was sent
         if (b.message.includes("KALSHI CONTRACT RULES") && b.message.includes("Settlement Value")) keys.push("rules");

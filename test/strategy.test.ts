@@ -4,7 +4,7 @@ import { bucketOf, minuteLeftOf, feePerContract, wilson, samplesFromObs, samples
 import { FlowTracker, flowPasses } from "../src/flow";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
-import { hindsightFor, etDateString, enrichTrade, moneyFlowSummary, summarizeMissed, exitEarlyHindsight, compactPrices, checklistStrings } from "../src/analysis";
+import { hindsightFor, etDateString, enrichTrade, moneyFlowSummary, summarizeMissed, exitEarlyHindsight, compactPrices, checklistStrings, priceVsProbabilityTable } from "../src/analysis";
 import type { PositionRow } from "../src/db";
 import { cleanAiText } from "../src/notify";
 import { aggregateTrades, attachMarketProb } from "../src/volume";
@@ -291,6 +291,26 @@ describe("crypto entry", () => {
     const c = (k: number, bid: string, ask: string) => ({ end_period_ts: CLOSE / 1000 - k * 60, yes_bid: { close_dollars: bid }, yes_ask: { close_dollars: ask } });
     const samples = samplesFromCandles([c(14, "0.5000", "0.5200"), c(3, "0.8300", "0.8500"), c(0, "0.9700", "0.9900"), c(2, "", ""), c(1, "0.9000", "0.8000"), c(15, "0.5", "0.52")], CLOSE);
     expect(samples.sort((a, b) => a.minuteLeft - b.minuteLeft)).toEqual([{ minuteLeft: 0, bucket: 39 }, { minuteLeft: 3, bucket: bucketOf(0.84) }, { minuteLeft: 14, bucket: bucketOf(0.51) }]); // empty books, crossed books and the opening candle are left out
+  });
+
+  it("the AI's price-vs-probability table: levels with 30+ contracts, gap, verdict and edges per time left", () => {
+    const cells = [
+      { asset: "GOLD", minute_left: 1, bucket: 14, n: 200, w: 86 }, // 35% to 37.5% price, YES won 43%
+      { asset: "GOLD", minute_left: 7, bucket: 14, n: 100, w: 36 },
+      { asset: "GOLD", minute_left: 1, bucket: 33, n: 10, w: 9 }, // under 30: left out
+      { asset: "BTC", minute_left: 12, bucket: 20, n: 50, w: 25 },
+    ];
+    const t = priceVsProbabilityTable(cells, { GOLD: 300 });
+    expect(t.assets.GOLD.contractsCounted).toBe(300);
+    const whole = t.assets.GOLD.byTimeLeft.wholeContract;
+    expect(whole.length).toBe(1); // the 10-contract level is dropped
+    expect(whole[0].slice(0, 4)).toEqual([35, 37.5, 300, 40.7]); // both minutes pooled: 122 of 300 won
+    expect(t.assets.GOLD.byTimeLeft.last3Minutes[0][2]).toBe(200);
+    expect(t.assets.GOLD.byTimeLeft.middle_6to9MinLeft[0][2]).toBe(100);
+    expect(t.assets.GOLD.byTimeLeft.early_10to14MinLeft).toBeUndefined();
+    expect(t.assets.BTC.byTimeLeft.early_10to14MinLeft[0][6]).toBe("even"); // won 50% at a 51.25% price
+    expect(t.columns.length).toBe(whole[0].length);
+    expect(t.howToRead).toMatch(/YES cheap/);
   });
 
   it("price verdict: even when the price sits inside the win-rate range, otherwise YES cheap or expensive, and too few below 30", () => {

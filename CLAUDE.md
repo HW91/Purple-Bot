@@ -26,6 +26,10 @@ Read `README.md` first — it lists the design, the definitions, and what was NO
   states the answer in their own words and it is right, say "Yes" — do not re-explain (past failure: a one-line meaning of the
   Edge report's "expensive" and "cheap" verdicts took four replies because each one added more words).
 
+- **Every new table, report or number the owner can see must also go into the AI's data (`chatContext` in `src/index.ts`) in the same
+  change, with a line in the chat prompt saying how to read it.** Past failure: the Edge report's price-vs-probability table was built
+  for the dashboard only, and the owner had to ask for the AI to see it.
+
 ## Rules for working here
 - **Real money.** Never change order, risk, or reconcile logic without running `npm test` and `node test/e2e/run.mjs`.
 - **Bots only start OFF and only a person turns them on.** Nothing in the code may set `enabled = 1` except the

@@ -10,6 +10,7 @@ import { computePerformance, type Performance } from "./stats";
 import type { BotRow, PositionRow } from "./db";
 import { getSetting, log, rowToBot, setSetting } from "./db";
 import { simulate, type Obs, type SimMarket, type SimReport } from "./backtest";
+import { BUCKETS, priceVerdict, sideEdges } from "./edge";
 import { KALSHI_RULES_PROMPT } from "./kalshi-rules";
 
 const ET = "America/New_York";
@@ -489,6 +490,62 @@ export async function buildTradeFiles(env: Env, rows: PositionRow[], max = 10): 
       };
     }),
   );
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The Edge report's table for the AI: price vs how often YES really won, per asset and per time left
+// ---------------------------------------------------------------------------------------------------------------
+
+const TIME_GROUPS: Array<[string, number, number]> = [["wholeContract", 0, 14], ["early_10to14MinLeft", 10, 14], ["middle_6to9MinLeft", 6, 9], ["late_3to5MinLeft", 3, 5], ["last3Minutes", 0, 2]];
+const VERDICT_TEXT = { even: "even", yes_underpriced: "YES cheap", yes_overpriced: "YES expensive", too_few: "too few" } as const;
+
+export interface PriceVsProbability {
+  howToRead: string;
+  columns: string[];
+  assets: Record<string, { contractsCounted: number; byTimeLeft: Record<string, Array<Array<number | string>>> }>;
+}
+
+/** Rows with fewer than 30 contracts are left out. Each row: [price low %, price high %, contracts, YES won %, gap pts, gap % of price, verdict, edge buying YES cents, edge buying NO cents]. */
+export function priceVsProbabilityTable(cells: Array<{ asset: string; minute_left: number; bucket: number; n: number; w: number }>, counted: Record<string, number>): PriceVsProbability {
+  const out: PriceVsProbability["assets"] = {};
+  const assets = [...new Set(cells.map((c) => c.asset))];
+  for (const asset of assets) {
+    const mine = cells.filter((c) => c.asset === asset);
+    const byTimeLeft: Record<string, Array<Array<number | string>>> = {};
+    for (const [name, from, to] of TIME_GROUPS) {
+      const byBucket = new Map<number, { n: number; w: number }>();
+      for (const c of mine) {
+        if (c.minute_left < from || c.minute_left > to) continue;
+        const b = byBucket.get(c.bucket) ?? { n: 0, w: 0 };
+        b.n += c.n;
+        b.w += c.w;
+        byBucket.set(c.bucket, b);
+      }
+      const rows: Array<Array<number | string>> = [];
+      for (const [bucket, v] of [...byBucket].sort((a, b) => b[0] - a[0])) {
+        if (v.n < 30) continue;
+        const mid = (bucket + 0.5) / BUCKETS;
+        const won = v.w / v.n;
+        const e = sideEdges({ n: v.n, yesWins: v.w }, mid, mid);
+        rows.push([Math.round((bucket / BUCKETS) * 1000) / 10, Math.round(((bucket + 1) / BUCKETS) * 1000) / 10, v.n, Math.round(won * 1000) / 10, Math.round((won - mid) * 1000) / 10, Math.round(((won - mid) / mid) * 100), VERDICT_TEXT[priceVerdict({ n: v.n, yesWins: v.w }, mid)], Math.round(e.yes.edge * 1000) / 10, Math.round(e.no.edge * 1000) / 10]);
+      }
+      if (rows.length) byTimeLeft[name] = rows;
+    }
+    out[asset] = { contractsCounted: counted[asset] ?? 0, byTimeLeft };
+  }
+  return {
+    howToRead: "Each row is a 2.5% YES price level. YES won % is how often YES really settled YES at that price; the gap is YES won % minus the price level's middle, in points and as a percent of the price. Verdict: 'even' = price matches results within luck, 'YES cheap' = YES won more than its price says, 'YES expensive' = YES won less than its price says (so NO was the better buy). Edge columns are cents per contract after Kalshi's fee for buying YES or NO, using the cautious end of the win-rate range, before any spread. Contracts counts one price reading per contract per minute, so a contract is counted at several price levels as its price moves.",
+    columns: ["YES price from %", "YES price to %", "contracts", "YES won %", "gap points", "gap % of price", "verdict", "edge buying YES (cents)", "edge buying NO (cents)"],
+    assets: out,
+  };
+}
+
+export async function loadPriceVsProbability(env: Env): Promise<PriceVsProbability> {
+  const cells = (await env.DB.prepare("SELECT asset, minute_left, bucket, SUM(n) n, SUM(yes_wins) w FROM calibration GROUP BY asset, minute_left, bucket").all<{ asset: string; minute_left: number; bucket: number; n: number; w: number }>()).results ?? [];
+  const counted: Record<string, number> = {};
+  for (const r of (await env.DB.prepare("SELECT asset, COUNT(*) c FROM markets WHERE calibrated = 1 GROUP BY asset").all<{ asset: string; c: number }>()).results ?? []) counted[r.asset] = (counted[r.asset] ?? 0) + r.c;
+  for (const r of (await env.DB.prepare("SELECT asset, COUNT(*) c FROM calibration_done GROUP BY asset").all<{ asset: string; c: number }>()).results ?? []) counted[r.asset] = (counted[r.asset] ?? 0) + r.c;
+  return priceVsProbabilityTable(cells, counted);
 }
 
 interface Reliability {
