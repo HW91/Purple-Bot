@@ -20,6 +20,8 @@ Read `README.md` first — it lists the design, the definitions, and what was NO
   applies to API orders anyway.
 
 ## How to work with this owner
+- **If the owner does not need it to act or decide, do not say it.** No internal details (how counts are pooled, how tests were run,
+  invented labels like "fake" or "test copy"). Say what was done, what they should do next, and nothing else.
 - **Answer in the first sentence, in plain words, then stop.** Do not add background, caveats or tables unless asked. If the owner
   states the answer in their own words and it is right, say "Yes" — do not re-explain (past failure: a one-line meaning of the
   Edge report's "expensive" and "cheap" verdicts took four replies because each one added more words).
