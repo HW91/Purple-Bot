@@ -387,6 +387,15 @@ try {
     await page.click("text=‹ Previous");
     await page.waitForSelector("text=Question 2 of 3", { timeout: 15000 });
     ok("Previous shows the one before it, still alone", (await page.locator(".msg.user").count()) === 1 && (await page.locator(".msg.user").first().textContent()) === "Multi question two");
+    // bot form: the edge rule hides the fields it does not use, and the range rule hides the edge fields
+    await page.click("nav >> text=Bots");
+    await page.locator("button:text-is('Edit')").first().click();
+    await page.waitForSelector("label:text('Entry rule')", { timeout: 15000 });
+    const vis = async (t) => page.locator(`label:text-is('${t}')`).first().isVisible();
+    const before = { side: await vis("Side to bet"), prob: await vis("Probability threshold (%)"), edge: await vis("Edge rule: minimum edge (cents per contract, after fees)") };
+    await page.locator("label:text('Entry rule')").locator("..").locator("select").selectOption("edge");
+    const after = { side: await vis("Side to bet"), prob: await vis("Probability threshold (%)"), money: await vis("Use money on each side"), edge: await vis("Edge rule: minimum edge (cents per contract, after fees)"), spread: await vis("Max spread allowed ($)") };
+    ok("choosing the Edge rule hides the side, probability and money-rule fields and shows the edge fields", before.side && before.prob && !before.edge && !after.side && !after.prob && !after.money && after.edge && after.spread, JSON.stringify({ before, after }));
     // Backtest tab: every live setting can be changed in a comparison
     await page.click("nav >> text=Backtest");
     await page.waitForSelector("text=Comparison 1", { timeout: 15000 });

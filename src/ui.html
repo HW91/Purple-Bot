@@ -344,16 +344,20 @@ function vBots(){
       var sl=chk('stopLossOn');sl.checked=cfg.stopLossOn;var tp=chk('takeProfitOn');tp.checked=cfg.takeProfitOn;
       var nt=h('select',null,['immediate','daily','off'].map(function(o){var op=h('option',{value:o,text:o});if(cfg.notify===o)op.selected=true;return op}));
       f.appendChild(h('h2',{text:(b?'Edit ':'New ')+s+' bot'}));
+      // fields only one entry rule uses: R = the probability-range rule, E = the edge rule (the other rule's fields are hidden)
+      var onlyRange=[],onlyEdge=[];
+      function R(d){onlyRange.push(d);return d}
+      function E(d){onlyEdge.push(d);return d}
       f.appendChild(h('div',{class:'grid'},
         field('Name',name),
         field('Asset to trade',tradeSel,'The only asset this bot buys. The other checked assets only confirm the direction.'),
         field('Entry rule',ruleSel,'Probability range buys when the probability is inside your range. Edge buys the side whose real win rate, learned from this app\'s own recorded history, beats its price plus fee by your minimum edge. With Edge, the side and probability range below are not used; the Edge report on the Trades tab shows what the history says.'),
-        field('Edge rule: minimum edge (cents per contract, after fees)',num('minEdge',100,0.1)),
-        field('Edge rule: contracts needed behind a win rate',num('edgeMinSamples',1,1),'The win rate is only trusted when at least this many contracts were counted at that price and time.'),
-        field('Side to bet',sideSel,'Favorite buys the side the market leans toward. Low-probability buys the other, cheap side. The probability range below applies to the side being bought (for example 3% to 7% for the low side).'),
-        field('Probability threshold (%)',num('probThreshold',100,1)),
-        field('Maximum probability to enter (%)',num('probMax',100,1),'Skips the trade if the probability, or the price you would pay, is above this. 100 means no limit.'),
-        s==='crypto'?field('Assets that must agree (of those selected)',num('agreeCount',1,1)):h('div',{class:'mute',text:'Every checked metal must lean the same direction before the bot trades.'}),
+        E(field('Edge rule: minimum edge (cents per contract, after fees)',num('minEdge',100,0.1))),
+        E(field('Edge rule: contracts needed behind a win rate',num('edgeMinSamples',1,1),'The win rate is only trusted when at least this many contracts were counted at that price and time.')),
+        R(field('Side to bet',sideSel,'Favorite buys the side the market leans toward. Low-probability buys the other, cheap side. The probability range below applies to the side being bought (for example 3% to 7% for the low side).')),
+        R(field('Probability threshold (%)',num('probThreshold',100,1))),
+        R(field('Maximum probability to enter (%)',num('probMax',100,1),'Skips the trade if the probability, or the price you would pay, is above this. 100 means no limit.')),
+        R(s==='crypto'?field('Assets that must agree (of those selected)',num('agreeCount',1,1)):h('div',{class:'mute',text:'Every checked metal must lean the same direction before the bot trades.'})),
         field('Time Delay after open (seconds, 0–'+((cfg.durationMin-1)*60)+')',num('timeDelaySec',1,1)),
         field('Minimum time remaining (seconds)',num('minRemainingSec',1,1)),
         field('Trade amount ($)',num('tradeAmount'),'The bot buys whole contracts: as many as this amount pays for at the price (fees are extra). To buy one contract, enter at least its price and less than double it, for example $0.10 for a contract at 6 cents. Below one contract price, nothing is bought. Kalshi sets no fixed largest amount; your balance and your daily limits cap it.'),
@@ -362,12 +366,14 @@ function vBots(){
         field('Daily loss limit ($)',num('dailyLossLimit')),
         field('Daily investment limit ($)',num('dailyInvestLimit')),
         field('Max spread allowed ($)',num('maxSpread')),
-        field('Use money on each side',fl,'When on, the bot only buys a side if the money placed on it beats the other side by the ratio below. Money is counted for the side that started each trade, the same as the volume table.'),
-        field('Money time frame (minutes, 0 = whole contract)',num('flowWindowMin',1,1),'How far back the money is added up each time the bot checks.'),
-        field('Required ratio (your side ÷ other side)',num('flowRatio',1,0.1),'1.5 means the money on the side being bought must be at least 1.5 times the money on the other side. Must be 1 or more.'),
+        R(field('Use money on each side',fl,'When on, the bot only buys a side if the money placed on it beats the other side by the ratio below. Money is counted for the side that started each trade, the same as the volume table.')),
+        R(field('Money time frame (minutes, 0 = whole contract)',num('flowWindowMin',1,1),'How far back the money is added up each time the bot checks.')),
+        R(field('Required ratio (your side ÷ other side)',num('flowRatio',1,0.1),'1.5 means the money on the side being bought must be at least 1.5 times the money on the other side. Must be 1 or more.')),
         field('Stop loss ($ per position)',h('div',{class:'row'},sl,num('stopLoss'))),
         field('Take profit ($ per position)',h('div',{class:'row'},tp,num('takeProfit'))),
         field('Email notifications',nt)));
+      function applyRule(){var e=ruleSel.value==='edge';onlyRange.forEach(function(d){d.style.display=e?'none':''});onlyEdge.forEach(function(d){d.style.display=e?'':'none'})}
+      ruleSel.addEventListener('change',applyRule);applyRule();
       // choosing the Edge rule fills in its recommended starting values (small trades, tight spread, hold to settlement); you can still edit every one
       ruleSel.addEventListener('change',function(){if(ruleSel.value==='edge'){inp.edgeMinSamples.value=300;inp.minEdge.value=3;inp.tradeAmount.value=1;inp.dailyLossLimit.value=3;inp.dailyInvestLimit.value=20;inp.maxSpread.value=0.03;inp.timeDelaySec.value=60;inp.minRemainingSec.value=120;sl.checked=false;tp.checked=false}});
       // switching the side moves the range to a sensible starting point (you can still edit it)
