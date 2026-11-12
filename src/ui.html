@@ -702,7 +702,16 @@ function vCharts(){
 // ----------------------------------------------------------------- AI
 function vAI(){
   var root=$('#main');
-  var ana=h('div'),convs=h('div'),thread=h('div'),input=h('textarea',{rows:3,style:'resize:vertical;min-height:60px',placeholder:'Ask about trades, signals, positions, why something was skipped, probabilities, errors…'});
+  var ana=h('div'),convs=h('div'),thread=h('div'),input=h('textarea',{rows:3,style:'resize:none;min-height:60px;display:block',placeholder:'Ask about trades, signals, positions, why something was skipped, probabilities, errors…'});
+  // a big, visible grip at the bottom-right corner to drag the box taller (the browser's own corner is too small to touch)
+  var grip=h('div',{text:'⇲ drag',style:'position:absolute;right:2px;bottom:2px;width:70px;height:34px;line-height:34px;text-align:center;font-size:13px;border-radius:8px;background:var(--line);color:var(--text);cursor:ns-resize;touch-action:none;user-select:none'});
+  var inputWrap=h('div',{style:'position:relative'},input,grip);
+  (function(){var y0=0,h0=0,on=false;
+    grip.addEventListener('pointerdown',function(e){on=true;y0=e.clientY;h0=input.offsetHeight;grip.setPointerCapture(e.pointerId);e.preventDefault()});
+    grip.addEventListener('pointermove',function(e){if(on)input.style.height=Math.max(60,h0+e.clientY-y0)+'px'});
+    grip.addEventListener('pointerup',function(){on=false});
+    grip.addEventListener('pointercancel',function(){on=false});
+  })();
   var botSel=h('select',null,h('option',{value:'',text:'Whole account'}));
   var cur=null;
   api('/bots').then(function(b){b.forEach(function(x){botSel.appendChild(h('option',{value:x.id,text:x.name}))})});
@@ -712,7 +721,7 @@ function vAI(){
   }});
   root.appendChild(h('div',{class:'card'},h('h2',{text:'Daily overview (AI, advisory only)'}),
     h('p',{class:'mute',text:'Written once a day, after midnight Eastern, for the day that just ended. It skips trade-by-trade recaps and looks at what is hard to see by eye: what blocked trades, whether stop loss and take profit helped in hindsight, which hours were reliable, and what is worth testing.'}),runBtn,ana));
-  var box=h('div',{class:'card'},h('h2',{text:'AI chat'}),h('div',{class:'row'},h('button',{class:'btn gray',text:'New chat',onclick:function(){cur=null;exs=[];exI=0;renderThread();renderConvs()}}),h('label',{class:'chk',text:'About: '},botSel)),convs,input,h('p',null,h('button',{class:'btn',text:'Send',onclick:send}),h('small',{text:'  The AI explains and recommends. It cannot change settings, start/stop bots, or place orders — you apply any change yourself.'})));
+  var box=h('div',{class:'card'},h('h2',{text:'AI chat'}),h('div',{class:'row'},h('button',{class:'btn gray',text:'New chat',onclick:function(){cur=null;exs=[];exI=0;renderThread();renderConvs()}}),h('label',{class:'chk',text:'About: '},botSel)),convs,inputWrap,h('p',null,h('button',{class:'btn',text:'Send',onclick:send}),h('small',{text:'  The AI explains and recommends. It cannot change settings, start/stop bots, or place orders — you apply any change yourself.'})));
   root.appendChild(box);
   function loadAna(){api('/analyses').then(function(a){ana.textContent='';if(!a.length)ana.appendChild(h('div',{class:'mute',text:'No overview yet. The first one is written after midnight Eastern, or press the button to run one for today so far.'}));a.forEach(function(x,i){ana.appendChild(h('details',{open:i===0},h('summary',{text:when(x.ts)}),h('div',{class:'msg',text:x.text})))})})}
   loadAna();
