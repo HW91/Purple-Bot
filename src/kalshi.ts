@@ -116,6 +116,25 @@ export class KalshiClient {
     return { trades: out, truncated: true };
   }
 
+  /** Settled contracts of one series (newest first), a page at a time. min_settled_ts is in seconds. */
+  async settledMarkets(series: string, minSettledTs: number, cursor?: string): Promise<{ markets: KalshiMarket[]; cursor?: string }> {
+    const r = await this.request<{ markets: KalshiMarket[]; cursor?: string }>("GET", "/markets", { query: { series_ticker: series, status: "settled", min_settled_ts: minSettledTs, limit: 1000, cursor } });
+    return { markets: r?.markets ?? [], cursor: r?.cursor || undefined };
+  }
+
+  /** Kalshi's own 1-minute price history for one contract; contracts old enough to be archived are read from the historical copy. */
+  async candlesticks(series: string, ticker: string, startTs: number, endTs: number): Promise<Array<{ end_period_ts: number; yes_bid?: { close_dollars?: string | null }; yes_ask?: { close_dollars?: string | null } }>> {
+    const query = { start_ts: startTs, end_ts: endTs, period_interval: 1 };
+    try {
+      const r = await this.request<{ candlesticks: Array<{ end_period_ts: number; yes_bid?: { close_dollars?: string | null }; yes_ask?: { close_dollars?: string | null } }> }>("GET", `/series/${encodeURIComponent(series)}/markets/${encodeURIComponent(ticker)}/candlesticks`, { query });
+      return r?.candlesticks ?? [];
+    } catch (e) {
+      if (!(e instanceof KalshiHttpError) || (e.status !== 404 && e.status !== 400)) throw e;
+      const r = await this.request<{ candlesticks: Array<{ end_period_ts: number; yes_bid?: { close_dollars?: string | null }; yes_ask?: { close_dollars?: string | null } }> }>("GET", `/historical/markets/${encodeURIComponent(ticker)}/candlesticks`, { query });
+      return r?.candlesticks ?? [];
+    }
+  }
+
   async seriesList(): Promise<Array<{ ticker: string; title?: string; frequency?: string; category?: string }>> {
     const r = await this.request<{ series: Array<{ ticker: string; title?: string; frequency?: string; category?: string }> }>("GET", "/series");
     return r?.series ?? [];

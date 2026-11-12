@@ -458,8 +458,24 @@ function edgeCard(){
       body.appendChild(h('small',{style:'display:block;margin-top:6px',text:'Edge = how often that side really won (the cautious end of the range, because small counts mislead) minus the price at the middle of the range and the fee, in cents per contract, before any spread. Rows with fewer than 30 contracts show a dash. A few cents of edge needs hundreds of contracts before it means anything.'}));
     }).catch(function(e){body.textContent=e.message});
   }
-  asset.addEventListener('change',load);mins.addEventListener('change',load);view.addEventListener('change',load);load();
-  return h('div',{class:'card'},h('h2',{text:'Edge report: price vs how often it won'}),h('div',{class:'row'},asset,mins,view),body);
+  // load past contracts from Kalshi's own price history so the report fills in without waiting days (gold first, then silver, then Bitcoin)
+  var span=h('select',null,[['30','30 days'],['14','14 days'],['7','7 days']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
+  var prog=h('small',{class:'mute',style:'display:block;margin-top:4px'});
+  var loadBtn=h('button',{class:'btn gray',text:'Load past contracts from Kalshi',onclick:function(){loadBtn.disabled=true;act('/history/start',{method:'POST',body:{days:+span.value}},'Loading started').then(function(){progress()}).catch(function(){loadBtn.disabled=false})}});
+  var wasRunning=false;
+  function progress(){
+    if(!document.body.contains(prog))return;
+    api('/history').then(function(r){
+      var j=r.job;
+      if(!j){prog.textContent='';loadBtn.disabled=false;return}
+      prog.textContent=(j.status==='running'?'Working (keep this page open): ':j.status==='error'?'Stopped: ':'')+j.message;
+      loadBtn.disabled=j.status==='running';
+      if(j.status==='running'){wasRunning=true;setTimeout(progress,5000)}
+      else if(wasRunning){wasRunning=false;load()}
+    }).catch(function(){});
+  }
+  asset.addEventListener('change',load);mins.addEventListener('change',load);view.addEventListener('change',load);load();progress();
+  return h('div',{class:'card'},h('h2',{text:'Edge report: price vs how often it won'}),h('div',{class:'row'},asset,mins,view),h('div',{class:'row',style:'margin-top:8px'},span,loadBtn),h('small',{class:'mute',style:'display:block'},'Loads gold first, then silver, then Bitcoin. Contracts the bot already recorded are not counted twice.'),prog,body);
 }
 function vTrades(){
   var root=$('#main');

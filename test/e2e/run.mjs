@@ -269,6 +269,18 @@ try {
   await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === edgeBot), 40000);
   await quote([T("BTC"), T("SOL"), T("XRP")], 0.83, 0.85);
 
+  // ---- L5. load past contracts from Kalshi's 1-minute history into the edge history (gold, then silver, then Bitcoin)
+  const hStart = await api("/history/start", "POST", { days: 7 });
+  ok("loading past contracts starts", hStart.status === 200 && hStart.j.ok === true, JSON.stringify(hStart.j));
+  ok("a second load cannot start while one is running", (await api("/history/start", "POST", { days: 7 })).status === 409);
+  const hDone = await waitFor(async () => { const r = (await api("/history")).j.job; return r && r.status !== "running" ? r : null; }, 240000, 4000);
+  ok("the load finishes: 3 past contracts for each of gold, silver and Bitcoin were counted", !!hDone && hDone.status === "done" && hDone.counted === 9, JSON.stringify(hDone));
+  const gold = (await api("/calibration?asset=GOLD")).j;
+  ok("gold's history now holds those contracts: one count per minute (15 each) at the right price levels", gold.contractsCounted >= 3 && gold.rows.reduce((t, x) => t + x.n, 0) >= 45, JSON.stringify(gold).slice(0, 300));
+  const again = await api("/history/start", "POST", { days: 7 });
+  const againDone = await waitFor(async () => { const r = (await api("/history")).j.job; return r && r.status !== "running" ? r : null; }, 240000, 4000);
+  ok("loading again counts nothing twice (all 9 are skipped as already known)", again.status === 200 && !!againDone && againDone.counted === 0 && againDone.skipped === 9, JSON.stringify(againDone));
+
   // ---- H2. time-of-day view
   const hrs = (await api("/hours?days=7")).j;
   ok("time-of-day view: 24 hours, counts every recorded contract and trade", hrs.hours?.length === 24 && hrs.contracts >= 1 && hrs.trades >= 4 && hrs.hours.reduce((s, x) => s + x.trades, 0) === hrs.trades, JSON.stringify(hrs).slice(0, 300));
@@ -358,6 +370,7 @@ try {
     ok("the Edge report opens on a table of price vs how often YES won, with a verdict per price level (Even, YES cheap, YES expensive or Too few)", ["YES price", "Contracts", "YES won", "Gap (won", "Verdict"].every((t) => evenText.includes(t)) && /(Even|YES cheap|YES expensive|Too few)/.test(evenText));
     await edgeCardBox.locator("select").nth(2).selectOption("edge");
     await edgeCardBox.locator("th:text('Edge buying YES')").first().waitFor({ timeout: 20000 });
+    ok("the Edge report has the Load past contracts button and says gold comes first", (await edgeCardBox.textContent()).includes("Load past contracts from Kalshi") && (await edgeCardBox.textContent()).includes("Loads gold first"));
     ok("the other view shows the edge of buying YES or NO after fees", (await edgeCardBox.textContent()).includes("Edge buying NO"));
     const wrapping = await page.evaluate(() => [...document.querySelectorAll("#main th, #main td")].filter((c) => getComputedStyle(c).whiteSpace !== "nowrap" && !c.classList.contains("wrap")).length);
     ok("no table cell is allowed to wrap its text onto a second line (Trades tab tables)", wrapping === 0, String(wrapping));

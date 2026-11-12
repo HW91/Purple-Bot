@@ -350,6 +350,22 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
   // How the market and your trades behave by hour of day (US Eastern), from what this bot has recorded.
   // "Reached 80%+" = in the tradeable part of a contract (after 5 min, before the last 2 min) either side reached 80%.
   // "Reversed" = that side then LOST at settlement. A high reversal rate at some hours means the 80% signal was less reliable then.
+  // Load past contracts from Kalshi's price history into the edge history (gold first, then silver, then Bitcoin); the engine does the work a few contracts at a time
+  if (path === "/api/history" && m === "GET") {
+    const raw = await getSetting(env, "history_job");
+    if (!raw) return json({ job: null });
+    const j = JSON.parse(raw) as { status: string; assets: string[]; idx: number; days: number; counted: number; skipped: number; failed: number; message: string; queue?: unknown[] };
+    return json({ job: { status: j.status, assets: j.assets, current: j.assets[j.idx] ?? null, days: j.days, counted: j.counted, skipped: j.skipped, failed: j.failed, message: j.message } });
+  }
+  if (path === "/api/history/start" && m === "POST") {
+    const b = await body<{ days?: number }>(req);
+    const days = Math.min(Math.max(Math.round(Number(b.days) || 30), 1), 60);
+    const raw = await getSetting(env, "history_job");
+    if (raw && (JSON.parse(raw) as { status?: string }).status === "running") return err("A history load is already running", 409);
+    await setSetting(env, "history_job", JSON.stringify({ status: "running", assets: ["GOLD", "SILVER", "BTC"], days, idx: 0, queue: [], cursor: null, listed: false, counted: 0, skipped: 0, failed: 0, startedAt: Date.now(), message: "Starting…" }));
+    await engine(env).watch(); // wake the engine so it starts working through the list
+    return json({ ok: true });
+  }
   // Edge report: for each price level, how often contracts priced like that really settled YES (learned from the bot's recorded history)
   if (path === "/api/calibration" && m === "GET") {
     const asset = (url.searchParams.get("asset") ?? "").toUpperCase();
@@ -360,10 +376,11 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
         .all<{ bucket: number; n: number; w: number }>()
     ).results;
     const contracts = await env.DB.prepare("SELECT COUNT(*) c FROM markets WHERE asset = ? AND calibrated = 1").bind(asset).first<{ c: number }>();
+    const loaded = await env.DB.prepare("SELECT COUNT(*) c FROM calibration_done WHERE asset = ?").bind(asset).first<{ c: number }>();
     const waiting = await env.DB.prepare("SELECT COUNT(*) c FROM markets WHERE asset = ? AND calibrated = 0 AND result IN ('yes','no')").bind(asset).first<{ c: number }>();
     return json({
       asset,
-      contractsCounted: contracts?.c ?? 0,
+      contractsCounted: (contracts?.c ?? 0) + (loaded?.c ?? 0),
       contractsWaiting: waiting?.c ?? 0,
       rows: rows.map((r) => {
         const mid = (r.bucket + 0.5) / BUCKETS;

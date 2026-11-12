@@ -89,3 +89,24 @@ export function priceVerdict(cell: Cell, price: number, minContracts = 30): "too
   if (price > w.hi) return "yes_overpriced";
   return "even";
 }
+
+/** One minute of Kalshi's own price history (field names as in its candlestick response). */
+export interface Candle {
+  end_period_ts: number; // seconds
+  yes_bid?: { close_dollars?: string | null };
+  yes_ask?: { close_dollars?: string | null };
+}
+
+/** Turn Kalshi's 1-minute candles for a finished contract into the same one-sample-per-minute counts the bot's own recordings give. */
+export function samplesFromCandles(candles: Candle[], closeTs: number): Array<{ minuteLeft: number; bucket: number }> {
+  const byMinute = new Map<number, number>();
+  for (const c of candles) {
+    const bid = Number(c.yes_bid?.close_dollars);
+    const ask = Number(c.yes_ask?.close_dollars);
+    if (!(bid > 0 && ask > 0 && ask >= bid)) continue;
+    const k = Math.round((closeTs - c.end_period_ts * 1000) / 60_000); // a candle that ends at the close is the last minute (0)
+    if (k < 0 || k >= MINUTES) continue;
+    byMinute.set(k, bucketOf((bid + ask) / 2));
+  }
+  return [...byMinute].map(([minuteLeft, bucket]) => ({ minuteLeft, bucket }));
+}

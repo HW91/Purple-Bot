@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { checklistFor } from "../src/checklist";
-import { bucketOf, minuteLeftOf, feePerContract, wilson, samplesFromObs, priceVerdict, type EdgeLookup } from "../src/edge";
+import { bucketOf, minuteLeftOf, feePerContract, wilson, samplesFromObs, samplesFromCandles, priceVerdict, type EdgeLookup } from "../src/edge";
 import { FlowTracker, flowPasses } from "../src/flow";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
@@ -284,6 +284,13 @@ describe("crypto entry", () => {
     expect(() => validateBotConfig({ strategy: "crypto", entryRule: "edge", assets: ["BTC"], minEdge: 0.9 })).toThrow(/Minimum edge/);
     expect(() => validateBotConfig({ strategy: "crypto", entryRule: "edge", assets: ["BTC"], edgeMinSamples: 5 })).toThrow(/at least 20/);
     expect(validateBotConfig({ strategy: "crypto" }).entryRule).toBe("range");
+  });
+
+  it("Kalshi minute candles become one sample per minute before the close", () => {
+    const CLOSE = 1_000_000_000_000;
+    const c = (k: number, bid: string, ask: string) => ({ end_period_ts: CLOSE / 1000 - k * 60, yes_bid: { close_dollars: bid }, yes_ask: { close_dollars: ask } });
+    const samples = samplesFromCandles([c(14, "0.5000", "0.5200"), c(3, "0.8300", "0.8500"), c(0, "0.9700", "0.9900"), c(2, "", ""), c(1, "0.9000", "0.8000"), c(15, "0.5", "0.52")], CLOSE);
+    expect(samples.sort((a, b) => a.minuteLeft - b.minuteLeft)).toEqual([{ minuteLeft: 0, bucket: 39 }, { minuteLeft: 3, bucket: bucketOf(0.84) }, { minuteLeft: 14, bucket: bucketOf(0.51) }]); // empty books, crossed books and the opening candle are left out
   });
 
   it("price verdict: even when the price sits inside the win-rate range, otherwise YES cheap or expensive, and too few below 30", () => {

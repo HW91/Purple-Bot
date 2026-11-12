@@ -13,7 +13,7 @@ import { emailShell, esc, sendEmail } from "./notify";
 import { etDateString, overviewEmail, runOverview } from "./analysis";
 import { checklistFor, type CheckLine } from "./checklist";
 import { FlowTracker } from "./flow";
-import { samplesFromObs, type Cell, type EdgeLookup } from "./edge";
+import { samplesFromCandles, samplesFromObs, type Cell, type EdgeLookup } from "./edge";
 import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
 
@@ -90,6 +90,7 @@ export class Engine extends DurableObject<Env> {
   private flow = new FlowTracker();
   private flowLoading = new Set<string>();
   private flowIncomplete = new Set<string>();
+  private historyRunning = false;
   // the edge rule's history: for each asset, win counts by minute-before-close and price level (refreshed every minute)
   private edgeCache = new Map<string, { at: number; cells: Map<number, Cell> }>();
   private edgeLookup: EdgeLookup = (asset, minuteLeft, bucket) => this.edgeCache.get(asset)?.cells.get(minuteLeft * 100 + bucket) ?? null;
@@ -197,7 +198,8 @@ export class Engine extends DurableObject<Env> {
     try {
       await this.refreshBots();
       await this.loadPositions();
-      wanted = this.bots.some((b) => b.enabled) || this.posCache.size > 0 || now < this.watchUntil;
+      this.historyRunning = await this.readHistoryRunning();
+      wanted = this.bots.some((b) => b.enabled) || this.posCache.size > 0 || now < this.watchUntil || this.historyRunning;
       if (!wanted) {
         this.closeSocket();
         return; // no alarm rescheduled -> Cloudflare can evict us
@@ -220,6 +222,7 @@ export class Engine extends DurableObject<Env> {
       await this.checkSettlements();
       await this.backfillResults();
       await this.calibrateSettled();
+      await this.historyJobTick();
       await this.processCloseRequests();
       await this.dailyJobs();
     } catch (e) {
@@ -1092,6 +1095,97 @@ export class Engine extends DurableObject<Env> {
    * trades we exited early (stop loss / take profit) never learn how their contract finally settled, which breaks the
    * "would holding have won?" analysis, the reliability-by-hour numbers and backtests (they skip unsettled contracts).
    */
+  private async readHistoryRunning(): Promise<boolean> {
+    try {
+      const raw = await getSetting(this.env, "history_job");
+      return !!raw && (JSON.parse(raw) as { status?: string }).status === "running";
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Load past contracts from Kalshi's own 1-minute price history into the edge history, a few per tick, in the order the owner chose
+   * (gold first). Contracts the bot recorded itself, or an earlier load already counted, are skipped so nothing is counted twice.
+   */
+  private async historyJobTick(): Promise<void> {
+    if (!this.historyRunning || !this.client) return;
+    const raw = await getSetting(this.env, "history_job");
+    if (!raw) return;
+    const job = JSON.parse(raw) as { status: string; assets: string[]; days: number; idx: number; queue: Array<{ ticker: string; closeTs: number; result: "yes" | "no" }>; cursor: string | null; listed: boolean; counted: number; skipped: number; failed: number; startedAt: number; message: string };
+    if (job.status !== "running") return;
+    const save = () => setSetting(this.env, "history_job", JSON.stringify(job));
+    try {
+      const asset = job.assets[job.idx];
+      if (!asset) {
+        job.status = "done";
+        job.message = `Done: ${job.counted} past contracts counted`;
+        await save();
+        return;
+      }
+      const series = await this.seriesFor(asset);
+      if (job.queue.length === 0 && !job.listed) {
+        // one page of this asset's settled contracts
+        const page = await this.client.settledMarkets(series, Math.floor((Date.now() - job.days * 86_400_000) / 1000), job.cursor ?? undefined);
+        for (const m of page.markets) {
+          const result = (m.result ?? "").toLowerCase();
+          const closeTs = Date.parse(m.close_time);
+          if ((result === "yes" || result === "no") && Number.isFinite(closeTs)) job.queue.push({ ticker: m.ticker, closeTs, result });
+        }
+        job.cursor = page.cursor ?? null;
+        if (!page.cursor) job.listed = true;
+        job.message = `Loading ${asset}: ${job.queue.length} contracts listed`;
+      } else {
+        const batch = job.queue.splice(0, 20);
+        const marks = batch.map(() => "?").join(",");
+        const known = new Set<string>();
+        if (batch.length) {
+          const t = batch.map((b) => b.ticker);
+          for (const r of (await this.env.DB.prepare(`SELECT ticker FROM markets WHERE ticker IN (${marks})`).bind(...t).all<{ ticker: string }>()).results ?? []) known.add(r.ticker); // the bot recorded these itself
+          for (const r of (await this.env.DB.prepare(`SELECT ticker FROM calibration_done WHERE ticker IN (${marks})`).bind(...t).all<{ ticker: string }>()).results ?? []) known.add(r.ticker);
+        }
+        for (let i = 0; i < batch.length; i++) {
+          const b = batch[i];
+          if (known.has(b.ticker)) {
+            job.skipped++;
+            continue;
+          }
+          try {
+            const candles = await this.client.candlesticks(series, b.ticker, Math.floor(b.closeTs / 1000) - 16 * 60, Math.floor(b.closeTs / 1000));
+            const samples = samplesFromCandles(candles, b.closeTs);
+            const up = this.env.DB.prepare("INSERT INTO calibration (asset, minute_left, bucket, n, yes_wins) VALUES (?,?,?,1,?) ON CONFLICT(asset, minute_left, bucket) DO UPDATE SET n = n + 1, yes_wins = yes_wins + excluded.yes_wins");
+            const stmts = samples.map((x) => up.bind(asset, x.minuteLeft, x.bucket, b.result === "yes" ? 1 : 0));
+            stmts.push(this.env.DB.prepare("INSERT OR IGNORE INTO calibration_done (ticker, asset, counted_ts) VALUES (?,?,?)").bind(b.ticker, asset, Date.now()));
+            await this.env.DB.batch(stmts);
+            job.counted++;
+          } catch (e) {
+            if (e instanceof KalshiAuthError) throw e;
+            if (e instanceof KalshiHttpError && e.status === 429) {
+              job.queue.unshift(...batch.slice(i)); // Kalshi asked us to slow down: try these again next tick
+              break;
+            }
+            job.failed++;
+          }
+        }
+        job.message = `Loading ${asset}: ${job.counted} counted, ${job.queue.length} left in this batch of contracts`;
+      }
+      if (job.queue.length === 0 && job.listed) {
+        job.idx++;
+        job.listed = false;
+        job.cursor = null;
+        if (job.idx >= job.assets.length) {
+          job.status = "done";
+          job.message = `Done: ${job.counted} past contracts counted (${job.skipped} already known, ${job.failed} failed)`;
+        }
+      }
+      await save();
+    } catch (e) {
+      job.status = "error";
+      job.message = (e as Error).message.slice(0, 300);
+      await save();
+    }
+  }
+
   /** Count settled contracts into the history table the edge rule learns from: a few per tick, each exactly once, newest first. */
   private async calibrateSettled(): Promise<void> {
     const rows = (await this.env.DB.prepare("SELECT ticker, asset, close_ts, result FROM markets WHERE calibrated = 0 AND result IN ('yes','no') ORDER BY close_ts DESC LIMIT 6").all<{ ticker: string; asset: string; close_ts: number; result: string }>()).results ?? [];

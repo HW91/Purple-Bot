@@ -7,7 +7,7 @@ export function startMock(port) {
   const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
   const pem = privateKey.export({ type: "pkcs8", format: "pem" });
   const KEY_ID = "test-key-id";
-  const state = { quotes: new Map(), positions: new Map(), orders: [], badAuth: 0, results: new Map(), balance: 100 };
+  const state = { settledClose: new Map(), quotes: new Map(), positions: new Map(), orders: [], badAuth: 0, results: new Map(), balance: 100 };
   const open = Date.now() - 360000; // current window opened 6 min ago
   const close = open + 3600000; // far enough away that 'minimum time remaining' never interferes with the test
   const iso = (t) => new Date(t).toISOString();
@@ -51,6 +51,17 @@ export function startMock(port) {
     if (!verify(req)) { state.badAuth++; return send(401, { code: "unauthorized", message: "bad signature" }); }
     const p = url.pathname.replace("/trade-api/v2", "");
     if (p === "/portfolio/balance") return send(200, { balance: Math.round(state.balance * 100), balance_dollars: state.balance.toFixed(2), portfolio_value: 0, updated_ts: Date.now() });
+    if (p === "/markets" && url.searchParams.get("status") === "settled") { // past contracts for the history load: three per series, closed 2, 3 and 4 hours ago
+      const series = url.searchParams.get("series_ticker");
+      const list = [1, 2, 3].map((n) => { const closeSec = Math.floor(Date.now() / 60000) * 60 - (n + 1) * 3600; const ticker = `${series}-HIST${n}`; state.settledClose.set(ticker, closeSec); return { ticker, event_ticker: `${series}-HIST${n}`, status: "settled", open_time: new Date((closeSec - 900) * 1000).toISOString(), close_time: new Date(closeSec * 1000).toISOString(), result: n === 2 ? "no" : "yes" }; });
+      return send(200, { markets: list, cursor: "" });
+    }
+    let cs = p.match(/^\/series\/([^/]+)\/markets\/([^/]+)\/candlesticks$/);
+    if (cs) { // 15 one-minute candles ending at the close: YES bid/ask rising from 55c to 83c
+      const closeSec = state.settledClose.get(decodeURIComponent(cs[2]));
+      if (!closeSec) return send(404, { error: "unknown market" });
+      return send(200, { ticker: cs[2], candlesticks: Array.from({ length: 15 }, (_, i) => { const k = 14 - i; const bid = 0.55 + (14 - k) * 0.02; return { end_period_ts: closeSec - k * 60, yes_bid: { close_dollars: bid.toFixed(4) }, yes_ask: { close_dollars: (bid + 0.02).toFixed(4) }, price: {}, volume_fp: "1.00", open_interest_fp: "1.00" }; }) });
+    }
     if (p === "/markets") return send(200, { markets: url.searchParams.get("status") === "open" ? [mk(url.searchParams.get("series_ticker"))] : [], cursor: "" });
     if (p === "/markets/trades") { // same fields as Kalshi's Get Trades (docs.kalshi.com/api-reference/market/get-trades)
       const t = url.searchParams.get("ticker");
