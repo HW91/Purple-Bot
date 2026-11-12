@@ -327,7 +327,8 @@ function vBots(){
   root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn',text:'+ New bot',onclick:function(){editBot(null)}})));
   root.appendChild(form);root.appendChild(list);
   function load(){api('/bots').then(function(bots){botsCache=bots;list.textContent='';bots.forEach(function(b){
-    list.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:'trades '+b.config.tradeAsset+' · confirmed by '+b.config.assets.join(', ')}),h('span',{style:'flex:1'}),
+    list.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:'trades '+b.config.tradeAsset+' · confirmed by '+b.config.assets.join(', ')})),
+      h('div',{class:'row',style:'margin-top:10px'},
       h('button',{class:'btn gray',text:'Edit',onclick:function(){editBot(b)}}),
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
       h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}})),
