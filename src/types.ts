@@ -111,7 +111,7 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     durationMin: 15,
     entryRule: "range",
     minEdge: 0.03,
-    edgeMinSamples: 100,
+    edgeMinSamples: 300,
     betSide: "favorite",
     probThreshold: 0.8,
     probMax: 1,
@@ -155,6 +155,8 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
 
   const betSide: BetSide = input.betSide === "underdog" ? "underdog" : "favorite";
   // a low-probability bot starts from a low range (3% to 7%) unless one is given
+  // the edge rule starts from smaller, tighter values (small trades, tight spread, hold to settlement) unless the owner gives their own
+  const ed = input.entryRule === "edge" ? { timeDelaySec: 60, tradeAmount: 1, dailyLossLimit: 3, dailyInvestLimit: 20, maxSpread: 0.03, takeProfitOn: false } : { timeDelaySec: d.timeDelaySec, tradeAmount: d.tradeAmount, dailyLossLimit: d.dailyLossLimit, dailyInvestLimit: d.dailyInvestLimit, maxSpread: d.maxSpread, takeProfitOn: d.takeProfitOn };
   const lowDefaults = betSide === "underdog" ? { probThreshold: 0.03, probMax: 0.07 } : { probThreshold: d.probThreshold, probMax: d.probMax };
   const cfg: BotConfig = {
     strategy,
@@ -168,18 +170,18 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     probThreshold: num(input.probThreshold, lowDefaults.probThreshold),
     probMax: num(input.probMax, lowDefaults.probMax),
     agreeCount: Math.round(num(input.agreeCount, d.agreeCount)),
-    timeDelaySec: Math.round(num(input.timeDelaySec, d.timeDelaySec)),
+    timeDelaySec: Math.round(num(input.timeDelaySec, ed.timeDelaySec)),
     minRemainingSec: Math.round(num(input.minRemainingSec, d.minRemainingSec)),
-    tradeAmount: num(input.tradeAmount, d.tradeAmount),
+    tradeAmount: num(input.tradeAmount, ed.tradeAmount),
     maxPositions: Math.round(num(input.maxPositions, d.maxPositions)),
     maxTradesPerHour: Math.round(num(input.maxTradesPerHour, d.maxTradesPerHour)),
-    dailyLossLimit: num(input.dailyLossLimit, d.dailyLossLimit),
-    dailyInvestLimit: num(input.dailyInvestLimit, d.dailyInvestLimit),
+    dailyLossLimit: num(input.dailyLossLimit, ed.dailyLossLimit),
+    dailyInvestLimit: num(input.dailyInvestLimit, ed.dailyInvestLimit),
     stopLossOn: bool(input.stopLossOn, d.stopLossOn),
     stopLoss: num(input.stopLoss, d.stopLoss),
-    takeProfitOn: bool(input.takeProfitOn, d.takeProfitOn),
+    takeProfitOn: bool(input.takeProfitOn, ed.takeProfitOn),
     takeProfit: num(input.takeProfit, d.takeProfit),
-    maxSpread: num(input.maxSpread, d.maxSpread),
+    maxSpread: num(input.maxSpread, ed.maxSpread),
     flowOn: bool(input.flowOn, d.flowOn),
     flowWindowMin: Math.round(num(input.flowWindowMin, d.flowWindowMin)),
     flowRatio: num(input.flowRatio, d.flowRatio),
