@@ -251,8 +251,8 @@ try {
 
   // ---- L4. edge rule: buys when the history behind the price says the price is wrong by enough, and shows its checklist
   const edgeBot = (await api(`/bots/${bot1}/duplicate`, "POST")).j.id;
-  const edgeSave = await api(`/bots/${edgeBot}`, "PUT", { name: "Edge bot", config: { ...cfg, entryRule: "edge", assets: ["BTC"], tradeAsset: "BTC", agreeCount: 1, minEdge: 0.03, edgeMinSamples: 100 } });
-  ok("an edge bot saves with a single asset", edgeSave.status === 200 && (await api("/bots")).j.find((b) => b.id === edgeBot)?.config?.entryRule === "edge", JSON.stringify(edgeSave.j));
+  const edgeSave = await api(`/bots/${edgeBot}`, "PUT", { name: "Edge bot", config: { ...cfg, betSide: "either", probThreshold: 0, probMax: 1, assets: ["BTC"], tradeAsset: "BTC", agreeCount: 0, minEdge: 0.03, edgeMinSamples: 100 } });
+  ok("an edge bot saves with a single asset", edgeSave.status === 200 && (await api("/bots")).j.find((b) => b.id === edgeBot)?.config?.minEdge === 0.03, JSON.stringify(edgeSave.j));
   const edgeUrl = `/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${edgeBot}`;
   await api(`/bots/${edgeBot}/start`, "POST");
   const noHistory = await waitFor(async () => { const r = (await api(edgeUrl)).j; const h = r.checks?.find((c) => c.key === "history"); return h && h.ok === false ? r : null; }, 60000);
@@ -418,12 +418,11 @@ try {
     // bot form: the edge rule hides the fields it does not use, and the range rule hides the edge fields
     await page.click("nav >> text=Bots");
     await page.locator("button:text-is('Edit')").first().click();
-    await page.waitForSelector("label:text('Entry rule')", { timeout: 15000 });
+    await page.waitForSelector("label:text-is('Side to bet')", { timeout: 15000 });
     const vis = async (t) => page.locator(`label:text-is('${t}')`).first().isVisible();
-    const before = { side: await vis("Side to bet"), prob: await vis("Probability range (%)"), edge: await vis("Edge rule: minimum edge (cents per contract, after fees)") };
-    await page.locator("label:text('Entry rule')").locator("..").locator("select").selectOption("edge");
-    const after = { side: await vis("Side to bet"), prob: await vis("Probability range (%)"), money: await vis("Use money on each side"), edge: await vis("Edge rule: minimum edge (cents per contract, after fees)"), spread: await vis("Max spread allowed ($)") };
-    ok("choosing the Edge rule hides the side, probability and money-rule fields and shows the edge fields", before.side && before.prob && !before.edge && !after.side && !after.prob && !after.money && after.edge && after.spread, JSON.stringify({ before, after }));
+    const all = { entryRule: await page.locator("label:text-is('Entry rule')").count(), side: await vis("Side to bet"), prob: await vis("Probability range (%)"), agree: await vis("Assets that must agree (0 = do not check)"), money: await vis("Use money on each side"), edge: await vis("Minimum edge (cents per contract, after fees; 0 = off)"), samples: await vis("Contracts needed behind a win rate") };
+    const sideOptions = await page.locator("label:text-is('Side to bet')").locator("..").locator("select").evaluate((sel) => [...sel.options].map((o) => o.text));
+    ok("every setting is on the one bot form: no Entry rule choice, the Edge settings sit beside the Probability ones, and Side to bet has High, Low and Either", all.entryRule === 0 && all.side && all.prob && all.agree && all.money && all.edge && all.samples && sideOptions.length === 3 && sideOptions[0] === "High probability" && sideOptions[1] === "Low probability" && /^Either/.test(sideOptions[2]), JSON.stringify({ all, sideOptions }));
     // one New bot button; any asset from a single list: metals first (A to Z), then cryptocurrencies (A to Z); agreement is a number, 0 = off
     await page.click("nav >> text=Bots");
     ok("there is one New bot button (no separate crypto and metals buttons)", (await page.locator("button:text-is('+ New bot')").count()) === 1 && (await page.locator("button:text('New crypto bot')").count()) === 0);

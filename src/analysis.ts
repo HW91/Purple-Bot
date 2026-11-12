@@ -665,7 +665,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
     return {
       name: b.name,
       enabled: b.enabled === 1,
-      sideBought: c.betSide === "underdog" ? "the low-probability side (the probability range applies to that cheap side)" : "the favorite side",
+      sideBought: c.betSide === "underdog" ? "the low-probability side (the probability range applies to that cheap side)" : c.betSide === "either" ? "whichever side has the better edge" : "the high-probability side",
       tradeAsset: c.tradeAsset,
       assets: c.assets,
       probRange: c.probMax !== undefined && c.probMax < 1 ? `${Math.round(c.probThreshold * 100)}%-${Math.round(c.probMax * 100)}%` : `${Math.round(c.probThreshold * 100)}%+`,

@@ -19,19 +19,16 @@ export const MIN_TRADE_AMOUNT = 0.01;
 
 export type Strategy = "crypto" | "metals";
 export type NotifyMode = "immediate" | "daily" | "off";
-/** favorite = buy the side the market leans toward; underdog = buy the other (low-probability) side. The probability range always applies to the side being bought. */
-export type BetSide = "favorite" | "underdog";
-/** range = buy when the probability is inside the owner's range (the original rule); edge = buy when history says the price is wrong by at least the minimum edge. */
-export type EntryRule = "range" | "edge";
+/** favorite = buy the high-probability side; underdog = buy the low-probability side; either = buy whichever side has the edge (needs a minimum edge). The probability range applies to the side being bought. */
+export type BetSide = "favorite" | "underdog" | "either";
 
 export interface BotConfig {
   strategy: Strategy;
   assets: string[]; // compared for direction agreement (confirmation only)
   tradeAsset: string; // the ONE asset this bot actually trades; must be one of `assets`
   durationMin: number;
-  entryRule: EntryRule;
-  minEdge: number; // edge rule: smallest edge (dollars per contract, after fees) worth buying, for example 0.03
-  edgeMinSamples: number; // edge rule: contracts that must back the win rate before it is trusted
+  minEdge: number; // smallest edge (dollars per contract, after fees) worth buying, for example 0.03; 0 = the edge check is off
+  edgeMinSamples: number; // contracts that must back the win rate before an edge is trusted
   betSide: BetSide;
   probThreshold: number; // 0..1, minimum probability to enter (of the side being bought)
   probMax: number; // 0..1, do NOT enter above this probability (1 = no upper limit)
@@ -109,8 +106,7 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     assets: strategy === "crypto" ? [...DEFAULT_CRYPTO_ASSETS] : ["GOLD", "SILVER"],
     tradeAsset: strategy === "crypto" ? "BTC" : "GOLD",
     durationMin: 15,
-    entryRule: "range",
-    minEdge: 0.03,
+    minEdge: 0,
     edgeMinSamples: 300,
     betSide: "favorite",
     probThreshold: 0.8,
@@ -155,23 +151,26 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
   const strategy: Strategy = (METAL_ASSETS as readonly string[]).includes(tradeAsset) ? "metals" : "crypto";
   if (!uniq.includes(tradeAsset)) throw new Error(`The asset to trade (${tradeAsset}) must also be one of the selected assets`);
 
-  const betSide: BetSide = input.betSide === "underdog" ? "underdog" : "favorite";
+  // bots saved before the two entry rules were merged: "edge" becomes a minimum edge with either side and no other filters; "range" has no edge check
+  const saved = (input as { entryRule?: string }).entryRule;
+  const legacyEdge = saved === "edge";
+  const minEdge = saved === "range" ? 0 : num(input.minEdge, legacyEdge ? 0.03 : 0);
+  const betSide: BetSide = legacyEdge ? "either" : input.betSide === "underdog" ? "underdog" : input.betSide === "either" ? "either" : "favorite";
   // a low-probability bot starts from a low range (3% to 7%) unless one is given
   // the edge rule starts from smaller, tighter values (small trades, tight spread, hold to settlement) unless the owner gives their own
-  const ed = input.entryRule === "edge" ? { timeDelaySec: 60, tradeAmount: 1, dailyLossLimit: 3, dailyInvestLimit: 20, maxSpread: 0.03, takeProfitOn: false } : { timeDelaySec: d.timeDelaySec, tradeAmount: d.tradeAmount, dailyLossLimit: d.dailyLossLimit, dailyInvestLimit: d.dailyInvestLimit, maxSpread: d.maxSpread, takeProfitOn: d.takeProfitOn };
+  const ed = minEdge > 0 ? { timeDelaySec: 60, tradeAmount: 1, dailyLossLimit: 3, dailyInvestLimit: 20, maxSpread: 0.03, takeProfitOn: false } : { timeDelaySec: d.timeDelaySec, tradeAmount: d.tradeAmount, dailyLossLimit: d.dailyLossLimit, dailyInvestLimit: d.dailyInvestLimit, maxSpread: d.maxSpread, takeProfitOn: d.takeProfitOn };
   const lowDefaults = betSide === "underdog" ? { probThreshold: 0.03, probMax: 0.07 } : { probThreshold: d.probThreshold, probMax: d.probMax };
   const cfg: BotConfig = {
     strategy,
     assets: uniq,
     tradeAsset,
     durationMin: Math.max(1, Math.round(num(input.durationMin, d.durationMin))),
-    entryRule: input.entryRule === "edge" ? "edge" : "range",
-    minEdge: num(input.minEdge, d.minEdge),
+    minEdge,
     edgeMinSamples: Math.round(num(input.edgeMinSamples, d.edgeMinSamples)),
     betSide,
-    probThreshold: num(input.probThreshold, lowDefaults.probThreshold),
-    probMax: num(input.probMax, lowDefaults.probMax),
-    agreeCount: Math.round(num(input.agreeCount, d.agreeCount)),
+    probThreshold: legacyEdge ? 0 : num(input.probThreshold, lowDefaults.probThreshold),
+    probMax: legacyEdge ? 1 : num(input.probMax, lowDefaults.probMax),
+    agreeCount: legacyEdge ? 0 : Math.round(num(input.agreeCount, d.agreeCount)),
     timeDelaySec: Math.round(num(input.timeDelaySec, ed.timeDelaySec)),
     minRemainingSec: Math.round(num(input.minRemainingSec, d.minRemainingSec)),
     tradeAmount: num(input.tradeAmount, ed.tradeAmount),
@@ -184,7 +183,7 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     takeProfitOn: bool(input.takeProfitOn, ed.takeProfitOn),
     takeProfit: num(input.takeProfit, d.takeProfit),
     maxSpread: num(input.maxSpread, ed.maxSpread),
-    flowOn: bool(input.flowOn, d.flowOn),
+    flowOn: legacyEdge ? false : bool(input.flowOn, d.flowOn),
     flowWindowMin: Math.round(num(input.flowWindowMin, d.flowWindowMin)),
     flowRatio: num(input.flowRatio, d.flowRatio),
     noTradeWindows: (Array.isArray(input.noTradeWindows) ? input.noTradeWindows : d.noTradeWindows).map((w) => ({ start: String(w?.start ?? ""), end: String(w?.end ?? "") })),
@@ -193,20 +192,15 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
   };
   // older metals bots (and new ones that give no number) keep "every checked asset must agree"; 0 means do not check agreement at all
   if (startFrom === "metals" && input.agreeCount === undefined) cfg.agreeCount = cfg.assets.length;
-  if (cfg.entryRule === "edge") {
-    if (!(cfg.minEdge >= 0 && cfg.minEdge <= 0.5)) throw new Error("Minimum edge must be between $0.00 and $0.50 per contract");
-    if (!(cfg.edgeMinSamples >= 20 && cfg.edgeMinSamples <= 100000)) throw new Error("Contracts needed behind a win rate must be at least 20");
-  }
-  if (cfg.entryRule === "edge") {
-    // the edge rule picks its own side from history, so the probability range is not used
-  } else if (!(cfg.probThreshold >= 0 && cfg.probThreshold < cfg.probMax && cfg.probMax <= 1)) {
-    // 0% to 100% means no limit; the side being bought is either the high or the low probability side, so any range inside 0% to 100% is allowed
-    throw new Error("Probability range must run from 0% or more up to 100% or less, with the first number below the second");
-  }
+  if (!(cfg.minEdge >= 0 && cfg.minEdge <= 0.5)) throw new Error("Minimum edge must be between $0.00 and $0.50 per contract (0 turns the edge check off)");
+  if (cfg.minEdge > 0 && !(cfg.edgeMinSamples >= 20 && cfg.edgeMinSamples <= 100000)) throw new Error("Contracts needed behind a win rate must be at least 20");
+  if (cfg.betSide === "either" && !(cfg.minEdge > 0)) throw new Error("Side to bet 'Either' needs a minimum edge above 0, so the bot knows which side to buy");
+  // 0% to 100% means no limit; the side being bought is either the high or the low probability side, so any range inside 0% to 100% is allowed
+  if (!(cfg.probThreshold >= 0 && cfg.probThreshold < cfg.probMax && cfg.probMax <= 1)) throw new Error("Probability range must run from 0% or more up to 100% or less, with the first number below the second");
   if (cfg.timeDelaySec < 0 || cfg.timeDelaySec > (cfg.durationMin - 1) * 60) {
     throw new Error(`Time Delay must be between 0 and ${cfg.durationMin - 1} minutes for ${cfg.durationMin}-minute contracts`);
   }
-  if (cfg.entryRule !== "edge" && (cfg.agreeCount < 0 || cfg.agreeCount > cfg.assets.length)) {
+  if (cfg.agreeCount < 0 || cfg.agreeCount > cfg.assets.length) {
     throw new Error(`Assets that must agree must be between 0 (do not check) and the number of selected assets (${cfg.assets.length})`);
   }
   if (cfg.minRemainingSec < 0 || cfg.minRemainingSec >= cfg.durationMin * 60) throw new Error("Minimum remaining time is out of range");

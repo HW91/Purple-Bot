@@ -59,7 +59,6 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number, l
   // a no-trade window (time of day, Eastern) blocks every new entry
   const win = activeWindow(cfg.noTradeWindows, now);
   if (win) return { ok: false, code: "window", reason: `No-trade window: ${windowText(win)}`, upCount: 0, downCount: 0 };
-  if (cfg.entryRule === "edge") return evaluateEdgeEntry(cfg, views, now, lookup);
   const fresh = views.filter((v) => v.market && v.quote && now - v.quote.ts <= QUOTE_MAX_AGE_MS && v.quote.yesBid > 0 && v.quote.yesAsk > 0 && v.quote.yesAsk >= v.quote.yesBid);
   let up = 0;
   let down = 0;
@@ -78,20 +77,51 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number, l
     // agreement is switched off: the trade asset's own lean decides the direction
     if (!fresh.some((v) => v.asset === cfg.tradeAsset)) return { ok: false, code: "no_data", reason: `No live data for ${cfg.tradeAsset}, the asset this bot trades`, ...base };
     direction = dirs.get(cfg.tradeAsset) ?? null;
-    if (!direction) return { ok: false, code: "trade_asset_direction", reason: `${cfg.tradeAsset} has no clear lean yet (it is at exactly 50%)`, ...base };
+    if (!direction && cfg.betSide !== "either") return { ok: false, code: "trade_asset_direction", reason: `${cfg.tradeAsset} has no clear lean yet (it is at exactly 50%)`, ...base };
   } else {
     if (up >= cfg.agreeCount && up >= down) direction = "up";
     else if (down >= cfg.agreeCount) direction = "down";
     if (!direction) return { ok: false, code: "agreement", reason: `Only ${Math.max(up, down)} of ${cfg.assets.length} assets agree (need ${cfg.agreeCount})${missing.length ? `; no live data for ${missing.join(", ")}` : ""}`, ...base };
   }
-  // the side the market favors; a low-probability bot buys the OTHER side (the cheap one), using the same probability range on that side
+  // the side the market favors; a low-probability bot buys the OTHER side (the cheap one); "Either" lets the edge pick the side
   const favoredSide: "yes" | "no" = direction === "up" ? "yes" : "no";
-  const outcome: "yes" | "no" = cfg.betSide === "underdog" ? (favoredSide === "yes" ? "no" : "yes") : favoredSide;
+  let outcome: "yes" | "no" = cfg.betSide === "underdog" ? (favoredSide === "yes" ? "no" : "yes") : favoredSide;
+  let edgeText = "";
 
   // The bot trades ONE chosen asset. The other assets only confirm the direction above; they are never traded.
   // Entry only inside the chosen probability range: at least the minimum, and not above the maximum.
   const inRange = (p: number) => p >= cfg.probThreshold && p <= cfg.probMax + 1e-9;
-  const cands = fresh.filter((v) => v.asset === cfg.tradeAsset && dirs.get(v.asset) === direction && inRange(favorableProb(outcome, yesProb(v.quote!))));
+
+  // The edge check (only when a minimum edge is set): history must show the price is wrong by at least that much, with enough contracts behind it.
+  if (cfg.minEdge > 0) {
+    const ev = fresh.find((v) => v.asset === cfg.tradeAsset);
+    if (!ev) return { ok: false, code: "no_data", reason: `No live data for ${cfg.tradeAsset}, the asset this bot trades`, ...base };
+    const eq = ev.quote!;
+    const mid = yesProb(eq);
+    const minuteLeft = minuteLeftOf(ev.market!.closeTs, now);
+    const cell = lookup ? pooled(lookup, ev.asset, minuteLeft, bucketOf(mid)) : { n: 0, yesWins: 0 };
+    if (cell.n < cfg.edgeMinSamples) {
+      return { ok: false, code: "edge", reason: `Not enough history for ${ev.asset} at ${pct(mid)} with about ${minuteLeft} min left: ${cell.n} contracts (need ${cfg.edgeMinSamples})`, ...base };
+    }
+    const e = sideEdges(cell, eq.yesBid, eq.yesAsk);
+    const inside = (sd: "yes" | "no") => inRange(favorableProb(sd, mid)) && (sd === "yes" ? eq.yesAsk : 1 - eq.yesBid) <= cfg.probMax + 1e-9;
+    const allowed: Array<"yes" | "no"> = cfg.betSide === "either" ? ["yes", "no"] : [outcome];
+    const usable = allowed.filter(inside);
+    if (usable.length === 0) {
+      const sd = allowed[0];
+      const pr = favorableProb(sd, mid);
+      return { ok: false, code: pr > cfg.probMax ? "above_max" : "threshold", reason: cfg.betSide === "either" ? `Neither side is inside your ${pct(cfg.probThreshold)} to ${pct(cfg.probMax)} probability range` : `${ev.asset} ${sd.toUpperCase()} probability ${pct(pr)} is outside your ${pct(cfg.probThreshold)} to ${pct(cfg.probMax)} range`, ...base };
+    }
+    const best = usable.map((sd) => e[sd]).reduce((x, y) => (x.edge >= y.edge ? x : y));
+    if (best.edge < cfg.minEdge) {
+      return { ok: false, code: "edge", reason: `No edge: best side ${best.side.toUpperCase()} wins about ${pct(best.winRate)} (cautious ${pct(best.winRateLow)}) vs price ${pct(best.price)} plus fee ${pct(best.fee)}, edge ${(best.edge * 100).toFixed(1)} cents (need ${(cfg.minEdge * 100).toFixed(1)}), from ${cell.n} contracts`, ...base };
+    }
+    outcome = best.side;
+    edgeText = `Edge: ${outcome.toUpperCase()} wins about ${pct(best.winRate)} (cautious ${pct(best.winRateLow)}) vs price ${pct(best.price)} plus fee ${pct(best.fee)}: ${(best.edge * 100).toFixed(1)} cents per contract from ${cell.n} contracts`;
+  }
+
+  const anyLean = cfg.betSide === "either"; // with "Either" the side is chosen by the edge, not by where the market leans
+  const cands = fresh.filter((v) => v.asset === cfg.tradeAsset && (anyLean || dirs.get(v.asset) === direction) && inRange(favorableProb(outcome, yesProb(v.quote!))));
   if (cands.length === 0) {
     const tv = fresh.find((v) => v.asset === cfg.tradeAsset);
     if (!tv) return { ok: false, code: "no_data", reason: `No live data for ${cfg.tradeAsset}, the asset this bot trades`, ...base };
@@ -178,13 +208,13 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number, l
     return {
       ok: true,
       code: "ok",
-      reason: `${direction === "up" ? up : down} assets ${direction}; ${v.asset} ${outcome.toUpperCase()} probability ${pct(favorableProb(outcome, yesProb(q)))} >= ${pct(cfg.probThreshold)}; delay passed`,
+      reason: edgeText || `${direction === "up" ? up : down} assets ${direction}; ${v.asset} ${outcome.toUpperCase()} probability ${pct(favorableProb(outcome, yesProb(q)))} >= ${pct(cfg.probThreshold)}; delay passed`,
       ...base,
       trade: {
         asset: v.asset,
         ticker: m.ticker,
         outcome,
-        direction: direction!,
+        direction: direction ?? (outcome === "yes" ? "up" : "down"),
         prob: favorableProb(outcome, yesProb(q)),
         costPerContract,
         orderSide: outcome === "yes" ? "bid" : "ask",
@@ -195,61 +225,6 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number, l
     };
   }
   return { ok: false, code: lastCode, reason: lastWhy || "No tradable candidate", ...base };
-}
-
-/**
- * The edge rule: look at the trade asset's own price, ask history how often contracts priced like this (this asset, this many minutes
- * before the close) settled YES, and buy the side whose cautious win rate beats its price plus fee by at least the owner's minimum edge.
- */
-function evaluateEdgeEntry(cfg: BotConfig, views: AssetView[], now: number, lookup?: EdgeLookup): EntryDecision {
-  const base = { upCount: 0, downCount: 0 };
-  const v = views.find((x) => x.asset === cfg.tradeAsset);
-  const q = v?.quote;
-  const m = v?.market;
-  if (!v || !m || !q || now - q.ts > QUOTE_MAX_AGE_MS || !(q.yesBid > 0 && q.yesAsk > 0 && q.yesAsk >= q.yesBid)) return { ok: false, code: "no_data", reason: `No live data for ${cfg.tradeAsset}, the asset this bot trades`, ...base };
-  const elapsed = (now - m.openTs) / 1000;
-  const remaining = (m.closeTs - now) / 1000;
-  if (elapsed < cfg.timeDelaySec) return { ok: false, code: "delay", reason: `Time Delay: ${Math.ceil(cfg.timeDelaySec - elapsed)}s left before ${v.asset} can be traded`, ...base };
-  if (remaining < cfg.minRemainingSec) return { ok: false, code: "time_left", reason: `Only ${Math.max(0, Math.floor(remaining))}s left in ${v.asset} contract (need ${cfg.minRemainingSec}s)`, ...base };
-  const spread = q.yesAsk - q.yesBid;
-  if (spread > cfg.maxSpread + 1e-9) return { ok: false, code: "spread", reason: `${v.asset} spread ${pct(spread)} is wider than the ${pct(cfg.maxSpread)} limit`, ...base };
-  const mid = yesProb(q);
-  const minuteLeft = minuteLeftOf(m.closeTs, now);
-  const cell = lookup ? pooled(lookup, v.asset, minuteLeft, bucketOf(mid)) : { n: 0, yesWins: 0 };
-  if (cell.n < cfg.edgeMinSamples) {
-    return { ok: false, code: "edge", reason: `Not enough history for ${v.asset} at ${pct(mid)} with about ${minuteLeft} min left: ${cell.n} contracts (need ${cfg.edgeMinSamples})`, ...base };
-  }
-  const e = sideEdges(cell, q.yesBid, q.yesAsk);
-  const best = e.yes.edge >= e.no.edge ? e.yes : e.no;
-  if (best.edge < cfg.minEdge) {
-    return { ok: false, code: "edge", reason: `No edge: best side ${best.side.toUpperCase()} wins about ${pct(best.winRate)} (cautious ${pct(best.winRateLow)}) vs price ${pct(best.price)} plus fee ${pct(best.fee)}, edge ${(best.edge * 100).toFixed(1)} cents (need ${(cfg.minEdge * 100).toFixed(1)}), from ${cell.n} contracts`, ...base };
-  }
-  const outcome = best.side;
-  const costPerContract = best.price;
-  if (!(costPerContract > 0.01 && costPerContract < 0.99)) return { ok: false, code: "price", reason: `${v.asset} price ${costPerContract.toFixed(2)} is too extreme to trade`, ...base };
-  const wanted = Math.floor(cfg.tradeAmount / costPerContract);
-  if (wanted < 1) return { ok: false, code: "size", reason: `Trade amount $${cfg.tradeAmount} buys less than 1 contract at $${costPerContract.toFixed(2)}`, ...base };
-  const depth = outcome === "yes" ? q.yesAskSize : q.yesBidSize;
-  const count = Math.min(wanted, Math.floor(depth));
-  if (count < 1) return { ok: false, code: "liquidity", reason: `${v.asset} has no contracts at the best price`, ...base };
-  return {
-    ok: true,
-    code: "ok",
-    reason: `Edge: ${outcome.toUpperCase()} wins about ${pct(best.winRate)} (cautious ${pct(best.winRateLow)}) vs price ${pct(costPerContract)} plus fee ${pct(best.fee)}: ${(best.edge * 100).toFixed(1)} cents per contract from ${cell.n} contracts`,
-    ...base,
-    trade: {
-      asset: v.asset,
-      ticker: m.ticker,
-      outcome,
-      direction: outcome === "yes" ? "up" : "down",
-      prob: favorableProb(outcome, mid),
-      costPerContract,
-      orderSide: outcome === "yes" ? "bid" : "ask",
-      orderPrice: outcome === "yes" ? q.yesAsk : q.yesBid,
-      count,
-      market: m,
-    },
-  };
 }
 
 export interface OpenPos {

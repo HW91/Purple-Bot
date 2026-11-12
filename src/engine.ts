@@ -1202,7 +1202,7 @@ export class Engine extends DurableObject<Env> {
   /** Load the history table for every asset an enabled edge bot trades (cheap: at most 15 x 40 rows per asset, once a minute). */
   private async refreshEdgeTables(): Promise<void> {
     const now = Date.now();
-    const assets = new Set(this.bots.filter((b) => b.enabled && b.config.entryRule === "edge").map((b) => b.config.tradeAsset));
+    const assets = new Set(this.bots.filter((b) => b.enabled && b.config.minEdge > 0).map((b) => b.config.tradeAsset));
     for (const asset of assets) {
       const c = this.edgeCache.get(asset);
       if (c && now - c.at < 60_000) continue;

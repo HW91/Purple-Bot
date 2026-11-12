@@ -246,7 +246,7 @@ describe("crypto entry", () => {
   });
 
   it("edge rule: buys the side whose cautious win rate beats price plus fee, and only with enough history", () => {
-    const edgeCfg = { ...cfg, entryRule: "edge" as const, assets: ["BTC"], agreeCount: 1, tradeAsset: "BTC", minEdge: 0.03, edgeMinSamples: 100 };
+    const edgeCfg = { ...cfg, betSide: "either" as const, assets: ["BTC"], agreeCount: 0, tradeAsset: "BTC", probThreshold: 0, probMax: 1, minEdge: 0.03, edgeMinSamples: 100 };
     const v = [{ asset: "BTC", market: mk("BTC"), quote: q(mk("BTC").ticker, 0.83, 0.85, now) }]; // YES mid 84%
     const look = (n: number, yesWins: number): EdgeLookup => (asset, minuteLeft, bucket) => (asset === "BTC" && bucket === bucketOf(0.84) && minuteLeft === minuteLeftOf(mk("BTC").closeTs, now) ? { n, yesWins } : null);
     // 500 contracts priced like this, 495 settled YES (99%): buying YES at 85% has a large edge
@@ -277,12 +277,30 @@ describe("crypto entry", () => {
     expect(evaluateEntry(cfg, ASSETS.map((a, i) => (i < 7 ? view(a, i === 0 ? 0.83 : 0.6, i === 0 ? 0.85 : 0.62, now) : view(a, 0.4, 0.42, now))), now).ok).toBe(true);
     // validation: the edge rule works with a single asset and checks its own numbers
     // choosing the edge rule starts from the recommended values: small trades, tight spread, hold to settlement
-    expect(validateBotConfig({ strategy: "crypto", entryRule: "edge", assets: ["BTC"], tradeAsset: "BTC" })).toMatchObject({ entryRule: "edge", minEdge: 0.03, edgeMinSamples: 300, tradeAmount: 1, dailyLossLimit: 3, dailyInvestLimit: 20, maxSpread: 0.03, timeDelaySec: 60, minRemainingSec: 120, stopLossOn: false, takeProfitOn: false });
-    expect(validateBotConfig({ strategy: "crypto", entryRule: "edge", assets: ["BTC"], tradeAsset: "BTC", tradeAmount: 2, takeProfitOn: true })).toMatchObject({ tradeAmount: 2, takeProfitOn: true }); // the owner's own values win
+    expect(validateBotConfig({ strategy: "crypto", betSide: "either", minEdge: 0.03, assets: ["BTC"], tradeAsset: "BTC", agreeCount: 0 })).toMatchObject({ minEdge: 0.03, betSide: "either", edgeMinSamples: 300, tradeAmount: 1, dailyLossLimit: 3, dailyInvestLimit: 20, maxSpread: 0.03, timeDelaySec: 60, minRemainingSec: 120, stopLossOn: false, takeProfitOn: false });
+    expect(validateBotConfig({ strategy: "crypto", betSide: "either", minEdge: 0.03, assets: ["BTC"], tradeAsset: "BTC", agreeCount: 0, tradeAmount: 2, takeProfitOn: true })).toMatchObject({ tradeAmount: 2, takeProfitOn: true }); // the owner's own values win
     expect(validateBotConfig({ strategy: "crypto" })).toMatchObject({ tradeAmount: 5, dailyLossLimit: 20, maxSpread: 0.06, timeDelaySec: 300, takeProfitOn: true }); // other bots keep their defaults
-    expect(() => validateBotConfig({ strategy: "crypto", entryRule: "edge", assets: ["BTC"], minEdge: 0.9 })).toThrow(/Minimum edge/);
-    expect(() => validateBotConfig({ strategy: "crypto", entryRule: "edge", assets: ["BTC"], edgeMinSamples: 5 })).toThrow(/at least 20/);
-    expect(validateBotConfig({ strategy: "crypto" }).entryRule).toBe("range");
+    expect(() => validateBotConfig({ strategy: "crypto", minEdge: 0.9, assets: ["BTC"], agreeCount: 0 })).toThrow(/Minimum edge/);
+    expect(() => validateBotConfig({ strategy: "crypto", minEdge: 0.03, assets: ["BTC"], agreeCount: 0, edgeMinSamples: 5 })).toThrow(/at least 20/);
+    expect(validateBotConfig({ strategy: "crypto" }).minEdge).toBe(0); // no edge check unless one is set
+    expect(() => validateBotConfig({ strategy: "crypto", betSide: "either", assets: ["BTC"], agreeCount: 0 })).toThrow(/Either/); // Either needs an edge to pick the side
+    // bots saved before the two rules were merged: "edge" becomes a minimum edge with either side and no other filters; "range" has no edge check
+    const oldEdge = { strategy: "crypto", entryRule: "edge", assets: ["BTC"], tradeAsset: "BTC", minEdge: 0.03, probThreshold: 0.8, agreeCount: 7 } as never;
+    expect(validateBotConfig(oldEdge)).toMatchObject({ minEdge: 0.03, betSide: "either", probThreshold: 0, probMax: 1, agreeCount: 0, flowOn: false });
+    const oldRange = { strategy: "crypto", entryRule: "range", minEdge: 0.03, probThreshold: 0.8 } as never;
+    expect(validateBotConfig(oldRange)).toMatchObject({ minEdge: 0, betSide: "favorite", probThreshold: 0.8 });
+    // the edge check works together with the other filters: high probability only, inside a range
+    const hi = { ...edgeCfg, betSide: "favorite" as const, probThreshold: 0.8, probMax: 0.9 };
+    expect(evaluateEntry(hi, v, now, look(500, 495)).trade).toMatchObject({ outcome: "yes" }); // YES at 84% is inside 80% to 90% and has the edge
+    expect(evaluateEntry(hi, v, now, look(500, 5)).ok).toBe(false); // history favors NO, but this bot may only buy the high-probability side, which has no edge
+    expect(evaluateEntry({ ...hi, probThreshold: 0.86 }, v, now, look(500, 495)).ok).toBe(false); // 84% is outside 86% to 90%
+    // low probability side with an edge
+    const lo = { ...edgeCfg, betSide: "underdog" as const };
+    expect(evaluateEntry(lo, v, now, look(500, 5)).trade).toMatchObject({ outcome: "no" });
+    expect(evaluateEntry(lo, v, now, look(500, 495)).ok).toBe(false);
+    // the checklist shows the history and the edge for a bot with a minimum edge, and not for one without
+    expect(checklistFor(hi, v, now, look(500, 495)).some((c) => c.key === "edge")).toBe(true);
+    expect(checklistFor({ ...hi, minEdge: 0 }, v, now).some((c) => c.key === "edge")).toBe(false);
   });
 
   it("Kalshi minute candles become one sample per minute before the close", () => {

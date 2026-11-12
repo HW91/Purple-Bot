@@ -604,7 +604,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       } catch (e) {
         return { label: v.label, error: (e as Error).message };
       }
-      if (cfg.entryRule === "edge") return { label: v.label, error: "The edge rule cannot be backtested yet: it learns from the same recorded history the test would replay, so the result would look better than it is. Use the Edge report on the Trades tab instead." };
+      if (cfg.minEdge > 0) return { label: v.label, error: "A bot with a minimum edge cannot be backtested yet: it learns from the same recorded history the test would replay, so the result would look better than it is. Use the Edge report on the Trades tab instead." };
       return { label: v.label, overrides: v.overrides, report: simulate(cfg, markets, obs, { feePerContract: feePer, slippage: 0.01 }, flowMap) };
     });
     const id = uid();
