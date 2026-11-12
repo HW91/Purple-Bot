@@ -368,6 +368,16 @@ try {
     await edgeCardBox.locator("th:text('Verdict')").first().waitFor({ timeout: 20000 });
     const evenText = await edgeCardBox.textContent();
     ok("the Edge report opens on a table of price vs how often YES won, with a verdict per price level (Even, YES cheap, YES expensive or Too few)", ["YES price", "Contracts", "YES won", "Gap (won", "Verdict"].every((t) => evenText.includes(t)) && /(Even|YES cheap|YES expensive|Too few)/.test(evenText));
+    // sortable headings and the gap percentage column
+    await edgeCardBox.locator("select").first().selectOption("GOLD");
+    await edgeCardBox.locator("tbody tr").nth(1).waitFor({ timeout: 20000 });
+    const priceCol = async () => edgeCardBox.locator("tbody tr td:first-child").allTextContents().then((t) => t.map((x) => parseFloat(x)));
+    await edgeCardBox.locator("th:text('YES price')").click();
+    const up = await priceCol();
+    await edgeCardBox.locator("th:text('YES price')").click();
+    const down = await priceCol();
+    ok("the headings sort: first tap low to high, second tap high to low", up.length >= 2 && up.every((v, i) => i === 0 || v >= up[i - 1]) && down.every((v, i) => i === 0 || v <= down[i - 1]), JSON.stringify({ up: up.slice(0, 5), down: down.slice(0, 5) }));
+    ok("the table has a Gap (% of price) column next to the gap in points", (await edgeCardBox.textContent()).includes("Gap (% of price)"));
     await edgeCardBox.locator("select").nth(2).selectOption("edge");
     await edgeCardBox.locator("th:text('Edge buying YES')").first().waitFor({ timeout: 20000 });
     ok("the Edge report has the Load past contracts button and says gold comes first", (await edgeCardBox.textContent()).includes("Load past contracts from Kalshi") && (await edgeCardBox.textContent()).includes("Loads gold first"));

@@ -435,28 +435,42 @@ function edgeCard(){
   asset.value='GOLD';
   var mins=h('select',null,[['0-14','Whole contract'],['10-14','Early (10-14 min left)'],['6-9','Middle (6-9 min left)'],['3-5','Late (3-5 min left)'],['0-2','Last 3 minutes']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
   var view=h('select',null,[['even','Price vs probability (where they are even)'],['edge','Edge after fees']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
-  var body=h('div');
+  var body=h('div'),last=null,sortKey=null,sortDir=1;
   function cents(x){return (x>0?'+':'')+(x*100).toFixed(1)+'¢'}
+  function range(x){return Math.round(x.from*1000)/10+'% – '+Math.round(x.to*1000)/10+'%'}
+  var RANK={yes_underpriced:0,even:1,yes_overpriced:2,too_few:3};
+  // a sortable table: click a heading to sort low to high, click again for high to low (rows without a number always stay at the bottom)
+  function sortable(cols,rows,rowFn){
+    var list=rows.slice();
+    if(sortKey){var col=cols.filter(function(c){return c.key===sortKey})[0];if(col){list.sort(function(a,b){var x=col.get(a),y=col.get(b);if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;return (x-y)*sortDir})}}
+    var head=cols.map(function(c){return h('th',{style:'cursor:pointer',text:c.h+(sortKey===c.key?(sortDir===1?' ▲':' ▼'):''),onclick:function(){if(sortKey===c.key)sortDir=-sortDir;else{sortKey=c.key;sortDir=1}draw()}})});
+    return h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,head)),h('tbody',null,list.map(rowFn))));
+  }
+  function draw(){
+    body.textContent='';
+    var r=last;if(!r)return;
+    body.appendChild(h('p',{class:'mute',text:r.contractsCounted+' settled '+r.asset+' contracts counted so far'+(r.contractsWaiting?' ('+r.contractsWaiting+' more are being counted in the background)':'')+'.'}));
+    if(!r.rows.length){body.appendChild(h('div',{class:'mute',text:'Nothing counted yet for this asset. Contracts are counted after they settle, while a bot or the dashboard is running.'}));return}
+    var rows=r.rows.map(function(x){var mid=(x.from+x.to)/2;return Object.assign({},x,{gapPct:x.gap==null?null:x.gap/mid})});
+    if(view.value==='even'){
+      // price vs how often YES really won; "Even" = the price sits inside the win-rate range, so any gap could just be luck
+      var V={even:['Even',''],yes_underpriced:['YES cheap','g'],yes_overpriced:['YES expensive','r'],too_few:['Too few','mute']};
+      var few=function(x){return x.verdict==='too_few'||x.gap==null};
+      var cols=[{key:'from',h:'YES price',get:function(x){return x.from}},{key:'n',h:'Contracts',get:function(x){return x.n}},{key:'won',h:'YES won',get:function(x){return x.yesWinRate}},
+        {key:'gap',h:'Gap (won − price)',get:function(x){return few(x)?null:x.gap}},{key:'gapPct',h:'Gap (% of price)',get:function(x){return few(x)?null:x.gapPct}},{key:'verdict',h:'Verdict',get:function(x){return RANK[x.verdict]}}];
+      body.appendChild(sortable(cols,rows,function(x){var v=V[x.verdict]||V.too_few;return h('tr',null,h('td',{text:range(x)}),h('td',{text:x.n}),h('td',{text:x.yesWinRate==null?'—':(x.yesWinRate*100).toFixed(0)+'%'}),h('td',{text:few(x)?'—':(x.gap>0?'+':'')+(x.gap*100).toFixed(1)+' pts'}),h('td',{text:few(x)?'—':(x.gapPct>0?'+':'')+(x.gapPct*100).toFixed(0)+'%'}),h('td',{class:v[1],text:v[0],style:x.verdict==='even'?'font-weight:600':''}))}));
+      body.appendChild(h('small',{style:'display:block;margin-top:6px',text:'Even = the price matches how often YES really won, within normal luck. YES cheap = YES won more often than its price says (buying YES would have paid). YES expensive = YES won less often than its price says (buying NO would have paid). Too few = under 30 contracts. Gap (% of price) = the gap divided by the price. Tap a heading to sort, tap again to reverse.'}));
+      return;
+    }
+    function cell(n,e){return n<30?h('td',{class:'mute',text:'—'}):h('td',{class:e>0?'g':e<0?'r':'',text:cents(e)})}
+    var cols2=[{key:'from',h:'YES price',get:function(x){return x.from}},{key:'n',h:'Contracts',get:function(x){return x.n}},{key:'won',h:'Settled YES',get:function(x){return x.yesWinRate}},
+      {key:'ey',h:'Edge buying YES',get:function(x){return x.n<30?null:x.edgeYes}},{key:'en',h:'Edge buying NO',get:function(x){return x.n<30?null:x.edgeNo}}];
+    body.appendChild(sortable(cols2,rows,function(x){return h('tr',null,h('td',{text:range(x)}),h('td',{text:x.n}),h('td',{text:x.yesWinRate==null?'—':(x.yesWinRate*100).toFixed(0)+'%'}),cell(x.n,x.edgeYes),cell(x.n,x.edgeNo))}));
+    body.appendChild(h('small',{style:'display:block;margin-top:6px',text:'Edge = how often that side really won (the cautious end of the range, because small counts mislead) minus the price at the middle of the range and the fee, in cents per contract, before any spread. Rows with fewer than 30 contracts show a dash. Tap a heading to sort, tap again to reverse.'}));
+  }
   function load(){
     body.textContent='Loading…';
-    api('/calibration?asset='+asset.value+'&minutes='+mins.value).then(function(r){
-      body.textContent='';
-      body.appendChild(h('p',{class:'mute',text:r.contractsCounted+' settled '+r.asset+' contracts counted so far'+(r.contractsWaiting?' ('+r.contractsWaiting+' more are being counted in the background)':'')+'.'}));
-      if(!r.rows.length){body.appendChild(h('div',{class:'mute',text:'Nothing counted yet for this asset. Contracts are counted after they settle, while a bot or the dashboard is running.'}));return}
-      function range(x){return Math.round(x.from*1000)/10+'% – '+Math.round(x.to*1000)/10+'%'}
-      if(view.value==='even'){
-        // price vs how often YES really won; "Even" = the price sits inside the win-rate range, so any gap could just be luck
-        var V={even:['Even',''],yes_underpriced:['YES cheap','g'],yes_overpriced:['YES expensive','r'],too_few:['Too few','mute']};
-        body.appendChild(h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['YES price','Contracts','YES won','Gap (won − price)','Verdict'].map(function(x){return h('th',{text:x})}))),
-          h('tbody',null,r.rows.map(function(x){var v=V[x.verdict]||V.too_few;return h('tr',null,h('td',{text:range(x)}),h('td',{text:x.n}),h('td',{text:x.yesWinRate==null?'—':(x.yesWinRate*100).toFixed(0)+'%'}),h('td',{text:x.verdict==='too_few'||x.gap==null?'—':(x.gap>0?'+':'')+(x.gap*100).toFixed(1)+' pts'}),h('td',{class:v[1],text:v[0],style:x.verdict==='even'?'font-weight:600':''}))})))));
-        body.appendChild(h('small',{style:'display:block;margin-top:6px',text:'Even = the price matches how often YES really won, within normal luck. YES cheap = YES won more often than its price says (buying YES would have paid). YES expensive = YES won less often than its price says (buying NO would have paid). Too few = under 30 contracts. This compares price and results before fees; the Edge view adds the fee.'}));
-        return;
-      }
-      function cell(n,e){return n<30?h('td',{class:'mute',text:'—'}):h('td',{class:e>0?'g':e<0?'r':'',text:cents(e)})}
-      body.appendChild(h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['YES price','Contracts','Settled YES','Edge buying YES','Edge buying NO'].map(function(x){return h('th',{text:x})}))),
-        h('tbody',null,r.rows.map(function(x){return h('tr',null,h('td',{text:range(x)}),h('td',{text:x.n}),h('td',{text:x.yesWinRate==null?'—':(x.yesWinRate*100).toFixed(0)+'%'}),cell(x.n,x.edgeYes),cell(x.n,x.edgeNo))})))));
-      body.appendChild(h('small',{style:'display:block;margin-top:6px',text:'Edge = how often that side really won (the cautious end of the range, because small counts mislead) minus the price at the middle of the range and the fee, in cents per contract, before any spread. Rows with fewer than 30 contracts show a dash. A few cents of edge needs hundreds of contracts before it means anything.'}));
-    }).catch(function(e){body.textContent=e.message});
+    api('/calibration?asset='+asset.value+'&minutes='+mins.value).then(function(r){last=r;draw()}).catch(function(e){body.textContent=e.message});
   }
   // load past contracts from Kalshi's own price history so the report fills in without waiting days (gold first, then silver, then Bitcoin)
   var span=h('select',null,[['30','30 days'],['14','14 days'],['7','7 days']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
@@ -474,7 +488,7 @@ function edgeCard(){
       else if(wasRunning){wasRunning=false;load()}
     }).catch(function(){});
   }
-  asset.addEventListener('change',load);mins.addEventListener('change',load);view.addEventListener('change',load);load();progress();
+  asset.addEventListener('change',load);mins.addEventListener('change',load);view.addEventListener('change',function(){sortKey=null;sortDir=1;draw()});load();progress();
   return h('div',{class:'card'},h('h2',{text:'Edge report: price vs how often it won'}),h('div',{class:'row'},asset,mins,view),h('div',{class:'row',style:'margin-top:8px'},span,loadBtn),h('small',{class:'mute',style:'display:block'},'Loads gold first, then silver, then Bitcoin. Contracts the bot already recorded are not counted twice.'),prog,body);
 }
 function vTrades(){
