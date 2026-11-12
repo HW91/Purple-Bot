@@ -676,7 +676,11 @@ function vCharts(){
     }
     data.trades.forEach(function(t){c.fillStyle=css('--accent');c.beginPath();c.arc(X(t.opened_ts),t.avg_entry!=null?Y(t.avg_entry):g.t+6,4,0,7);c.fill()});
     var last=mpts[mpts.length-1];
-    info.textContent='';if(last){info.appendChild(h('span',{class:'g',text:'YES '+pct(last.yes)}));info.appendChild(h('span',{class:'r',text:'NO '+pct(1-last.yes)}));info.appendChild(h('span',{class:'mute',text:mpts.length+' recorded points · '+data.market.title}))}
+    info.textContent='';if(last){info.appendChild(h('span',{class:'g',text:'YES '+pct(last.yes)}));info.appendChild(h('span',{class:'r',text:'NO '+pct(1-last.yes)}));
+      // the trade's result in dollars on this contract (all trades on it added up, after fees), right after the NO percentage
+      var tdone=(data.trades||[]).filter(function(t){return t.realized_pnl!=null});
+      if(tdone.length){var tpl=0;tdone.forEach(function(t){tpl+=t.realized_pnl});info.appendChild(h('span',{class:tpl>=0?'g':'r',text:'Trade '+(tpl>=0?'+':'-')+'$'+Math.abs(tpl).toFixed(2)}))}
+      info.appendChild(h('span',{class:'mute',text:mpts.length+' recorded points · '+data.market.title}))}
     if(fin!==null)info.appendChild(h('span',{class:'mute',text:'Dashed = settled '+data.market.result.toUpperCase()+' at close'}));
     if(data.settings)info.appendChild(h('span',{class:'mute',text:'White lines = probability range for this contract: '+pct(data.settings.probMin)+' to '+pct(data.settings.probMax>0?data.settings.probMax:1)}));
     else if(curBot())info.appendChild(h('span',{class:'mute',text:'White lines = '+curBot().name+'\'s current probability range: '+pct(curBot().config.probThreshold)+' to '+pct(curBot().config.probMax)}));
