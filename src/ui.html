@@ -21,7 +21,8 @@ main{padding:0 16px 40px;max-width:1200px;margin:auto}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 .grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
 table{border-collapse:collapse;width:100%;font-size:13.5px}
-th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}
+td.wrap{white-space:normal;min-width:240px} /* long free text (log messages) may wrap; every other table cell stays on one line */
 th{color:var(--mute);font-weight:600}
 .scroll{overflow-x:auto}
 input,select,textarea,button{font:inherit;color:var(--text)}
@@ -871,7 +872,7 @@ function vLogs(){
   var t=h('div');
   root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('label',{text:'Show'}),kind,h('button',{class:'btn gray',text:'Refresh',onclick:load})));
   root.appendChild(t);kind.addEventListener('change',load);
-  function load(){api('/logs?limit=200'+(kind.value?'&kind='+kind.value:'')).then(function(rows){t.textContent='';t.appendChild(h('div',{class:'card scroll'},h('table',null,h('tbody',null,rows.map(function(r){return h('tr',null,h('td',{class:'mute',text:when(r.ts)}),h('td',{class:r.level==='error'?'r':r.level==='warn'?'':'mute',text:r.kind}),h('td',{text:r.message}))})))))})}
+  function load(){api('/logs?limit=200'+(kind.value?'&kind='+kind.value:'')).then(function(rows){t.textContent='';t.appendChild(h('div',{class:'card scroll'},h('table',null,h('tbody',null,rows.map(function(r){return h('tr',null,h('td',{class:'mute',text:when(r.ts)}),h('td',{class:r.level==='error'?'r':r.level==='warn'?'':'mute',text:r.kind}),h('td',{class:'wrap',text:r.message}))})))))})}
   load();
 }
 

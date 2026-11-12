@@ -359,6 +359,8 @@ try {
     await edgeCardBox.locator("select").nth(2).selectOption("edge");
     await edgeCardBox.locator("th:text('Edge buying YES')").first().waitFor({ timeout: 20000 });
     ok("the other view shows the edge of buying YES or NO after fees", (await edgeCardBox.textContent()).includes("Edge buying NO"));
+    const wrapping = await page.evaluate(() => [...document.querySelectorAll("#main th, #main td")].filter((c) => getComputedStyle(c).whiteSpace !== "nowrap" && !c.classList.contains("wrap")).length);
+    ok("no table cell is allowed to wrap its text onto a second line (Trades tab tables)", wrapping === 0, String(wrapping));
     // the asset choice changes the table: each asset shows only its own trades
     const tradeSum = async () => page.evaluate(() => { const card = [...document.querySelectorAll(".card")].find((c) => c.querySelector("h2")?.textContent.includes("Time of day")); return [...card.querySelectorAll("tbody tr")].reduce((s, r) => s + Number(r.children[1].textContent), 0); });
     const pick = async (a) => { await todCard.locator("select").nth(1).selectOption(a); await page.waitForTimeout(1500); return tradeSum(); };
