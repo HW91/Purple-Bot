@@ -234,9 +234,9 @@ function vDash(){
       bots.forEach(function(b){
         var st=live.bots.find(function(x){return x.id===b.id})||{reason:'',up:0,down:0};
         bt.appendChild(h('div',{class:'card'},
-          h('div',{class:'row'},h('button',{class:'link',text:b.name+' ›',title:'See this bot\'s profit/loss',onclick:function(){openBot(b.id)}}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:b.strategy+' · trades '+b.config.tradeAsset}),
+          h('div',{class:'row'},h('button',{class:'link',text:b.name+' ›',title:'See this bot\'s profit/loss',onclick:function(){openBot(b.id)}}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:'trades '+b.config.tradeAsset}),
             ),
-          h('div',{class:'mute',text:'Signal: '+st.reason+(b.strategy==='crypto'?'  (up '+st.up+' / down '+st.down+', need '+b.config.agreeCount+')':'')}),
+          h('div',{class:'mute',text:'Signal: '+st.reason+(b.config.agreeCount>0?'  (up '+st.up+' / down '+st.down+', need '+b.config.agreeCount+')':'')}),
           h('div',{class:'mute',text:'Tap the bot name to see its profit/loss.'})));
       });
       if(!bots.length)bt.appendChild(h('div',{class:'card mute',text:'No bots yet — open the Bots tab to create one (bots always start OFF).'}));
@@ -315,13 +315,19 @@ function posTable(list){
 
 // ----------------------------------------------------------------- Bots
 var CRYPTO=['BTC','ETH','SOL','XRP','DOGE','BNB','HYPE','ADA','BCH','NEAR','TON','ZEC'],METALS=['GOLD','SILVER','PLATINUM','PALLADIUM','COPPER'];
+// every asset in one place: metals first (A to Z), then cryptocurrencies (A to Z)
+var METALS_AZ=METALS.slice().sort(),CRYPTO_AZ=CRYPTO.slice().sort(),ASSETS_AZ=METALS_AZ.concat(CRYPTO_AZ);
+function assetGroups(selected,extra){
+  function opts(list){return list.map(function(a){var op=h('option',{value:a,text:a});if(selected===a)op.selected=true;return op})}
+  return (extra||[]).concat([h('optgroup',{label:'Metals'},opts(METALS_AZ)),h('optgroup',{label:'Cryptocurrencies'},opts(CRYPTO_AZ))]);
+}
 function vBots(){
   var root=$('#main');
   var list=h('div'),form=h('div');
-  root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn',text:'+ New crypto bot',onclick:function(){editBot(null,'crypto')}}),h('button',{class:'btn',text:'+ New metals bot',onclick:function(){editBot(null,'metals')}})));
+  root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn',text:'+ New bot',onclick:function(){editBot(null)}})));
   root.appendChild(form);root.appendChild(list);
   function load(){api('/bots').then(function(bots){botsCache=bots;list.textContent='';bots.forEach(function(b){
-    list.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:b.strategy+' · trades '+b.config.tradeAsset+' · confirmed by '+b.config.assets.join(', ')}),h('span',{style:'flex:1'}),
+    list.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:'trades '+b.config.tradeAsset+' · confirmed by '+b.config.assets.join(', ')}),h('span',{style:'flex:1'}),
       h('button',{class:'btn gray',text:'Edit',onclick:function(){editBot(b)}}),
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
       h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}})),
@@ -330,17 +336,18 @@ function vBots(){
   })})}
   function field(label,input,hint){return h('div',null,h('label',{text:label}),input,hint?h('small',{text:hint,style:'display:block;margin-top:2px'}):null)}
   function editBot(b,strategy){
-    var s=b?b.strategy:strategy;var c=b?b.config:settings&&settings.defaults?settings.defaults[s]:null;
+    var s=b?b.strategy:'crypto';var c=b?b.config:settings&&settings.defaults?settings.defaults.bot:null; // every bot can use any asset; a new one starts on Bitcoin with agreement off
     function go2(){
       var cfg=c;var f=h('div',{class:'card'});
-      var name=h('input',{value:b?b.name:(s==='crypto'?'Crypto bot':'Metals bot')});
+      var name=h('input',{value:b?b.name:'New bot'});
       var inp={};
       function num(k,mult,step){return inp[k]=h('input',{type:'number',step:step||'any',value:+(cfg[k]*(mult||1)).toFixed(4),style:'width:110px'})}
       function chk(k){return inp[k]=h('input',{type:'checkbox'});}
-      var assets=(s==='crypto'?CRYPTO:METALS).map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=cfg.assets.indexOf(a)>=0;return h('label',{class:'chk'},cb,a)});
+      function boxes(list){return list.map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=cfg.assets.indexOf(a)>=0;return h('label',{class:'chk'},cb,a)})}
+      var assets=[h('div',{class:'mute',text:'Metals'})].concat(boxes(METALS_AZ),[h('div',{class:'mute',style:'margin-top:6px',text:'Cryptocurrencies'})],boxes(CRYPTO_AZ));
       var ruleSel=h('select',null,[['range','Probability range (the original rule)'],['edge','Edge: price vs history']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.entryRule||'range')===o[0])op.selected=true;return op}));
       var sideSel=h('select',null,[['favorite','Favorite (the side the market leans toward)'],['underdog','Low-probability side (the cheap side)']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.betSide||'favorite')===o[0])op.selected=true;return op}));
-      var tradeSel=h('select',null,(s==='crypto'?CRYPTO:METALS).map(function(a){var op=h('option',{value:a,text:a});if(cfg.tradeAsset===a)op.selected=true;return op}));
+      var tradeSel=h('select',null,assetGroups(cfg.tradeAsset));
       var fl=chk('flowOn');fl.checked=!!cfg.flowOn;
       var sl=chk('stopLossOn');sl.checked=cfg.stopLossOn;var tp=chk('takeProfitOn');tp.checked=cfg.takeProfitOn;
       var nt=h('select',null,['immediate','daily','off'].map(function(o){var op=h('option',{value:o,text:o});if(cfg.notify===o)op.selected=true;return op}));
@@ -358,7 +365,7 @@ function vBots(){
         R(field('Side to bet',sideSel,'Favorite buys the side the market leans toward. Low-probability buys the other, cheap side. The probability range below applies to the side being bought (for example 3% to 7% for the low side).')),
         R(field('Probability threshold (%)',num('probThreshold',100,1))),
         R(field('Maximum probability to enter (%)',num('probMax',100,1),'Skips the trade if the probability, or the price you would pay, is above this. 100 means no limit.')),
-        R(s==='crypto'?field('Assets that must agree (of those selected)',num('agreeCount',1,1)):h('div',{class:'mute',text:'Every checked metal must lean the same direction before the bot trades.'})),
+        R(field('Assets that must agree (0 = do not check)',num('agreeCount',1,1),'How many of the checked assets must lean the same way before the bot trades. 0 turns the check off, so the asset it trades decides on its own.')),
         field('Time Delay after open (seconds, 0–'+((cfg.durationMin-1)*60)+')',num('timeDelaySec',1,1)),
         field('Minimum time remaining (seconds)',num('minRemainingSec',1,1)),
         field('Trade amount ($)',num('tradeAmount'),'The bot buys whole contracts: as many as this amount pays for at the price (fees are extra). To buy one contract, enter at least its price and less than double it, for example $0.10 for a contract at 6 cents. Below one contract price, nothing is bought. Kalshi sets no fixed largest amount; your balance and your daily limits cap it.'),
@@ -379,7 +386,7 @@ function vBots(){
       ruleSel.addEventListener('change',function(){if(ruleSel.value==='edge'){inp.edgeMinSamples.value=300;inp.minEdge.value=3;inp.tradeAmount.value=1;inp.dailyLossLimit.value=3;inp.dailyInvestLimit.value=20;inp.maxSpread.value=0.03;inp.timeDelaySec.value=60;inp.minRemainingSec.value=120;sl.checked=false;tp.checked=false}});
       // switching the side moves the range to a sensible starting point (you can still edit it)
       sideSel.addEventListener('change',function(){if(sideSel.value==='underdog'){if(+inp.probThreshold.value>=50){inp.probThreshold.value=3;inp.probMax.value=7}}else if(+inp.probThreshold.value<50){inp.probThreshold.value=80;inp.probMax.value=100}});
-      f.appendChild(h('div',{style:'margin-top:10px'},h('label',{text:'Assets'}),assets));
+      f.appendChild(h('div',{style:'margin-top:10px'},h('label',{text:'Assets to check for agreement (tick the ones that may have to lean the same way)'}),assets));
       // no-trade windows: times of day (US Eastern) when this bot opens no new trades; tap + to add another
       var winBox=h('div');
       function addWin(w){
@@ -400,6 +407,7 @@ function vBots(){
         out.tradeAsset=tradeSel.value;
         out.stopLossOn=sl.checked;out.takeProfitOn=tp.checked;out.notify=nt.value;
         out.assets=[].slice.call(f.querySelectorAll('[data-a]')).filter(function(x){return x.checked}).map(function(x){return x.getAttribute('data-a')});
+        if(out.assets.indexOf(tradeSel.value)<0)out.assets.push(tradeSel.value); // the asset it trades is always one of the checked assets
         act(b?'/bots/'+b.id:'/bots',{method:b?'PUT':'POST',body:{name:name.value,config:out}},'Saved').then(function(){form.textContent='';load()});
       }}),' ',h('button',{class:'btn gray',text:'Cancel',onclick:function(){form.textContent=''}})));
       form.textContent='';form.appendChild(f);f.scrollIntoView();
@@ -413,7 +421,7 @@ function vBots(){
 // Time-of-day view (US Eastern): how reliable the 80% signal was by hour, and how your own trades did
 function hoursCard(){
   var days=h('select',null,[1,7,14,30].map(function(d){var o=h('option',{value:d,text:d===1?'Last 1 day':'Last '+d+' days'});if(d===1)o.selected=true;return o})),
-      asset=h('select',null,[h('option',{value:'',text:'All assets'})].concat(CRYPTO.concat(METALS).map(function(a){return h('option',{value:a,text:a})}))),
+      asset=h('select',null,assetGroups(null,[h('option',{value:'',text:'All assets'})])),
       body=h('div');
   function hl(n){return (n%12===0?12:n%12)+(n<12?' AM':' PM')}
   function load(){
@@ -431,7 +439,7 @@ function hoursCard(){
 }
 // Edge report: how often contracts at each price level really settled YES, and what that means for buying either side (from the bot's recorded history)
 function edgeCard(){
-  var asset=h('select',null,CRYPTO.concat(METALS).map(function(a){return h('option',{value:a,text:a})}));
+  var asset=h('select',null,assetGroups('GOLD'));
   asset.value='GOLD';
   var mins=h('select',null,[['0-14','Whole contract'],['10-14','Early (10-14 min left)'],['6-9','Middle (6-9 min left)'],['3-5','Late (3-5 min left)'],['0-2','Last 3 minutes']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
   var view=h('select',null,[['even','Price vs probability (where they are even)'],['edge','Edge after fees']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
@@ -521,7 +529,7 @@ function vTrades(){
 function vCharts(){
   var root=$('#main');
   var botSel=h('select'),asset=h('select'),flt=h('select',null,[['all','All contracts'],['win','Winners'],['loss','Losers'],['none','No trade']].map(function(o){return h('option',{value:o[0],text:o[1]})})),period=h('select',{style:'width:100%;max-width:100%;box-sizing:border-box;text-overflow:ellipsis'}),info=h('div',{class:'row'}),canvas=h('canvas'),tip=h('small',{class:'mute',style:'display:block;margin-top:6px',text:'Hover or tap the chart to inspect a data point.'}),whyEl=h('small',{style:'display:block;margin-top:6px'}),volEl=h('div');
-  var all=CRYPTO.concat(METALS);all.forEach(function(a){asset.appendChild(h('option',{value:a,text:a}))});
+  var all=ASSETS_AZ;assetGroups(null).forEach(function(g){asset.appendChild(g)});
   root.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('div',null,h('label',{text:'Bot'}),botSel),h('div',null,h('label',{text:'Asset'}),asset),h('div',null,h('label',{text:'Show'}),flt),h('div',{style:'flex:1 1 100%;min-width:0'},h('label',{text:'Contract period (current or past)'}),period)),info,canvas,tip,whyEl,volEl));
   var data=null,chartBots=[];
   function curBot(){return chartBots.find(function(b){return b.id===botSel.value})||null}
@@ -769,8 +777,8 @@ function vBacktest(){
     function val(k){return pctKeys.indexOf(k)>=0?+(base[k]*100).toFixed(2):base[k]}
     numFields.forEach(function(f){inp[f[0]]=h('input',{type:'number',step:f[2],value:val(f[0]),style:'width:110px'});cells.push(h('div',null,h('label',{text:f[1]}),inp[f[0]]))});
     ['stopLossOn','takeProfitOn','flowOn'].forEach(function(k){var cb=h('input',{type:'checkbox'});cb.checked=!!base[k];inp[k]=cb;cells.push(h('div',null,h('label',{class:'chk',text:({stopLossOn:'Use stop loss',takeProfitOn:'Use take profit',flowOn:'Use money on each side'})[k]+' '},cb)))});
-    var universe=base.strategy==='metals'?METALS:CRYPTO;
-    var tradeSel=h('select',null,universe.map(function(a){var o=h('option',{value:a,text:a});if(base.tradeAsset===a)o.selected=true;return o}));
+    var universe=ASSETS_AZ;
+    var tradeSel=h('select',null,assetGroups(base.tradeAsset));
     var sideSel=h('select',null,[['favorite','Favorite side'],['underdog','Low-probability side']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((base.betSide||'favorite')===o[0])op.selected=true;return op}));
     sideSel.addEventListener('change',function(){if(sideSel.value==='underdog'){if(+inp.probThreshold.value>=50){inp.probThreshold.value=3;inp.probMax.value=7}}else if(+inp.probThreshold.value<50){inp.probThreshold.value=80;inp.probMax.value=100}});
     cells.push(h('div',null,h('label',{text:'Side to bet'}),sideSel));
@@ -824,7 +832,7 @@ function vBacktest(){
   function settingsLine(c){
     if(!c)return '';
     var out=['betSide','probThreshold','probMax','timeDelaySec','minRemainingSec','tradeAmount','maxSpread'].map(function(k){return LBL[k]+' '+fmt(k,c[k])});
-    if(c.strategy!=='metals')out.push(LBL.agreeCount+' '+c.agreeCount);
+    out.push(LBL.agreeCount+' '+(c.agreeCount>0?c.agreeCount:'off'));
     out.push('Stop loss '+(c.stopLossOn?fmt('stopLoss',c.stopLoss):'off'));
     out.push('Take profit '+(c.takeProfitOn?fmt('takeProfit',c.takeProfit):'off'));
     out.push('Money rule '+(c.flowOn?fmt('flowRatio',c.flowRatio)+' over '+(c.flowWindowMin>0?c.flowWindowMin+' min':'whole contract'):'off'));
@@ -885,7 +893,7 @@ function vSettings(){
     root.appendChild(h('div',{class:'card'},h('h2',{text:'Email notifications'}),h('label',{text:'Send reports and alerts to'}),em,h('p',{class:'mute',text:'Critical alerts (login/key errors, failed or incomplete orders, emergency shutdown, serious errors) are always sent immediately. Each bot chooses immediate / daily / off for everything else. The daily email carries the AI overview of the day.'}),h('button',{class:'btn',text:'Save',onclick:function(){act('/settings',{method:'POST',body:{notifyEmail:em.value}},'Saved')}})));
     var L=s.accountLimits,ll=h('input',{type:'number',value:L.dailyLossLimit}),li=h('input',{type:'number',value:L.dailyInvestLimit}),lp=h('input',{type:'number',value:L.maxPositions});
     root.appendChild(h('div',{class:'card'},h('h2',{text:'Account-wide limits (all bots combined)'}),h('div',{class:'grid'},h('div',null,h('label',{text:'Daily loss limit ($)'}),ll),h('div',null,h('label',{text:'Daily investment limit ($)'}),li),h('div',null,h('label',{text:'Max simultaneous positions'}),lp)),h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){act('/settings',{method:'POST',body:{accountLimits:{dailyLossLimit:+ll.value,dailyInvestLimit:+li.value,maxPositions:+lp.value}}},'Saved')}}))));
-    var sm=s.seriesMap||{},ins={};var all=CRYPTO.concat(METALS);var found=h('div');
+    var sm=s.seriesMap||{},ins={};var all=ASSETS_AZ;var found=h('div');
     root.appendChild(h('div',{class:'card'},h('h2',{text:'Market series (which Kalshi contract each asset uses)'}),
       h('p',{class:'mute',text:'The default names were checked against Kalshi\'s own list of 15-minute series, so you normally leave these empty. Use "Find 15-minute series" to see what Kalshi lists if a name ever changes. An asset with no matching open contract simply never trades.'}),
       h('div',{class:'grid'},all.map(function(a){var i=ins[a]=h('input',{placeholder:'default',value:sm[a]||''});return h('div',null,h('label',{text:a}),i)})),

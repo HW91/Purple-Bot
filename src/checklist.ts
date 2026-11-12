@@ -100,27 +100,27 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number, lo
   }
 
   // 1. live prices
-  const needed = cfg.strategy === "metals" ? cfg.assets : [cfg.tradeAsset];
+  const needed = [cfg.tradeAsset];
   const missing = needed.filter((a) => !fresh.some((v) => v.asset === a));
   line("prices", missing.length === 0, missing.length ? `No live price for ${missing.join(", ")}` : "Live prices available");
 
-  // 2. direction agreement
+  // 2. direction agreement (only when the bot is set to check it; 0 = off, then the trade asset's own lean decides)
   let direction: Direction | null = null;
-  let agreeText = "";
-  if (cfg.strategy === "metals") {
-    const noLean = cfg.assets.filter((a) => !dirs.get(a));
-    if (noLean.length) agreeText = `Checked metals need a clear lean (not ready: ${noLean.join(", ")})`;
-    else if (!cfg.assets.every((a) => dirs.get(a) === dirs.get(cfg.assets[0]))) agreeText = `Checked metals disagree (${cfg.assets.map((a) => `${a} ${dirs.get(a)}`).join(", ")})`;
-    else direction = dirs.get(cfg.assets[0])!;
-  } else {
+  if (cfg.agreeCount > 0) {
+    let agreeText = "";
     if (up >= cfg.agreeCount && up >= down) direction = "up";
     else if (down >= cfg.agreeCount) direction = "down";
     else agreeText = `Only ${Math.max(up, down)} of ${cfg.assets.length} assets agree (need ${cfg.agreeCount})`;
+    line("agree", direction !== null, direction ? `Assets agree on direction (${direction})` : agreeText);
+  } else if (tv) {
+    direction = dirs.get(tv.asset) ?? null;
   }
-  line("agree", direction !== null, direction ? `Assets agree on direction (${direction})` : agreeText);
 
   // 3. the traded asset leans the same way
-  if (!tv || !direction) {
+  if (cfg.agreeCount <= 0) {
+    // agreement is off: the line just says which way the trade asset leans
+    line("leans", tv ? direction !== null : null, tv ? (direction ? `${cfg.tradeAsset} leans ${direction}` : `${cfg.tradeAsset} has no clear lean (exactly 50%)`) : `${cfg.tradeAsset} has a clear lean`);
+  } else if (!tv || !direction) {
     line("leans", null, `${cfg.tradeAsset} leans the same way as the others`);
   } else {
     const own = dirs.get(tv.asset);

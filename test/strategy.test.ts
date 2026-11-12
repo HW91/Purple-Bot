@@ -423,8 +423,8 @@ describe("metals entry", () => {
   const cfg = defaultBotConfig("metals");
   const now = OPEN + 6 * 60_000;
   it("needs gold AND silver to agree", () => {
-    expect(evaluateEntry(cfg, [view("GOLD", 0.83, 0.85, now), view("SILVER", 0.3, 0.32, now)], now).reason).toMatch(/disagree/);
-    expect(evaluateEntry(cfg, [view("GOLD", 0.83, 0.85, now), view("SILVER", 0.3, 0.32, now)], now).code).toBe("disagree");
+    expect(evaluateEntry(cfg, [view("GOLD", 0.83, 0.85, now), view("SILVER", 0.3, 0.32, now)], now).reason).toMatch(/Only 1 of 2 assets agree \(need 2\)/);
+    expect(evaluateEntry(cfg, [view("GOLD", 0.83, 0.85, now), view("SILVER", 0.3, 0.32, now)], now).code).toBe("agreement");
     expect(evaluateEntry(cfg, [view("GOLD", 0.83, 0.85, now)], now).ok).toBe(false);
     const ok = evaluateEntry(cfg, [view("GOLD", 0.83, 0.85, now), view("SILVER", 0.6, 0.62, now)], now);
     expect(ok.ok).toBe(true);
@@ -436,8 +436,25 @@ describe("metals entry", () => {
     expect(d.trade!.asset).toBe("SILVER");
   });
   it("other metals cannot stand in for gold or silver", () => {
-    const d = evaluateEntry({ ...cfg, assets: ["GOLD", "SILVER", "PLATINUM"] }, [view("PLATINUM", 0.9, 0.92, now), view("GOLD", 0.83, 0.85, now)], now);
+    const d = evaluateEntry({ ...cfg, assets: ["GOLD", "SILVER", "PLATINUM"], agreeCount: 3 }, [view("PLATINUM", 0.9, 0.92, now), view("GOLD", 0.83, 0.85, now)], now);
     expect(d.ok).toBe(false);
+  });
+  it("agreement is optional for every asset: with 0 the trade asset's own lean decides, and any asset can be traded", () => {
+    const off = { ...cfg, agreeCount: 0 };
+    // silver disagrees, but agreement is off, so gold trades on its own lean
+    expect(evaluateEntry(off, [view("GOLD", 0.83, 0.85, now), view("SILVER", 0.3, 0.32, now)], now).ok).toBe(true);
+    // no live data for the trade asset: no trade
+    expect(evaluateEntry(off, [view("SILVER", 0.83, 0.85, now)], now).code).toBe("no_data");
+    // a Bitcoin-only bot works the same way
+    const btc = { ...defaultBotConfig("crypto"), assets: ["BTC"], tradeAsset: "BTC", agreeCount: 0 };
+    expect(evaluateEntry(btc, [view("BTC", 0.83, 0.85, now)], now).ok).toBe(true);
+    // a bot can check and trade any mix of assets
+    const mixed = validateBotConfig({ strategy: "crypto", assets: ["BTC", "GOLD"], tradeAsset: "GOLD", agreeCount: 0 });
+    expect(mixed).toMatchObject({ assets: ["BTC", "GOLD"], tradeAsset: "GOLD", agreeCount: 0, strategy: "metals" });
+    // agreement still works when asked for: 2 of 2
+    expect(evaluateEntry({ ...btc, assets: ["BTC", "GOLD"], agreeCount: 2 }, [view("BTC", 0.83, 0.85, now), view("GOLD", 0.3, 0.32, now)], now).ok).toBe(false);
+    // the checklist has no agreement line when it is off
+    expect(checklistFor(off, [view("GOLD", 0.83, 0.85, now), view("SILVER", 0.3, 0.32, now)], now).some((c) => c.key === "agree")).toBe(false);
   });
 });
 
@@ -648,7 +665,7 @@ describe("config validation + day boundary", () => {
     expect(validateBotConfig({ strategy: "metals", assets: ["GOLD", "PLATINUM"], tradeAsset: "GOLD" }).agreeCount).toBe(2);
     expect(() => validateBotConfig({ strategy: "metals", assets: ["GOLD", "SILVER"], tradeAsset: "PLATINUM" })).toThrow(/must also be one of/);
     expect(() => validateBotConfig({ strategy: "crypto", timeDelaySec: 15 * 60 })).toThrow(/Time Delay/);
-    expect(() => validateBotConfig({ strategy: "crypto", agreeCount: 12 })).toThrow(/agreement/);
+    expect(() => validateBotConfig({ strategy: "crypto", agreeCount: 12 })).toThrow(/Assets that must agree/);
     expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0 })).toThrow(/Trade amount/);
     expect(() => validateBotConfig({ strategy: "crypto", tradeAmount: 0.005 })).toThrow(/at least/);
     expect(validateBotConfig({ strategy: "crypto", tradeAmount: 0.1 }).tradeAmount).toBe(0.1); // one cheap contract
@@ -656,7 +673,7 @@ describe("config validation + day boundary", () => {
     expect(validateBotConfig({ strategy: "crypto", probMax: 0.9 }).probMax).toBe(0.9);
     expect(validateBotConfig({ strategy: "crypto" }).probMax).toBe(1);
     expect(validateBotConfig({ strategy: "crypto", tradeAmount: 1 }).tradeAmount).toBe(1);
-    expect(() => validateBotConfig({ strategy: "crypto", assets: ["BTC", "FOO"] })).toThrow(/not valid/);
+    expect(() => validateBotConfig({ strategy: "crypto", assets: ["BTC", "FOO"] })).toThrow(/not a tradable asset/);
   });
   it("accepts defaults from the plan", () => {
     const c = validateBotConfig({ strategy: "crypto" });

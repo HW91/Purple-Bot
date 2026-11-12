@@ -74,15 +74,11 @@ export function evaluateEntry(cfg: BotConfig, views: AssetView[], now: number, l
   const missing = cfg.assets.filter((a) => !fresh.some((v) => v.asset === a));
 
   let direction: Direction | null = null;
-  if (cfg.strategy === "metals") {
-    // Every checked metal must have a live price and lean the same way before the bot may trade.
-    const noLean = cfg.assets.filter((a) => !dirs.get(a));
-    if (noLean.length) return { ok: false, code: "no_data", reason: `Every checked metal needs a live price and a clear lean (not ready: ${noLean.join(", ")})`, ...base };
-    const first = dirs.get(cfg.assets[0])!;
-    if (!cfg.assets.every((a) => dirs.get(a) === first)) {
-      return { ok: false, code: "disagree", reason: `Checked metals disagree on direction (${cfg.assets.map((a) => `${a} ${dirs.get(a)}`).join(", ")})`, ...base };
-    }
-    direction = first;
+  if (cfg.agreeCount <= 0) {
+    // agreement is switched off: the trade asset's own lean decides the direction
+    if (!fresh.some((v) => v.asset === cfg.tradeAsset)) return { ok: false, code: "no_data", reason: `No live data for ${cfg.tradeAsset}, the asset this bot trades`, ...base };
+    direction = dirs.get(cfg.tradeAsset) ?? null;
+    if (!direction) return { ok: false, code: "trade_asset_direction", reason: `${cfg.tradeAsset} has no clear lean yet (it is at exactly 50%)`, ...base };
   } else {
     if (up >= cfg.agreeCount && up >= down) direction = "up";
     else if (down >= cfg.agreeCount) direction = "down";

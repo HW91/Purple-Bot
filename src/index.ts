@@ -177,7 +177,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       notifyEmail: (await getSetting(env, "notify_email")) ?? "",
       accountLimits: await getAccountLimits(env),
       seriesMap: JSON.parse((await getSetting(env, "series_map")) ?? "{}"),
-      defaults: { crypto: defaultBotConfig("crypto"), metals: defaultBotConfig("metals"), account: DEFAULT_ACCOUNT_LIMITS },
+      defaults: { crypto: defaultBotConfig("crypto"), metals: defaultBotConfig("metals"), bot: { ...defaultBotConfig("crypto"), assets: ["BTC"], tradeAsset: "BTC", agreeCount: 0 }, account: DEFAULT_ACCOUNT_LIMITS },
     });
   }
   if (path === "/api/settings" && m === "POST") {
@@ -265,7 +265,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
   if (path === "/api/bots" && m === "POST") {
     const b = await body<{ name?: string; config?: Record<string, unknown> }>(req);
     const cfg = validateBotConfig((b.config ?? {}) as never);
-    const name = (b.name ?? "").trim() || `${cfg.strategy === "crypto" ? "Crypto" : "Metals"} bot`;
+    const name = (b.name ?? "").trim() || "New bot";
     const id = uid();
     const now = Date.now();
     await env.DB.prepare("INSERT INTO bots (id, name, strategy, config, enabled, created_ts, updated_ts) VALUES (?,?,?,?,0,?,?)").bind(id, name, cfg.strategy, JSON.stringify(cfg), now, now).run();

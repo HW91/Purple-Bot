@@ -141,16 +141,18 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
  * message string-error on anything unsafe so a typo can never become a trade.
  */
 export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
-  const strategy: Strategy = input.strategy === "metals" ? "metals" : "crypto";
-  const d = defaultBotConfig(strategy);
+  // "strategy" only picks the starting values (crypto or metals defaults); every bot can trade and check any asset, and which label it keeps follows its trade asset
+  const startFrom: Strategy = input.strategy === "metals" ? "metals" : "crypto";
+  const d = defaultBotConfig(startFrom);
   const num = (v: unknown, def: number) => (typeof v === "number" && Number.isFinite(v) ? v : def);
   const bool = (v: unknown, def: boolean) => (typeof v === "boolean" ? v : def);
-  const universe: readonly string[] = strategy === "crypto" ? CRYPTO_ASSETS : METAL_ASSETS;
+  const universe: readonly string[] = [...CRYPTO_ASSETS, ...METAL_ASSETS];
   const assets = (Array.isArray(input.assets) ? input.assets : d.assets).map((a) => String(a).toUpperCase());
-  for (const a of assets) if (!universe.includes(a)) throw new Error(`Asset ${a} is not valid for the ${strategy} strategy`);
+  for (const a of assets) if (!universe.includes(a)) throw new Error(`Asset ${a} is not a tradable asset`);
   const uniq = [...new Set(assets)];
   if (uniq.length === 0) throw new Error("Select at least one asset");
-  const tradeAsset = String(input.tradeAsset ?? (strategy === "metals" ? "GOLD" : uniq.includes("BTC") ? "BTC" : uniq[0])).toUpperCase();
+  const tradeAsset = String(input.tradeAsset ?? (startFrom === "metals" ? "GOLD" : uniq.includes("BTC") ? "BTC" : uniq[0])).toUpperCase();
+  const strategy: Strategy = (METAL_ASSETS as readonly string[]).includes(tradeAsset) ? "metals" : "crypto";
   if (!uniq.includes(tradeAsset)) throw new Error(`The asset to trade (${tradeAsset}) must also be one of the selected assets`);
 
   const betSide: BetSide = input.betSide === "underdog" ? "underdog" : "favorite";
@@ -189,7 +191,8 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     // the old "hourly" choice no longer exists (the AI overview is daily now), so saved hourly bots become daily
     notify: (input.notify as string) === "hourly" ? "daily" : (["immediate", "daily", "off"] as const).includes(input.notify as NotifyMode) ? (input.notify as NotifyMode) : d.notify,
   };
-  if (strategy === "metals") cfg.agreeCount = cfg.assets.length; // every checked metal must agree
+  // older metals bots (and new ones that give no number) keep "every checked asset must agree"; 0 means do not check agreement at all
+  if (startFrom === "metals" && input.agreeCount === undefined) cfg.agreeCount = cfg.assets.length;
   if (cfg.entryRule === "edge") {
     if (!(cfg.minEdge >= 0 && cfg.minEdge <= 0.5)) throw new Error("Minimum edge must be between $0.00 and $0.50 per contract");
     if (!(cfg.edgeMinSamples >= 20 && cfg.edgeMinSamples <= 100000)) throw new Error("Contracts needed behind a win rate must be at least 20");
@@ -206,8 +209,8 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
   if (cfg.timeDelaySec < 0 || cfg.timeDelaySec > (cfg.durationMin - 1) * 60) {
     throw new Error(`Time Delay must be between 0 and ${cfg.durationMin - 1} minutes for ${cfg.durationMin}-minute contracts`);
   }
-  if (strategy === "crypto" && cfg.entryRule !== "edge" && (cfg.agreeCount < 1 || cfg.agreeCount > cfg.assets.length)) {
-    throw new Error(`Directional agreement must be between 1 and the number of selected assets (${cfg.assets.length})`);
+  if (cfg.entryRule !== "edge" && (cfg.agreeCount < 0 || cfg.agreeCount > cfg.assets.length)) {
+    throw new Error(`Assets that must agree must be between 0 (do not check) and the number of selected assets (${cfg.assets.length})`);
   }
   if (cfg.minRemainingSec < 0 || cfg.minRemainingSec >= cfg.durationMin * 60) throw new Error("Minimum remaining time is out of range");
   if (cfg.tradeAmount < MIN_TRADE_AMOUNT) {

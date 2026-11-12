@@ -425,6 +425,18 @@ try {
     await page.locator("label:text('Entry rule')").locator("..").locator("select").selectOption("edge");
     const after = { side: await vis("Side to bet"), prob: await vis("Probability threshold (%)"), money: await vis("Use money on each side"), edge: await vis("Edge rule: minimum edge (cents per contract, after fees)"), spread: await vis("Max spread allowed ($)") };
     ok("choosing the Edge rule hides the side, probability and money-rule fields and shows the edge fields", before.side && before.prob && !before.edge && !after.side && !after.prob && !after.money && after.edge && after.spread, JSON.stringify({ before, after }));
+    // one New bot button; any asset from a single list: metals first (A to Z), then cryptocurrencies (A to Z); agreement is a number, 0 = off
+    await page.click("nav >> text=Bots");
+    ok("there is one New bot button (no separate crypto and metals buttons)", (await page.locator("button:text-is('+ New bot')").count()) === 1 && (await page.locator("button:text('New crypto bot')").count()) === 0);
+    await page.click("button:text-is('+ New bot')");
+    await page.waitForSelector("label:text-is('Asset to trade')", { timeout: 15000 });
+    const list = await page.locator("label:text-is('Asset to trade')").locator("..").locator("select").evaluate((sel) => [...sel.querySelectorAll("optgroup")].map((g) => ({ group: g.label, options: [...g.querySelectorAll("option")].map((o) => o.value) })));
+    const sorted = (a) => a.every((v, i) => i === 0 || a[i - 1] <= v);
+    ok("the asset list shows Metals first and Cryptocurrencies second, each in alphabetical order", list.length === 2 && list[0].group === "Metals" && list[1].group === "Cryptocurrencies" && list[0].options.length === 5 && list[1].options.length === 12 && sorted(list[0].options) && sorted(list[1].options), JSON.stringify(list));
+    const agreeVisible = await page.locator("label:text('Assets that must agree (0 = do not check)')").first().isVisible();
+    const agreeValue = await page.locator("label:text('Assets that must agree (0 = do not check)')").locator("..").locator("input").inputValue();
+    ok("agreement is optional for every bot: the number starts at 0 (off) for a new bot", agreeVisible && agreeValue === "0", agreeValue);
+    await page.click("button:text-is('Cancel')");
     // Backtest tab: every live setting can be changed in a comparison
     await page.click("nav >> text=Backtest");
     await page.waitForSelector("text=Comparison 1", { timeout: 15000 });
