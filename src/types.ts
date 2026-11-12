@@ -21,12 +21,17 @@ export type Strategy = "crypto" | "metals";
 export type NotifyMode = "immediate" | "daily" | "off";
 /** favorite = buy the side the market leans toward; underdog = buy the other (low-probability) side. The probability range always applies to the side being bought. */
 export type BetSide = "favorite" | "underdog";
+/** range = buy when the probability is inside the owner's range (the original rule); edge = buy when history says the price is wrong by at least the minimum edge. */
+export type EntryRule = "range" | "edge";
 
 export interface BotConfig {
   strategy: Strategy;
   assets: string[]; // compared for direction agreement (confirmation only)
   tradeAsset: string; // the ONE asset this bot actually trades; must be one of `assets`
   durationMin: number;
+  entryRule: EntryRule;
+  minEdge: number; // edge rule: smallest edge (dollars per contract, after fees) worth buying, for example 0.03
+  edgeMinSamples: number; // edge rule: contracts that must back the win rate before it is trusted
   betSide: BetSide;
   probThreshold: number; // 0..1, minimum probability to enter (of the side being bought)
   probMax: number; // 0..1, do NOT enter above this probability (1 = no upper limit)
@@ -104,6 +109,9 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     assets: strategy === "crypto" ? [...DEFAULT_CRYPTO_ASSETS] : ["GOLD", "SILVER"],
     tradeAsset: strategy === "crypto" ? "BTC" : "GOLD",
     durationMin: 15,
+    entryRule: "range",
+    minEdge: 0.03,
+    edgeMinSamples: 100,
     betSide: "favorite",
     probThreshold: 0.8,
     probMax: 1,
@@ -153,6 +161,9 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     assets: uniq,
     tradeAsset,
     durationMin: Math.max(1, Math.round(num(input.durationMin, d.durationMin))),
+    entryRule: input.entryRule === "edge" ? "edge" : "range",
+    minEdge: num(input.minEdge, d.minEdge),
+    edgeMinSamples: Math.round(num(input.edgeMinSamples, d.edgeMinSamples)),
     betSide,
     probThreshold: num(input.probThreshold, lowDefaults.probThreshold),
     probMax: num(input.probMax, lowDefaults.probMax),
@@ -177,7 +188,13 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     notify: (input.notify as string) === "hourly" ? "daily" : (["immediate", "daily", "off"] as const).includes(input.notify as NotifyMode) ? (input.notify as NotifyMode) : d.notify,
   };
   if (strategy === "metals") cfg.agreeCount = cfg.assets.length; // every checked metal must agree
-  if (cfg.betSide === "underdog") {
+  if (cfg.entryRule === "edge") {
+    if (!(cfg.minEdge >= 0 && cfg.minEdge <= 0.5)) throw new Error("Minimum edge must be between $0.00 and $0.50 per contract");
+    if (!(cfg.edgeMinSamples >= 20 && cfg.edgeMinSamples <= 100000)) throw new Error("Contracts needed behind a win rate must be at least 20");
+  }
+  if (cfg.entryRule === "edge") {
+    // the edge rule picks its own side from history, so the probability range is not used
+  } else if (cfg.betSide === "underdog") {
     if (!(cfg.probThreshold > 0 && cfg.probThreshold < 0.5)) throw new Error("For the low-probability side, the minimum probability must be above 0% and below 50%");
     if (!(cfg.probMax > cfg.probThreshold && cfg.probMax <= 0.5)) throw new Error("For the low-probability side, the maximum probability must be above the minimum and no more than 50%");
   } else {
@@ -187,7 +204,7 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
   if (cfg.timeDelaySec < 0 || cfg.timeDelaySec > (cfg.durationMin - 1) * 60) {
     throw new Error(`Time Delay must be between 0 and ${cfg.durationMin - 1} minutes for ${cfg.durationMin}-minute contracts`);
   }
-  if (strategy === "crypto" && (cfg.agreeCount < 1 || cfg.agreeCount > cfg.assets.length)) {
+  if (strategy === "crypto" && cfg.entryRule !== "edge" && (cfg.agreeCount < 1 || cfg.agreeCount > cfg.assets.length)) {
     throw new Error(`Directional agreement must be between 1 and the number of selected assets (${cfg.assets.length})`);
   }
   if (cfg.minRemainingSec < 0 || cfg.minRemainingSec >= cfg.durationMin * 60) throw new Error("Minimum remaining time is out of range");

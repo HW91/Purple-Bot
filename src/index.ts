@@ -5,6 +5,7 @@ import { deleteSetting, getAccountLimits, getCreds, getSetting, loadBots, log, r
 import { askAI } from "./notify";
 import { computePerformance } from "./stats";
 import { dayStartMs } from "./strategy";
+import { BUCKETS, sideEdges } from "./edge";
 import { buildDayStats, buildTradeFiles, describeTrades, etDateString, runOverview } from "./analysis";
 import { KALSHI_RULES_PROMPT } from "./kalshi-rules";
 import { aggregateTrades, attachMarketProb } from "./volume";
@@ -349,6 +350,28 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
   // How the market and your trades behave by hour of day (US Eastern), from what this bot has recorded.
   // "Reached 80%+" = in the tradeable part of a contract (after 5 min, before the last 2 min) either side reached 80%.
   // "Reversed" = that side then LOST at settlement. A high reversal rate at some hours means the 80% signal was less reliable then.
+  // Edge report: for each price level, how often contracts priced like that really settled YES (learned from the bot's recorded history)
+  if (path === "/api/calibration" && m === "GET") {
+    const asset = (url.searchParams.get("asset") ?? "").toUpperCase();
+    const [from, to] = (url.searchParams.get("minutes") ?? "0-14").split("-").map((x) => Math.max(0, Math.min(14, Number(x) || 0)));
+    const rows = (
+      await env.DB.prepare("SELECT bucket, SUM(n) n, SUM(yes_wins) w FROM calibration WHERE asset = ? AND minute_left >= ? AND minute_left <= ? GROUP BY bucket ORDER BY bucket DESC")
+        .bind(asset, Math.min(from, to), Math.max(from, to))
+        .all<{ bucket: number; n: number; w: number }>()
+    ).results;
+    const contracts = await env.DB.prepare("SELECT COUNT(*) c FROM markets WHERE asset = ? AND calibrated = 1").bind(asset).first<{ c: number }>();
+    const waiting = await env.DB.prepare("SELECT COUNT(*) c FROM markets WHERE asset = ? AND calibrated = 0 AND result IN ('yes','no')").bind(asset).first<{ c: number }>();
+    return json({
+      asset,
+      contractsCounted: contracts?.c ?? 0,
+      contractsWaiting: waiting?.c ?? 0,
+      rows: rows.map((r) => {
+        const mid = (r.bucket + 0.5) / BUCKETS;
+        const e = sideEdges({ n: r.n, yesWins: r.w }, mid, mid); // priced at the middle of the range, before any spread
+        return { from: r.bucket / BUCKETS, to: (r.bucket + 1) / BUCKETS, n: r.n, yesWinRate: r.n ? r.w / r.n : null, edgeYes: Math.round(e.yes.edge * 1000) / 1000, edgeNo: Math.round(e.no.edge * 1000) / 1000 };
+      }),
+    });
+  }
   if (path === "/api/hours" && m === "GET") {
     const days = Math.min(Math.max(Number(url.searchParams.get("days") ?? 7) || 7, 1), 30);
     const asset = (url.searchParams.get("asset") ?? "").toUpperCase();
@@ -564,6 +587,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       } catch (e) {
         return { label: v.label, error: (e as Error).message };
       }
+      if (cfg.entryRule === "edge") return { label: v.label, error: "The edge rule cannot be backtested yet: it learns from the same recorded history the test would replay, so the result would look better than it is. Use the Edge report on the Trades tab instead." };
       return { label: v.label, overrides: v.overrides, report: simulate(cfg, markets, obs, { feePerContract: feePer, slippage: 0.01 }, flowMap) };
     });
     const id = uid();

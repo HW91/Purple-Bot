@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { checklistFor } from "../src/checklist";
+import { bucketOf, minuteLeftOf, feePerContract, wilson, samplesFromObs, type EdgeLookup } from "../src/edge";
 import { FlowTracker, flowPasses } from "../src/flow";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
@@ -243,6 +244,68 @@ describe("crypto entry", () => {
     expect(three.tradesWorseOff).toBe(1);
     // a trade with no price recorded near that moment is left out, never guessed
     expect(exitEarlyHindsight([trades[0]], new Map(), 0.02).options[0].tradesCompared).toBe(0);
+  });
+
+  it("edge rule: buys the side whose cautious win rate beats price plus fee, and only with enough history", () => {
+    const edgeCfg = { ...cfg, entryRule: "edge" as const, assets: ["BTC"], agreeCount: 1, tradeAsset: "BTC", minEdge: 0.03, edgeMinSamples: 100 };
+    const v = [{ asset: "BTC", market: mk("BTC"), quote: q(mk("BTC").ticker, 0.83, 0.85, now) }]; // YES mid 84%
+    const look = (n: number, yesWins: number): EdgeLookup => (asset, minuteLeft, bucket) => (asset === "BTC" && bucket === bucketOf(0.84) && minuteLeft === minuteLeftOf(mk("BTC").closeTs, now) ? { n, yesWins } : null);
+    // 500 contracts priced like this, 495 settled YES (99%): buying YES at 85% has a large edge
+    const yes = evaluateEntry(edgeCfg, v, now, look(500, 495));
+    expect(yes.ok).toBe(true);
+    expect(yes.trade).toMatchObject({ outcome: "yes", orderSide: "bid", orderPrice: 0.85 });
+    // only 40 contracts: not trusted
+    const few = evaluateEntry(edgeCfg, v, now, look(40, 40));
+    expect(few.ok).toBe(false);
+    expect(few.code).toBe("edge");
+    expect(few.reason).toMatch(/Not enough history.*40 contracts \(need 100\)/);
+    // history says 84% win rate, the same as the price: no edge once the fee and the cautious range are counted
+    const none = evaluateEntry(edgeCfg, v, now, look(500, 420));
+    expect(none.ok).toBe(false);
+    expect(none.reason).toMatch(/No edge/);
+    // history says contracts like this almost always settle NO: the edge is on NO (buy NO at 1 - bid = 17 cents)
+    const no = evaluateEntry(edgeCfg, v, now, look(500, 5));
+    expect(no.trade).toMatchObject({ outcome: "no", orderSide: "ask", orderPrice: 0.83 });
+    // no history table at all
+    expect(evaluateEntry(edgeCfg, v, now).code).toBe("edge");
+    // the checklist shows the history and the edge, built from the bot's own settings
+    const lines = checklistFor(edgeCfg, v, now, look(500, 495));
+    expect(lines.find((c) => c.key === "history")).toMatchObject({ ok: true });
+    expect(lines.find((c) => c.key === "edge")).toMatchObject({ ok: true });
+    expect(lines.find((c) => c.key === "edge")?.text).toMatch(/need 3\.0/);
+    expect(checklistFor(edgeCfg, v, now, look(40, 40)).find((c) => c.key === "edge")?.ok).toBeNull();
+    // the standard rule is untouched
+    expect(evaluateEntry(cfg, ASSETS.map((a, i) => (i < 7 ? view(a, i === 0 ? 0.83 : 0.6, i === 0 ? 0.85 : 0.62, now) : view(a, 0.4, 0.42, now))), now).ok).toBe(true);
+    // validation: the edge rule works with a single asset and checks its own numbers
+    expect(validateBotConfig({ strategy: "crypto", entryRule: "edge", assets: ["BTC"], tradeAsset: "BTC" })).toMatchObject({ entryRule: "edge", minEdge: 0.03, edgeMinSamples: 100 });
+    expect(() => validateBotConfig({ strategy: "crypto", entryRule: "edge", assets: ["BTC"], minEdge: 0.9 })).toThrow(/Minimum edge/);
+    expect(() => validateBotConfig({ strategy: "crypto", entryRule: "edge", assets: ["BTC"], edgeMinSamples: 5 })).toThrow(/at least 20/);
+    expect(validateBotConfig({ strategy: "crypto" }).entryRule).toBe("range");
+  });
+
+  it("edge maths: buckets, minutes, Wilson range, fee, and one sample per minute of a contract", () => {
+    expect(bucketOf(0.84)).toBe(33);
+    expect(bucketOf(1)).toBe(39);
+    expect(bucketOf(0)).toBe(0);
+    expect(minuteLeftOf(10 * 60_000, 3 * 60_000 + 1)).toBe(6);
+    expect(minuteLeftOf(10 * 60_000, 9.9 * 60_000)).toBe(0);
+    expect(feePerContract(0.5)).toBeCloseTo(0.0175, 10);
+    expect(feePerContract(0.055)).toBeCloseTo(0.00363825, 8); // Kalshi's own fee example
+    const w = wilson(95, 100);
+    expect(w.lo).toBeLessThan(0.95);
+    expect(w.hi).toBeGreaterThan(0.95);
+    expect(wilson(0, 0)).toEqual({ lo: 0, hi: 1 });
+    expect(wilson(500, 1000).lo).toBeGreaterThan(wilson(5, 10).lo); // more contracts, tighter range
+    // the last recorded price in each minute is the sample for that minute
+    const CLOSE = 20 * 60_000;
+    const samples = samplesFromObs([
+      { ts: CLOSE - 125_000, bid: 0.5, ask: 0.52 }, // 2 min left
+      { ts: CLOSE - 100_000, bid: 0.8, ask: 0.82 }, // still 1 min left bucket (1 min 40 s)
+      { ts: CLOSE - 70_000, bid: 0.9, ask: 0.92 }, // 1 min left: the last one in this minute wins
+      { ts: CLOSE - 5_000, bid: 0.97, ask: 0.99 }, // 0 min left
+      { ts: CLOSE + 1_000, bid: 0.5, ask: 0.5 }, // after the close: ignored
+    ], CLOSE);
+    expect(samples.sort((a, b) => a.minuteLeft - b.minuteLeft)).toEqual([{ minuteLeft: 0, bucket: 39 }, { minuteLeft: 1, bucket: bucketOf(0.91) }, { minuteLeft: 2, bucket: bucketOf(0.51) }]);
   });
 
   it("trade files: prices are compacted to [seconds from entry, bid, ask] and the saved checklist is readable", () => {

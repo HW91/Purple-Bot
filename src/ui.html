@@ -325,7 +325,7 @@ function vBots(){
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
       h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}})),
       h('div',{class:'row',style:'margin-top:10px'},botButtons(b,load)),
-      h('div',{class:'mute',text:(b.config.betSide==='underdog'?'Low-probability side · ':'')+'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')+(b.config.noTradeWindows&&b.config.noTradeWindows.length?' · '+b.config.noTradeWindows.length+' no-trade window(s)':'')+(b.config.flowOn?' · money ratio ≥ '+b.config.flowRatio+' ('+(b.config.flowWindowMin>0?'last '+b.config.flowWindowMin+' min':'whole contract')+')':'')})));
+      h('div',{class:'mute',text:(b.config.entryRule==='edge'?'Edge rule: min '+(b.config.minEdge*100).toFixed(1)+'¢ per contract, '+b.config.edgeMinSamples+' contracts needed':(b.config.betSide==='underdog'?'Low-probability side · ':'')+'Prob '+(b.config.probMax<1?pct(b.config.probThreshold)+' to '+pct(b.config.probMax):'≥ '+pct(b.config.probThreshold)))+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')+(b.config.noTradeWindows&&b.config.noTradeWindows.length?' · '+b.config.noTradeWindows.length+' no-trade window(s)':'')+(b.config.flowOn?' · money ratio ≥ '+b.config.flowRatio+' ('+(b.config.flowWindowMin>0?'last '+b.config.flowWindowMin+' min':'whole contract')+')':'')})));
   })})}
   function field(label,input,hint){return h('div',null,h('label',{text:label}),input,hint?h('small',{text:hint,style:'display:block;margin-top:2px'}):null)}
   function editBot(b,strategy){
@@ -337,6 +337,7 @@ function vBots(){
       function num(k,mult,step){return inp[k]=h('input',{type:'number',step:step||'any',value:+(cfg[k]*(mult||1)).toFixed(4),style:'width:110px'})}
       function chk(k){return inp[k]=h('input',{type:'checkbox'});}
       var assets=(s==='crypto'?CRYPTO:METALS).map(function(a){var cb=h('input',{type:'checkbox','data-a':a});cb.checked=cfg.assets.indexOf(a)>=0;return h('label',{class:'chk'},cb,a)});
+      var ruleSel=h('select',null,[['range','Probability range (the original rule)'],['edge','Edge: price vs history']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.entryRule||'range')===o[0])op.selected=true;return op}));
       var sideSel=h('select',null,[['favorite','Favorite (the side the market leans toward)'],['underdog','Low-probability side (the cheap side)']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.betSide||'favorite')===o[0])op.selected=true;return op}));
       var tradeSel=h('select',null,(s==='crypto'?CRYPTO:METALS).map(function(a){var op=h('option',{value:a,text:a});if(cfg.tradeAsset===a)op.selected=true;return op}));
       var fl=chk('flowOn');fl.checked=!!cfg.flowOn;
@@ -346,6 +347,9 @@ function vBots(){
       f.appendChild(h('div',{class:'grid'},
         field('Name',name),
         field('Asset to trade',tradeSel,'The only asset this bot buys. The other checked assets only confirm the direction.'),
+        field('Entry rule',ruleSel,'Probability range buys when the probability is inside your range. Edge buys the side whose real win rate, learned from this app\'s own recorded history, beats its price plus fee by your minimum edge. With Edge, the side and probability range below are not used; the Edge report on the Trades tab shows what the history says.'),
+        field('Edge rule: minimum edge (cents per contract, after fees)',num('minEdge',100,0.1)),
+        field('Edge rule: contracts needed behind a win rate',num('edgeMinSamples',1,1),'The win rate is only trusted when at least this many contracts were counted at that price and time.'),
         field('Side to bet',sideSel,'Favorite buys the side the market leans toward. Low-probability buys the other, cheap side. The probability range below applies to the side being bought (for example 3% to 7% for the low side).'),
         field('Probability threshold (%)',num('probThreshold',100,1)),
         field('Maximum probability to enter (%)',num('probMax',100,1),'Skips the trade if the probability, or the price you would pay, is above this. 100 means no limit.'),
@@ -378,8 +382,9 @@ function vBots(){
       f.appendChild(h('div',{style:'margin-top:14px'},h('label',{text:'No-trade windows (US Eastern time)'}),h('small',{text:'The bot opens no new trades between these times, every day. Open positions are still managed. A window can run past midnight (for example 10:00 PM to 1:00 AM).',style:'display:block;margin-bottom:6px'}),winBox,h('button',{class:'btn gray',text:'+ Add window',onclick:function(){addWin(null)}})));
       f.appendChild(h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){
         var out={strategy:s,durationMin:cfg.durationMin};
-        ['probThreshold','probMax'].forEach(function(k){out[k]=+inp[k].value/100});
-        ['agreeCount','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
+        ['probThreshold','probMax','minEdge'].forEach(function(k){out[k]=+inp[k].value/100});
+        out.entryRule=ruleSel.value;
+        ['agreeCount','edgeMinSamples','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
         out.betSide=sideSel.value;
         out.flowOn=fl.checked;
         out.noTradeWindows=[].slice.call(winBox.children).map(function(r){return {start:r._s.value,end:r._e.value}}).filter(function(w){return w.start||w.end});
@@ -415,6 +420,28 @@ function hoursCard(){
   days.addEventListener('change',load);asset.addEventListener('change',load);load();
   return h('div',{class:'card'},h('h2',{text:'Time of day (US Eastern)'}),h('div',{class:'row'},days,asset),body);
 }
+// Edge report: how often contracts at each price level really settled YES, and what that means for buying either side (from the bot's recorded history)
+function edgeCard(){
+  var asset=h('select',null,CRYPTO.concat(METALS).map(function(a){return h('option',{value:a,text:a})}));
+  asset.value='GOLD';
+  var mins=h('select',null,[['0-14','Whole contract'],['10-14','Early (10-14 min left)'],['6-9','Middle (6-9 min left)'],['3-5','Late (3-5 min left)'],['0-2','Last 3 minutes']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
+  var body=h('div');
+  function cents(x){return (x>0?'+':'')+(x*100).toFixed(1)+'¢'}
+  function load(){
+    body.textContent='Loading…';
+    api('/calibration?asset='+asset.value+'&minutes='+mins.value).then(function(r){
+      body.textContent='';
+      body.appendChild(h('p',{class:'mute',text:r.contractsCounted+' settled '+r.asset+' contracts counted so far'+(r.contractsWaiting?' ('+r.contractsWaiting+' more are being counted in the background)':'')+'.'}));
+      if(!r.rows.length){body.appendChild(h('div',{class:'mute',text:'Nothing counted yet for this asset. Contracts are counted after they settle, while a bot or the dashboard is running.'}));return}
+      function cell(n,e){return n<30?h('td',{class:'mute',text:'—'}):h('td',{class:e>0?'g':e<0?'r':'',text:cents(e)})}
+      body.appendChild(h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['YES price','Contracts','Settled YES','Edge buying YES','Edge buying NO'].map(function(x){return h('th',{text:x})}))),
+        h('tbody',null,r.rows.map(function(x){return h('tr',null,h('td',{text:Math.round(x.from*1000)/10+'% – '+Math.round(x.to*1000)/10+'%'}),h('td',{text:x.n}),h('td',{text:x.yesWinRate==null?'—':(x.yesWinRate*100).toFixed(0)+'%'}),cell(x.n,x.edgeYes),cell(x.n,x.edgeNo))})))));
+      body.appendChild(h('small',{style:'display:block;margin-top:6px',text:'Edge = how often that side really won (the cautious end of the range, because small counts mislead) minus the price at the middle of the range and the fee, in cents per contract, before any spread. Rows with fewer than 30 contracts show a dash. A few cents of edge needs hundreds of contracts before it means anything.'}));
+    }).catch(function(e){body.textContent=e.message});
+  }
+  asset.addEventListener('change',load);mins.addEventListener('change',load);load();
+  return h('div',{class:'card'},h('h2',{text:'Edge report: price vs how often it won'}),h('div',{class:'row'},asset,mins),body);
+}
 function vTrades(){
   var root=$('#main');
   var sel=h('select',null,h('option',{value:'',text:'All bots'}));
@@ -422,7 +449,7 @@ function vTrades(){
   api('/bots').then(function(b){b.forEach(function(x){sel.appendChild(h('option',{value:x.id,text:x.name}))})});
   sel.addEventListener('change',loadPerf);
   root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('label',{text:'Performance for'}),sel));
-  root.appendChild(hoursCard());root.appendChild(perf);root.appendChild(open);root.appendChild(hist);
+  root.appendChild(hoursCard());root.appendChild(edgeCard());root.appendChild(perf);root.appendChild(open);root.appendChild(hist);
   function grp(title,g){return h('div',{class:'card'},h('h2',{text:title}),h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['','Trades','Wins','Losses','Win rate','P/L'].map(function(x){return h('th',{text:x})}))),h('tbody',null,g.length?g.map(function(x){return h('tr',null,h('td',{text:x.key}),h('td',{text:x.trades}),h('td',{text:x.wins}),h('td',{text:x.losses}),h('td',{text:x.winRate==null?'—':(x.winRate*100).toFixed(0)+'%'}),h('td',{class:pnlCls(x.pnl),text:usd(x.pnl)}))}):[h('tr',null,h('td',{colspan:6,class:'mute',text:'No data yet'}))]))))}
   function loadPerf(){api('/performance'+(sel.value?'?bot='+sel.value:'')).then(function(p){
     perf.textContent='';

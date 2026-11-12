@@ -13,6 +13,7 @@ import { emailShell, esc, sendEmail } from "./notify";
 import { etDateString, overviewEmail, runOverview } from "./analysis";
 import { checklistFor, type CheckLine } from "./checklist";
 import { FlowTracker } from "./flow";
+import { samplesFromObs, type Cell, type EdgeLookup } from "./edge";
 import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
 
@@ -89,6 +90,9 @@ export class Engine extends DurableObject<Env> {
   private flow = new FlowTracker();
   private flowLoading = new Set<string>();
   private flowIncomplete = new Set<string>();
+  // the edge rule's history: for each asset, win counts by minute-before-close and price level (refreshed every minute)
+  private edgeCache = new Map<string, { at: number; cells: Map<number, Cell> }>();
+  private edgeLookup: EdgeLookup = (asset, minuteLeft, bucket) => this.edgeCache.get(asset)?.cells.get(minuteLeft * 100 + bucket) ?? null;
   private flowMeta = new Map<string, { asset: string; openTs: number; closeTs: number }>(); // contracts being recorded, until they end
   private downSince: number | null = null;
   private restFallback = false;
@@ -210,10 +214,12 @@ export class Engine extends DurableObject<Env> {
       await this.refreshBalanceIfStale();
       // Check entries on the clock too, not only when a price message arrives: the Time Delay can
       // pass, or a quiet market can sit still, with no new message to trigger a check.
+      await this.refreshEdgeTables(); // the edge rule needs its history loaded before it is asked
       await this.evaluateAllEntries();
       await this.flush();
       await this.checkSettlements();
       await this.backfillResults();
+      await this.calibrateSettled();
       await this.processCloseRequests();
       await this.dailyJobs();
     } catch (e) {
@@ -703,7 +709,7 @@ export class Engine extends DurableObject<Env> {
     const now = Date.now();
     for (const bot of this.bots) {
       if (!bot.enabled) continue;
-      const d = evaluateEntry(bot.config, this.viewsFor(bot, now), now);
+      const d = evaluateEntry(bot.config, this.viewsFor(bot, now), now, this.edgeLookup);
       this.noteReason(bot, d, now);
       if (d.ok && d.trade) await this.attemptEntry(bot, d, now);
     }
@@ -715,7 +721,7 @@ export class Engine extends DurableObject<Env> {
     const now = Date.now();
     for (const bot of this.bots) {
       if (!bot.enabled || !bot.config.assets.includes(m.asset)) continue;
-      const d = evaluateEntry(bot.config, this.viewsFor(bot, now), now);
+      const d = evaluateEntry(bot.config, this.viewsFor(bot, now), now, this.edgeLookup);
       this.noteReason(bot, d, now);
       if (d.ok && d.trade) await this.attemptEntry(bot, d, now);
     }
@@ -732,7 +738,7 @@ export class Engine extends DurableObject<Env> {
     n.last = now;
     // the checklist: every requirement as it is right now (the risk line is only known once the engine has tested the limits)
     const prevRisk = n.checks?.find((c) => c.key === "risk") ?? null;
-    n.checks = checklistFor(bot.config, this.viewsFor(bot, now), now).map((c) => (c.key !== "risk" ? c : d.code === "risk" ? { key: "risk", ok: false, text: d.reason.slice(0, 200) } : d.ok && prevRisk ? prevRisk : c));
+    n.checks = checklistFor(bot.config, this.viewsFor(bot, now), now, this.edgeLookup).map((c) => (c.key !== "risk" ? c : d.code === "risk" ? { key: "risk", ok: false, text: d.reason.slice(0, 200) } : d.ok && prevRisk ? prevRisk : c));
     n.dirty = true;
     this.notes.set(key, n);
     if (now - m.openTs < bot.config.timeDelaySec * 1000) return; // the "how often" counts only start after the Time Delay
@@ -1086,6 +1092,31 @@ export class Engine extends DurableObject<Env> {
    * trades we exited early (stop loss / take profit) never learn how their contract finally settled, which breaks the
    * "would holding have won?" analysis, the reliability-by-hour numbers and backtests (they skip unsettled contracts).
    */
+  /** Count settled contracts into the history table the edge rule learns from: a few per tick, each exactly once, newest first. */
+  private async calibrateSettled(): Promise<void> {
+    const rows = (await this.env.DB.prepare("SELECT ticker, asset, close_ts, result FROM markets WHERE calibrated = 0 AND result IN ('yes','no') ORDER BY close_ts DESC LIMIT 6").all<{ ticker: string; asset: string; close_ts: number; result: string }>()).results ?? [];
+    for (const r of rows) {
+      const obs = (await this.env.DB.prepare("SELECT ts, yes_bid, yes_ask FROM observations WHERE ticker = ? AND ts < ? ORDER BY ts").bind(r.ticker, r.close_ts).all<{ ts: number; yes_bid: number; yes_ask: number }>()).results ?? [];
+      const samples = samplesFromObs(obs.map((o) => ({ ts: o.ts, bid: o.yes_bid, ask: o.yes_ask })), r.close_ts);
+      const up = this.env.DB.prepare("INSERT INTO calibration (asset, minute_left, bucket, n, yes_wins) VALUES (?,?,?,1,?) ON CONFLICT(asset, minute_left, bucket) DO UPDATE SET n = n + 1, yes_wins = yes_wins + excluded.yes_wins");
+      const stmts = samples.map((x) => up.bind(r.asset, x.minuteLeft, x.bucket, r.result === "yes" ? 1 : 0));
+      stmts.push(this.env.DB.prepare("UPDATE markets SET calibrated = 1 WHERE ticker = ?").bind(r.ticker));
+      await this.env.DB.batch(stmts);
+    }
+  }
+
+  /** Load the history table for every asset an enabled edge bot trades (cheap: at most 15 x 40 rows per asset, once a minute). */
+  private async refreshEdgeTables(): Promise<void> {
+    const now = Date.now();
+    const assets = new Set(this.bots.filter((b) => b.enabled && b.config.entryRule === "edge").map((b) => b.config.tradeAsset));
+    for (const asset of assets) {
+      const c = this.edgeCache.get(asset);
+      if (c && now - c.at < 60_000) continue;
+      const rows = (await this.env.DB.prepare("SELECT minute_left, bucket, n, yes_wins FROM calibration WHERE asset = ?").bind(asset).all<{ minute_left: number; bucket: number; n: number; yes_wins: number }>()).results ?? [];
+      this.edgeCache.set(asset, { at: now, cells: new Map(rows.map((r) => [r.minute_left * 100 + r.bucket, { n: r.n, yesWins: r.yes_wins }])) });
+    }
+  }
+
   private async backfillResults(): Promise<void> {
     if (!this.client) return;
     const now = Date.now();

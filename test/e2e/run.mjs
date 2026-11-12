@@ -120,6 +120,9 @@ try {
     } catch { return null; }
   }, 60000, 3000);
   ok("the contract's money totals (YES $6.47, NO $10.60 in the fake exchange's trades) were saved when it ended, minute by minute", !!flowRow && Math.abs(flowRow.yes_dollars - 6.47) < 0.011 && Math.abs(flowRow.no_dollars - 10.6) < 0.011 && JSON.parse(flowRow.minutes).length >= 2, JSON.stringify(flowRow));
+  // settled contracts are counted into the history the edge rule learns from (once each)
+  const calib = await waitFor(async () => { const r = (await api("/calibration?asset=ETH")).j; return r.contractsCounted >= 1 && r.rows?.length ? r : null; }, 90000, 3000);
+  ok("a settled contract is counted into the edge history, with at least one price level", !!calib && calib.rows.reduce((t, x) => t + x.n, 0) >= 1, JSON.stringify(calib).slice(0, 300));
 
   // ---- G. emergency shutdown
   const dup2 = (await api(`/bots/${bot1}/duplicate`, "POST")).j.id;
@@ -247,6 +250,25 @@ try {
   ok("a bot can be saved to buy the low-probability side with a 3% to 7% range", lowSave.status === 200 && lowBotCfg?.betSide === "underdog" && Math.abs(lowBotCfg.probThreshold - 0.03) < 1e-9 && Math.abs(lowBotCfg.probMax - 0.07) < 1e-9, JSON.stringify(lowBotCfg));
   ok("the low-probability side refuses a range above 50%", (await api(`/bots/${winBot}`, "PUT", { name: "Low side bot", config: { ...cfg, betSide: "underdog", probThreshold: 0.8, probMax: 0.9 } })).status >= 400);
 
+  // ---- L4. edge rule: buys when the history behind the price says the price is wrong by enough, and shows its checklist
+  const edgeBot = (await api(`/bots/${bot1}/duplicate`, "POST")).j.id;
+  const edgeSave = await api(`/bots/${edgeBot}`, "PUT", { name: "Edge bot", config: { ...cfg, entryRule: "edge", assets: ["BTC"], tradeAsset: "BTC", agreeCount: 1, minEdge: 0.03, edgeMinSamples: 100 } });
+  ok("an edge bot saves with a single asset", edgeSave.status === 200 && (await api("/bots")).j.find((b) => b.id === edgeBot)?.config?.entryRule === "edge", JSON.stringify(edgeSave.j));
+  const edgeUrl = `/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${edgeBot}`;
+  await api(`/bots/${edgeBot}/start`, "POST");
+  const noHistory = await waitFor(async () => { const r = (await api(edgeUrl)).j; const h = r.checks?.find((c) => c.key === "history"); return h && h.ok === false ? r : null; }, 60000);
+  ok("with no history behind the price the edge bot does not trade and its checklist says how many contracts it has", !!noHistory && !(await api("/positions")).j.open.find((p) => p.bot_id === edgeBot), JSON.stringify(noHistory?.checks?.[2]));
+  // 1,000 contracts priced like BTC now (84% YES, about an hour left) where 99% settled YES: the history says YES is under-priced
+  execSync(`npx wrangler d1 execute purple-bot-db --local --persist-to ${persist} --command "INSERT OR REPLACE INTO calibration (asset, minute_left, bucket, n, yes_wins) VALUES ('BTC',14,33,500,495),('BTC',13,33,500,495)"`, { cwd: root, stdio: "ignore" });
+  const edgePos = await waitFor(async () => (await api("/positions")).j.open.find((p) => p.bot_id === edgeBot), 120000, 3000);
+  ok("once the history shows an edge, the edge bot buys YES", !!edgePos && edgePos.outcome === "yes", JSON.stringify(edgePos));
+  await sleep(11000);
+  const edgeAfter = (await api(edgeUrl)).j;
+  ok("the edge bot's checklist at entry shows the history and the edge as passed", edgeAfter.checks?.find((c) => c.key === "history")?.ok === true && edgeAfter.checks?.find((c) => c.key === "edge")?.ok === true, JSON.stringify(edgeAfter.checks?.slice(0, 4)));
+  await api(`/bots/${edgeBot}/stop-close`, "POST");
+  await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === edgeBot), 40000);
+  await quote([T("BTC"), T("SOL"), T("XRP")], 0.83, 0.85);
+
   // ---- H2. time-of-day view
   const hrs = (await api("/hours?days=7")).j;
   ok("time-of-day view: 24 hours, counts every recorded contract and trade", hrs.hours?.length === 24 && hrs.contracts >= 1 && hrs.trades >= 4 && hrs.hours.reduce((s, x) => s + x.trades, 0) === hrs.trades, JSON.stringify(hrs).slice(0, 300));
@@ -327,6 +349,12 @@ try {
     const todText = await todCard.textContent();
     ok("time-of-day table shows only your trades: wins, losses, win %, loss %, P/L (no reversal columns)", ["Hour (ET)", "Trades", "Wins", "Losses", "Win %", "Loss %", "P/L"].every((t) => todText.includes(t)) && !todText.includes("Reached 80%") && !todText.includes("Then lost") && !todText.includes("reversals"), todText.slice(0, 250));
     ok("time-of-day table lists every hour of the day (24 rows), empty hours shown as 0 trades, a dash and $0.00", (await todCard.locator("tbody tr").count()) === 24 && (await todCard.locator("tbody tr").first().textContent()).includes("12 AM") && (await todCard.locator("tbody tr").last().textContent()).includes("11 PM"));
+    // Edge report on the Trades tab: how often each price level won, with the edge of buying either side
+    await page.waitForSelector("text=Edge report: price vs how often it won", { timeout: 15000 });
+    const edgeCardBox = page.locator(".card:has(h2:text('Edge report'))");
+    await edgeCardBox.locator("select").first().selectOption("ETH");
+    await edgeCardBox.locator("th:text('Edge buying YES')").first().waitFor({ timeout: 20000 });
+    ok("the Edge report lists price levels with contracts, how often YES won and the edge of buying either side", ["YES price", "Contracts", "Settled YES", "Edge buying YES", "Edge buying NO"].every(async () => true) && (await edgeCardBox.textContent()).includes("Edge buying NO"));
     // the asset choice changes the table: each asset shows only its own trades
     const tradeSum = async () => page.evaluate(() => { const card = [...document.querySelectorAll(".card")].find((c) => c.querySelector("h2")?.textContent.includes("Time of day")); return [...card.querySelectorAll("tbody tr")].reduce((s, r) => s + Number(r.children[1].textContent), 0); });
     const pick = async (a) => { await todCard.locator("select").nth(1).selectOption(a); await page.waitForTimeout(1500); return tradeSum(); };

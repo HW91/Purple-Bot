@@ -5,6 +5,7 @@
  */
 import { dollars0, flowPasses, flowRatioText } from "./flow";
 import { activeWindow, windowText } from "./windows";
+import { bucketOf, minuteLeftOf, pooled, sideEdges, type EdgeLookup } from "./edge";
 import { directionOf, favorableProb, QUOTE_MAX_AGE_MS, yesProb, type AssetView, type Direction } from "./strategy";
 import type { BotConfig } from "./types";
 
@@ -19,7 +20,65 @@ const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 /** A dollar amount exactly as set ($0.10, $2.50, $5), never rounded to whole dollars. */
 const amt = (x: number) => "$" + (Number.isInteger(x) ? String(x) : x.toFixed(2));
 
-export function checklistFor(cfg: BotConfig, views: AssetView[], now: number): CheckLine[] {
+/** The edge rule's checklist: the history behind the price, the edge itself, then the same practical checks as every bot. */
+function edgeChecklist(cfg: BotConfig, views: AssetView[], now: number, lookup?: EdgeLookup): CheckLine[] {
+  const out: CheckLine[] = [];
+  const line = (key: string, ok: boolean | null, text: string) => out.push({ key, ok, text });
+  if (cfg.noTradeWindows.length) {
+    const win = activeWindow(cfg.noTradeWindows, now);
+    line("window", win === null, win ? `Inside a no-trade window: ${windowText(win)}` : "Outside your no-trade windows");
+  }
+  const v = views.find((x) => x.asset === cfg.tradeAsset);
+  const q = v?.quote;
+  const m = v?.market;
+  const live = !!(v && m && q && now - q.ts <= QUOTE_MAX_AGE_MS && q.yesBid > 0 && q.yesAsk > 0 && q.yesAsk >= q.yesBid);
+  line("prices", live, live ? "Live prices available" : `No live price for ${cfg.tradeAsset}`);
+  const unknown = (key: string, text: string) => line(key, null, text);
+  if (!live || !q || !m) {
+    unknown("history", `History behind the price: at least ${cfg.edgeMinSamples} contracts`);
+    unknown("edge", `Edge at least ${(cfg.minEdge * 100).toFixed(1)} cents per contract after fees`);
+    unknown("delay", `Time Delay of ${cfg.timeDelaySec}s passed`);
+    unknown("timeLeft", `At least ${cfg.minRemainingSec}s left in the contract`);
+    unknown("spread", `Spread within ${pct(cfg.maxSpread)}`);
+    unknown("price", "Price not too extreme");
+    unknown("size", `Trade amount ${amt(cfg.tradeAmount)} buys at least 1 contract`);
+    unknown("liquidity", "Enough contracts available at the price");
+    unknown("risk", "Risk limits");
+    return out;
+  }
+  const mid = yesProb(q);
+  const minuteLeft = minuteLeftOf(m.closeTs, now);
+  const cell = lookup ? pooled(lookup, cfg.tradeAsset, minuteLeft, bucketOf(mid)) : { n: 0, yesWins: 0 };
+  const enough = cell.n >= cfg.edgeMinSamples;
+  line("history", enough, `${cell.n} contracts priced near ${pct(mid)} with about ${minuteLeft} min left (need ${cfg.edgeMinSamples})`);
+  const e = sideEdges(cell, q.yesBid, q.yesAsk);
+  const best = e.yes.edge >= e.no.edge ? e.yes : e.no;
+  if (!enough) {
+    unknown("edge", `Edge at least ${(cfg.minEdge * 100).toFixed(1)} cents per contract after fees (needs more history first)`);
+  } else {
+    const ok = best.edge >= cfg.minEdge;
+    line("edge", ok, `Best side ${best.side.toUpperCase()}: wins ${pct(best.winRate)} (cautious ${pct(best.winRateLow)}) vs price ${pct(best.price)} plus fee ${pct(best.fee)} = ${(best.edge * 100).toFixed(1)} cents (need ${(cfg.minEdge * 100).toFixed(1)})`);
+  }
+  const elapsed = (now - m.openTs) / 1000;
+  const remaining = (m.closeTs - now) / 1000;
+  line("delay", elapsed >= cfg.timeDelaySec, elapsed >= cfg.timeDelaySec ? "Time Delay passed" : `Time Delay: ${Math.ceil(cfg.timeDelaySec - elapsed)}s left`);
+  line("timeLeft", remaining >= cfg.minRemainingSec, remaining >= cfg.minRemainingSec ? `${Math.max(0, Math.floor(remaining))}s left in the contract` : `Only ${Math.max(0, Math.floor(remaining))}s left (need ${cfg.minRemainingSec}s)`);
+  const spread = q.yesAsk - q.yesBid;
+  const spreadOk = spread <= cfg.maxSpread + 1e-9;
+  line("spread", spreadOk, spreadOk ? `Spread ${pct(spread)} is within your ${pct(cfg.maxSpread)} limit` : `Spread ${pct(spread)} is wider than your ${pct(cfg.maxSpread)} limit`);
+  const cost = best.price;
+  const priceOk = cost > 0.01 && cost < 0.99;
+  line("price", priceOk, priceOk ? "Price not too extreme" : `Price ${cost.toFixed(2)} is too extreme to trade`);
+  const wanted = priceOk ? Math.floor(cfg.tradeAmount / cost) : 0;
+  line("size", wanted >= 1, wanted >= 1 ? `Trade amount ${amt(cfg.tradeAmount)} buys ${wanted} contract${wanted === 1 ? "" : "s"}` : `Trade amount ${amt(cfg.tradeAmount)} buys less than 1 contract`);
+  const depth = Math.floor(best.side === "yes" ? q.yesAskSize : q.yesBidSize);
+  line("liquidity", depth >= 1, depth >= 1 ? `${depth} contracts available at the price` : "No contracts available at the price");
+  unknown("risk", "Risk limits");
+  return out;
+}
+
+export function checklistFor(cfg: BotConfig, views: AssetView[], now: number, lookup?: EdgeLookup): CheckLine[] {
+  if (cfg.entryRule === "edge") return edgeChecklist(cfg, views, now, lookup);
   const fresh = views.filter((v) => v.market && v.quote && now - v.quote.ts <= QUOTE_MAX_AGE_MS && v.quote.yesBid > 0 && v.quote.yesAsk > 0 && v.quote.yesAsk >= v.quote.yesBid);
   const dirs = new Map<string, Direction | null>();
   let up = 0;
