@@ -80,3 +80,12 @@ export function sideEdges(cell: Cell, yesBid: number, yesAsk: number): { yes: Si
     no: { side: "no", price: noPrice, winRateLow: 1 - w.hi, winRate: 1 - pYes, fee: feePerContract(noPrice), edge: 1 - w.hi - noPrice - feePerContract(noPrice) },
   };
 }
+
+/** Is the price "even" with how often YES really won? Even = the price sits inside the win-rate range, so the gap could just be luck. */
+export function priceVerdict(cell: Cell, price: number, minContracts = 30): "too_few" | "even" | "yes_underpriced" | "yes_overpriced" {
+  if (cell.n < minContracts) return "too_few";
+  const w = wilson(cell.yesWins, cell.n);
+  if (price < w.lo) return "yes_underpriced";
+  if (price > w.hi) return "yes_overpriced";
+  return "even";
+}

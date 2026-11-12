@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { checklistFor } from "../src/checklist";
-import { bucketOf, minuteLeftOf, feePerContract, wilson, samplesFromObs, type EdgeLookup } from "../src/edge";
+import { bucketOf, minuteLeftOf, feePerContract, wilson, samplesFromObs, priceVerdict, type EdgeLookup } from "../src/edge";
 import { FlowTracker, flowPasses } from "../src/flow";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
@@ -284,6 +284,14 @@ describe("crypto entry", () => {
     expect(() => validateBotConfig({ strategy: "crypto", entryRule: "edge", assets: ["BTC"], minEdge: 0.9 })).toThrow(/Minimum edge/);
     expect(() => validateBotConfig({ strategy: "crypto", entryRule: "edge", assets: ["BTC"], edgeMinSamples: 5 })).toThrow(/at least 20/);
     expect(validateBotConfig({ strategy: "crypto" }).entryRule).toBe("range");
+  });
+
+  it("price verdict: even when the price sits inside the win-rate range, otherwise YES cheap or expensive, and too few below 30", () => {
+    expect(priceVerdict({ n: 10, yesWins: 10 }, 0.5)).toBe("too_few");
+    expect(priceVerdict({ n: 200, yesWins: 170 }, 0.85)).toBe("even"); // won 85%, priced 85%
+    expect(priceVerdict({ n: 200, yesWins: 172 }, 0.84)).toBe("even"); // a small gap is within luck
+    expect(priceVerdict({ n: 500, yesWins: 475 }, 0.85)).toBe("yes_underpriced"); // won 95% but priced 85%
+    expect(priceVerdict({ n: 500, yesWins: 380 }, 0.85)).toBe("yes_overpriced"); // won 76% but priced 85%
   });
 
   it("edge maths: buckets, minutes, Wilson range, fee, and one sample per minute of a contract", () => {

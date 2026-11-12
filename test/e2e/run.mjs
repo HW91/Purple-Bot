@@ -353,8 +353,12 @@ try {
     await page.waitForSelector("text=Edge report: price vs how often it won", { timeout: 15000 });
     const edgeCardBox = page.locator(".card:has(h2:text('Edge report'))");
     await edgeCardBox.locator("select").first().selectOption("ETH");
+    await edgeCardBox.locator("th:text('Verdict')").first().waitFor({ timeout: 20000 });
+    const evenText = await edgeCardBox.textContent();
+    ok("the Edge report opens on a table of price vs how often YES won, with a verdict per price level (Even, YES cheap, YES expensive or Too few)", ["YES price", "Contracts", "YES won", "Gap (won", "Verdict"].every((t) => evenText.includes(t)) && /(Even|YES cheap|YES expensive|Too few)/.test(evenText));
+    await edgeCardBox.locator("select").nth(2).selectOption("edge");
     await edgeCardBox.locator("th:text('Edge buying YES')").first().waitFor({ timeout: 20000 });
-    ok("the Edge report lists price levels with contracts, how often YES won and the edge of buying either side", ["YES price", "Contracts", "Settled YES", "Edge buying YES", "Edge buying NO"].every(async () => true) && (await edgeCardBox.textContent()).includes("Edge buying NO"));
+    ok("the other view shows the edge of buying YES or NO after fees", (await edgeCardBox.textContent()).includes("Edge buying NO"));
     // the asset choice changes the table: each asset shows only its own trades
     const tradeSum = async () => page.evaluate(() => { const card = [...document.querySelectorAll(".card")].find((c) => c.querySelector("h2")?.textContent.includes("Time of day")); return [...card.querySelectorAll("tbody tr")].reduce((s, r) => s + Number(r.children[1].textContent), 0); });
     const pick = async (a) => { await todCard.locator("select").nth(1).selectOption(a); await page.waitForTimeout(1500); return tradeSum(); };

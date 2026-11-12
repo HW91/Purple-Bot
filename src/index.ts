@@ -5,7 +5,7 @@ import { deleteSetting, getAccountLimits, getCreds, getSetting, loadBots, log, r
 import { askAI } from "./notify";
 import { computePerformance } from "./stats";
 import { dayStartMs } from "./strategy";
-import { BUCKETS, sideEdges } from "./edge";
+import { BUCKETS, priceVerdict, sideEdges } from "./edge";
 import { buildDayStats, buildTradeFiles, describeTrades, etDateString, runOverview } from "./analysis";
 import { KALSHI_RULES_PROMPT } from "./kalshi-rules";
 import { aggregateTrades, attachMarketProb } from "./volume";
@@ -368,7 +368,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       rows: rows.map((r) => {
         const mid = (r.bucket + 0.5) / BUCKETS;
         const e = sideEdges({ n: r.n, yesWins: r.w }, mid, mid); // priced at the middle of the range, before any spread
-        return { from: r.bucket / BUCKETS, to: (r.bucket + 1) / BUCKETS, n: r.n, yesWinRate: r.n ? r.w / r.n : null, edgeYes: Math.round(e.yes.edge * 1000) / 1000, edgeNo: Math.round(e.no.edge * 1000) / 1000 };
+        return { from: r.bucket / BUCKETS, to: (r.bucket + 1) / BUCKETS, n: r.n, yesWinRate: r.n ? r.w / r.n : null, gap: r.n ? Math.round((r.w / r.n - mid) * 1000) / 1000 : null, verdict: priceVerdict({ n: r.n, yesWins: r.w }, mid), edgeYes: Math.round(e.yes.edge * 1000) / 1000, edgeNo: Math.round(e.no.edge * 1000) / 1000 };
       }),
     });
   }
