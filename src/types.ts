@@ -52,6 +52,10 @@ export interface BotConfig {
   noTradeWindows: TimeWindow[]; // times of day (US Eastern) when no new trade is opened
   notify: NotifyMode;
   notifyEveryTrades: number; // send an email when the last this many finished trades were all wins, then again after this many new ones that all won (0 = off)
+  comboOn: boolean; // buy ONE Kalshi combo of the comboAssets (pays only if every pick wins) instead of a single contract
+  comboAssets: string[]; // the assets in the combo (two or more)
+  comboWindowMin: number; // every combo asset must have been inside the probability range at some point in the last this many minutes of the contract
+  comboMaxCost: number; // highest price per $1 of payout the bot will accept for the combo (0.96 = 96 cents)
 }
 
 export interface Bot {
@@ -131,6 +135,10 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     noTradeWindows: [],
     notify: "immediate",
     notifyEveryTrades: 0,
+    comboOn: false,
+    comboAssets: [],
+    comboWindowMin: 5,
+    comboMaxCost: 0.96,
   };
 }
 
@@ -192,7 +200,19 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     // the old "hourly" choice no longer exists (the AI overview is daily now), so saved hourly bots become daily
     notify: (input.notify as string) === "hourly" ? "daily" : (["immediate", "daily", "off"] as const).includes(input.notify as NotifyMode) ? (input.notify as NotifyMode) : d.notify,
     notifyEveryTrades: Math.round(num(input.notifyEveryTrades, d.notifyEveryTrades)),
+    comboOn: bool(input.comboOn, d.comboOn),
+    comboAssets: [...new Set((Array.isArray(input.comboAssets) ? input.comboAssets : d.comboAssets).map((a) => String(a).toUpperCase()))],
+    comboWindowMin: Math.round(num(input.comboWindowMin, d.comboWindowMin)),
+    comboMaxCost: num(input.comboMaxCost, d.comboMaxCost),
   };
+  for (const a of cfg.comboAssets) if (!universe.includes(a)) throw new Error(`Combo asset ${a} is not a tradable asset`);
+  if (cfg.comboOn) {
+    if (cfg.comboAssets.length < 2 || cfg.comboAssets.length > 5) throw new Error("A combo needs 2 to 5 assets ticked");
+    if (cfg.betSide === "either") throw new Error("A combo needs the side to bet set to High probability or Low probability, not Either");
+    if (cfg.minEdge > 0) throw new Error("A combo does not use the minimum edge: set it to 0");
+    if (!(cfg.comboWindowMin >= 1 && cfg.comboWindowMin < cfg.durationMin)) throw new Error(`Combo minutes must be between 1 and ${cfg.durationMin - 1}`);
+    if (!(cfg.comboMaxCost > 0.5 && cfg.comboMaxCost < 1)) throw new Error("Highest combo cost must be between 50% and 100%");
+  }
   if (!(cfg.notifyEveryTrades >= 0 && cfg.notifyEveryTrades <= 1000)) throw new Error("Notify after this many trades must be a whole number from 0 (off) to 1000");
   // older metals bots (and new ones that give no number) keep "every checked asset must agree"; 0 means do not check agreement at all
   if (startFrom === "metals" && input.agreeCount === undefined) cfg.agreeCount = cfg.assets.length;

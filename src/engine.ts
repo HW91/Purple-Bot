@@ -6,7 +6,7 @@
  * It NEVER turns a bot on by itself — `enabled` is only ever set by a person through the dashboard.
  */
 import { DurableObject } from "cloudflare:workers";
-import { KalshiAuthError, KalshiClient, KalshiHttpError, num, type KalshiMarket } from "./kalshi";
+import { KalshiAuthError, KalshiClient, KalshiHttpError, num, type ComboLegRef, type KalshiMarket } from "./kalshi";
 import { authHeaders, importSigningKey, type SigningKey } from "./kalshi-auth";
 import { getAccountLimits, getCreds, getSetting, isBotEnabled, loadBots, log, openPositions, setSetting, type PositionRow } from "./db";
 import { emailShell, esc, sendEmail } from "./notify";
@@ -16,6 +16,7 @@ import { FlowTracker } from "./flow";
 import { samplesFromCandles, samplesFromObs, type Cell, type EdgeLookup } from "./edge";
 import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
+import { evaluateCombo, pickComboQuote, type ComboDecision, type ComboState } from "./combo";
 
 const TICK_MS = 10_000;
 const OBS_MIN_INTERVAL_MS = 10_000;
@@ -120,6 +121,8 @@ export class Engine extends DurableObject<Env> {
   private settleChecked = new Map<string, number>();
   private resultTried = new Map<string, number>(); // ticker -> last time we asked Kalshi for its final result
   private entered = new Set<string>(); // "botId|ticker" of contracts a bot has already entered
+  private comboStates = new Map<string, ComboState>(); // botId -> which combo assets have been inside the range in this contract
+  private comboTried = new Set<string>(); // "botId|closeTs": a combo was already attempted for this contract (one request for a price per contract)
   private settingsSeen = new Map<string, string>(); // "botId|ticker" -> the probability min|max last saved for it
   private notes = new Map<string, { botId: string; ticker: string; samples: number; counts: Record<string, number>; texts: Record<string, string>; checks: CheckLine[] | null; last: number; dirty: boolean }>();
 
@@ -304,7 +307,8 @@ export class Engine extends DurableObject<Env> {
   private trackedAssets(): string[] {
     const set = new Set<string>();
     for (const b of this.bots) for (const a of b.config.assets) set.add(a);
-    for (const p of this.posCache.values()) set.add(p.asset);
+    for (const b of this.bots) if (b.config.comboOn) for (const a of b.config.comboAssets) set.add(a);
+    for (const p of this.posCache.values()) if (p.asset !== "COMBO") set.add(p.asset);
     return [...set];
   }
 
@@ -712,6 +716,10 @@ export class Engine extends DurableObject<Env> {
     const now = Date.now();
     for (const bot of this.bots) {
       if (!bot.enabled) continue;
+      if (bot.config.comboOn) {
+        await this.evaluateComboBot(bot, now);
+        continue;
+      }
       const d = evaluateEntry(bot.config, this.viewsFor(bot, now), now, this.edgeLookup);
       this.noteReason(bot, d, now);
       if (d.ok && d.trade) await this.attemptEntry(bot, d, now);
@@ -723,7 +731,12 @@ export class Engine extends DurableObject<Env> {
     if (!m) return;
     const now = Date.now();
     for (const bot of this.bots) {
-      if (!bot.enabled || !bot.config.assets.includes(m.asset)) continue;
+      if (!bot.enabled) continue;
+      if (bot.config.comboOn) {
+        if (bot.config.comboAssets.includes(m.asset)) await this.evaluateComboBot(bot, now);
+        continue;
+      }
+      if (!bot.config.assets.includes(m.asset)) continue;
       const d = evaluateEntry(bot.config, this.viewsFor(bot, now), now, this.edgeLookup);
       this.noteReason(bot, d, now);
       if (d.ok && d.trade) await this.attemptEntry(bot, d, now);
@@ -884,6 +897,145 @@ export class Engine extends DurableObject<Env> {
     } finally {
       this.inflight.delete(lockKey);
       if (submitted) await this.flush().catch(() => {});
+    }
+  }
+
+  // ---------------------------------------------------------------- combo entries (one Kalshi combo of several assets; pays only if every pick wins)
+
+  private comboViewsFor(bot: Bot, now: number): AssetView[] {
+    return bot.config.comboAssets.map((asset) => {
+      const market = this.currentMarket(asset, now);
+      return { asset, market, quote: market ? this.quotes.get(market.ticker) ?? null : null, flow: null };
+    });
+  }
+
+  private async evaluateComboBot(bot: Bot, now: number): Promise<void> {
+    const { state, decision } = evaluateCombo(bot.config, this.comboViewsFor(bot, now), now, this.comboStates.get(bot.id));
+    if (state) this.comboStates.set(bot.id, state);
+    this.noteComboReason(bot, decision, now);
+    if (decision.ok && decision.legs && decision.closeTs) await this.attemptCombo(bot, decision, now);
+  }
+
+  private noteComboReason(bot: Bot, d: Pick<ComboDecision, "ok" | "reason">, now: number): void {
+    const prev = this.lastReason.get(bot.id);
+    const changed = !prev || prev.reason !== d.reason;
+    this.lastReason.set(bot.id, { reason: d.reason, ts: prev && !changed ? prev.ts : now, up: 0, down: 0 });
+    if (changed && (!prev || now - prev.ts > 30_000 || d.ok)) this.ctx.waitUntil(log(this.env, "info", "signal", `${d.ok ? "COMBO READY" : "Combo waiting"}: ${d.reason}`, bot.id));
+  }
+
+  /**
+   * Buy the combo: find the Kalshi collection, create the combo market, ask for prices (request for quote), accept the cheapest price at or under the owner's
+   * limit, then read the position Kalshi really holds. Only ONE attempt per contract (every unaccepted request costs request allowance).
+   * Not yet tried on the real exchange: until one combo has been confirmed to hold the YES side, it buys a single contract.
+   */
+  private async attemptCombo(bot: Bot, d: ComboDecision, now: number): Promise<void> {
+    const closeTs = d.closeTs!;
+    const tryKey = `${bot.id}|${closeTs}`;
+    const lockKey = `combo:${tryKey}`;
+    if (this.comboTried.has(tryKey) || this.inflight.has(lockKey) || !this.client) return;
+    this.inflight.add(lockKey);
+    try {
+      if (!(await isBotEnabled(this.env, bot.id))) {
+        bot.enabled = false;
+        return;
+      }
+      // a restart forgets memory, so the database also says whether this bot already bought a combo for this contract
+      if (await this.env.DB.prepare("SELECT 1 AS x FROM positions WHERE bot_id=? AND asset='COMBO' AND market_close_ts=?").bind(bot.id, closeTs).first()) {
+        this.comboTried.add(tryKey);
+        return;
+      }
+      const verified = (await getSetting(this.env, "combo_verified")) === "1";
+      const count = verified ? Math.floor(bot.config.tradeAmount / bot.config.comboMaxCost) : 1;
+      if (count < 1) {
+        this.comboTried.add(tryKey);
+        this.noteComboReason(bot, { ok: false, reason: `Trade amount $${bot.config.tradeAmount} is less than the highest combo cost for one contract ($${bot.config.comboMaxCost.toFixed(2)})` }, now);
+        return;
+      }
+      const blocked = checkRisk(bot.config, await getAccountLimits(this.env), await this.riskStats(bot), count * bot.config.comboMaxCost);
+      if (blocked) {
+        this.noteComboReason(bot, { ok: false, reason: `Risk limit: ${blocked}` }, now);
+        return;
+      }
+      this.comboTried.add(tryKey);
+
+      const refs: ComboLegRef[] = [];
+      for (const leg of d.legs!) refs.push({ marketTicker: leg.ticker, eventTicker: (await this.client.market(leg.ticker)).event_ticker, side: leg.side });
+      const found = await this.client.findComboCollection(refs);
+      if ("error" in found) {
+        await log(this.env, "warn", "order", `Combo skipped: ${found.error}`, bot.id);
+        this.noteComboReason(bot, { ok: false, reason: `Combo skipped: ${found.error}` }, now);
+        return;
+      }
+      const mk = await this.client.createComboMarket(found.collection, refs);
+      const rfqId = await this.client.createRfq(mk.marketTicker, count);
+      let pick: { id: string; cost: number } | null = null;
+      for (let i = 0; i < 12; i++) {
+        await sleep(500);
+        pick = pickComboQuote(await this.client.rfqQuotes(rfqId), bot.config.comboMaxCost);
+        if (pick && i >= 3) break; // give a few makers a moment to answer, then take the cheapest
+      }
+      if (!pick) {
+        await this.client.deleteRfq(rfqId).catch(() => {});
+        const why = `No market maker offered the combo at or under ${(bot.config.comboMaxCost * 100).toFixed(1)}%, so nothing was bought`;
+        await log(this.env, "info", "order", why, bot.id);
+        this.noteComboReason(bot, { ok: false, reason: why }, now);
+        return;
+      }
+      const flip = (await getSetting(this.env, "combo_accept_flip")) === "1";
+      await this.client.acceptQuote(rfqId, pick.id, flip ? "no" : "yes");
+      let status = "accepted";
+      for (let i = 0; i < 20 && status !== "executed" && status !== "cancelled"; i++) {
+        await sleep(500);
+        status = await this.client.quoteStatus(rfqId, pick.id).catch(() => status);
+      }
+      // the position Kalshi really holds is the truth (the filled quote can belong to another maker)
+      const held = (await this.client.positions()).find((p) => p.ticker === mk.marketTicker);
+      const signed = held?.position ?? 0;
+      if (Math.abs(signed) < 0.001) {
+        const why = `The combo was not bought (price status: ${status})`;
+        await log(this.env, status === "executed" ? "error" : "warn", "order", why, bot.id);
+        if (status !== "cancelled") await this.critical(`combo-nofill-${bot.id}`, "Combo status unclear", `A combo price was accepted on ${esc(mk.marketTicker)} but no position shows yet (status ${esc(status)}). Please check your Kalshi account: if it filled later, the bot has no record of it.`, 600_000);
+        return;
+      }
+      const qty = Math.abs(signed);
+      const outcome: "yes" | "no" = signed > 0 ? "yes" : "no";
+      const cost = held && held.exposure > 0 ? held.exposure : qty * pick.cost;
+      const price = cost / qty;
+      const fee = held?.fees ?? 0;
+      const prob = d.legs!.reduce((a, l) => a * l.prob, 1);
+      const pos: PositionRow = {
+        id: crypto.randomUUID(), bot_id: bot.id, ticker: mk.marketTicker, asset: "COMBO", outcome, entry_qty: qty, open_qty: qty, avg_entry: price, entry_cost: cost, entry_fee: fee,
+        exit_proceeds: 0, exit_fee: 0, status: "open", opened_ts: Date.now(), closed_ts: null, close_reason: null, market_close_ts: closeTs, entry_prob: prob, exit_prob: null,
+        fav_max: prob, fav_min: prob, prob_before_close: prob, agree_count: d.legs!.length, duration_min: bot.config.durationMin, realized_pnl: null, result: null,
+      };
+      await this.env.DB.prepare("INSERT INTO positions (id, bot_id, ticker, asset, outcome, entry_qty, open_qty, avg_entry, entry_cost, entry_fee, exit_proceeds, exit_fee, status, opened_ts, market_close_ts, entry_prob, fav_max, fav_min, prob_before_close, agree_count, duration_min) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(pos.id, pos.bot_id, pos.ticker, pos.asset, pos.outcome, pos.entry_qty, pos.open_qty, pos.avg_entry, pos.entry_cost, pos.entry_fee, 0, 0, "open", pos.opened_ts, pos.market_close_ts, pos.entry_prob, pos.fav_max, pos.fav_min, pos.prob_before_close, pos.agree_count, pos.duration_min)
+        .run();
+      this.posCache.set(pos.id, pos);
+      this.balance = null;
+      const legsText = d.legs!.map((l) => `${l.asset} ${l.side.toUpperCase()}`).join(" + ");
+      if (outcome === "no") {
+        // accepting that side gave the opposite position: use the other side from now on, switch this bot off, and say so
+        await setSetting(this.env, "combo_accept_flip", flip ? "0" : "1");
+        await this.env.DB.prepare("UPDATE bots SET enabled=0 WHERE id=?").bind(bot.id).run();
+        bot.enabled = false;
+        await log(this.env, "error", "order", `COMBO bought on the WRONG side (NO instead of YES) x${qty}: ${legsText}. The bot was switched off.`, bot.id);
+        await this.critical(`combo-wrong-${bot.id}`, "Combo bought on the wrong side", `The combo (${esc(legsText)}) was bought as NO instead of YES, ${qty} contract(s) on ${esc(mk.marketTicker)}. The bot has been switched off. It will use the other accept side next time: start it again to try once more with one contract.`, 60_000);
+        return;
+      }
+      await setSetting(this.env, "combo_verified", "1");
+      await log(this.env, "info", "order", `ENTERED COMBO ${legsText} x${qty} @ ${price.toFixed(3)} fee $${fee.toFixed(3)} — ${d.reason}`, bot.id);
+      if (bot.config.notify === "immediate") {
+        await sendEmail(this.env, `Purple Bot bought a combo: ${legsText}`, emailShell("Combo entered", `<p><b>${esc(bot.name)}</b> bought ${qty} combo contract(s) (${esc(legsText)}) at $${price.toFixed(3)} (fee $${fee.toFixed(3)}). It pays $1 per contract only if every pick wins.</p><p>Why: ${esc(d.reason)}</p>`));
+      }
+    } catch (e) {
+      if (e instanceof KalshiAuthError) throw e;
+      const msg = (e as Error).message;
+      await log(this.env, "error", "order", `Combo attempt failed: ${msg}`, bot.id);
+      await this.critical(`combo-fail-${bot.id}`, "Combo trade failed", esc(msg), 600_000);
+    } finally {
+      this.inflight.delete(lockKey);
+      await this.flush().catch(() => {});
     }
   }
 

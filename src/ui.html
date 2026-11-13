@@ -283,7 +283,7 @@ function openBot(id){
       var lossToday=Math.max(0,-s.today.pnl);
       body.textContent='';
       body.appendChild(h('div',{class:'card'},
-        h('div',{class:'row'},h('h2',{text:b.name,style:'margin:0'}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:cfg.strategy+' · trades '+cfg.tradeAsset+' · confirmed by '+cfg.assets.join(', ')})),
+        h('div',{class:'row'},h('h2',{text:b.name,style:'margin:0'}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:cfg.strategy+' · '+(cfg.comboOn?'combo of '+cfg.comboAssets.join(' + '):'trades '+cfg.tradeAsset+' · confirmed by '+cfg.assets.join(', '))})),
         h('div',{class:'mute',style:'margin-top:8px',text:'Signal: '+st.reason})));
       body.appendChild(h('div',{class:'card'},h('h2',{text:'Profit / loss — this bot only'}),[
         tileGroup('Open trades',[
@@ -327,7 +327,7 @@ function vBots(){
   root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn',text:'+ New bot',onclick:function(){editBot(null)}})));
   root.appendChild(form);root.appendChild(list);
   function load(){api('/bots').then(function(bots){botsCache=bots;list.textContent='';bots.forEach(function(b){
-    list.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:'trades '+b.config.tradeAsset+' · confirmed by '+b.config.assets.join(', ')})),
+    list.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:(b.config.comboOn?'combo of '+b.config.comboAssets.join(' + '):'trades '+b.config.tradeAsset+' · confirmed by '+b.config.assets.join(', '))})),
       h('div',{class:'row',style:'margin-top:10px'},
       h('button',{class:'btn gray',text:'Edit',onclick:function(){editBot(b)}}),
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
@@ -391,6 +391,16 @@ function vBots(){
         edgeWas=on;
       });
       f.appendChild(h('div',{style:'margin-top:10px'},h('label',{text:'Assets to check for agreement (tick the ones that may have to lean the same way)'}),assets));
+      // combo: one Kalshi contract on several assets that pays only if every pick wins
+      var comboBoxes=[h('div',{class:'mute',text:'Metals'})].concat(METALS_AZ.map(comboBox),[h('div',{class:'mute',style:'margin-top:6px',text:'Cryptocurrencies'})],CRYPTO_AZ.map(comboBox));
+      function comboBox(a){var cb=h('input',{type:'checkbox','data-c':a});cb.checked=(cfg.comboAssets||[]).indexOf(a)>=0;return h('label',{class:'chk'},cb,a)}
+      var comboOn=chk('comboOn');comboOn.checked=!!cfg.comboOn;
+      f.appendChild(h('div',{style:'margin-top:14px'},h('label',{class:'chk',style:'font-weight:600'},comboOn,'Buy as a combo'),
+        h('small',{style:'display:block;margin:2px 0 8px',text:'Instead of one contract, the bot buys ONE Kalshi combo of the assets ticked below. It pays $1 per contract only if every pick wins, and loses the whole price if any pick fails. Each ticked asset must have been inside the probability range at some point in the last minutes of the contract (not all at once). The probability range, side to bet, trade amount and limits above apply. Stop loss and take profit do not apply: a combo is held until it settles. Until one combo has been confirmed, the bot buys a single contract.'}),
+        h('div',{class:'grid'},
+          field('Minutes at the end of the contract to watch',num('comboWindowMin',1,1),'Every ticked asset must be in range at some point in this many final minutes.'),
+          field('Highest combo cost (% of the payout)',num('comboMaxCost',100,1),'The bot only buys when a market maker offers the combo at or under this price. A combo of three assets at 98% each costs about 95% to 96%.')),
+        h('label',{text:'Assets in the combo'}),comboBoxes));
       // no-trade windows: times of day (US Eastern) when this bot opens no new trades; tap + to add another
       var winBox=h('div');
       function addWin(w){
@@ -408,6 +418,8 @@ function vBots(){
         out.flowOn=fl.checked;
         out.noTradeWindows=[].slice.call(winBox.children).map(function(r){return {start:r._s.value,end:r._e.value}}).filter(function(w){return w.start||w.end});
         out.tradeAsset=tradeSel.value;
+        out.comboOn=comboOn.checked;out.comboWindowMin=+inp.comboWindowMin.value;out.comboMaxCost=+inp.comboMaxCost.value/100;
+        out.comboAssets=[].slice.call(f.querySelectorAll('[data-c]')).filter(function(x){return x.checked}).map(function(x){return x.getAttribute('data-c')});
         out.stopLossOn=sl.checked;out.takeProfitOn=tp.checked;out.notify=nt.value;
         out.assets=[].slice.call(f.querySelectorAll('[data-a]')).filter(function(x){return x.checked}).map(function(x){return x.getAttribute('data-a')});
         if(out.assets.indexOf(tradeSel.value)<0)out.assets.push(tradeSel.value); // the asset it trades is always one of the checked assets

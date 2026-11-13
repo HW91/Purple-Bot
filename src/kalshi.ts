@@ -218,4 +218,76 @@ export class KalshiClient {
     }
     return out;
   }
+
+  // ---------------------------------------------------------------- combos (Kalshi multivariate events + request for quote)
+  // Written from docs.kalshi.com (Multivariate Event Collections, Create Market In Multivariate Event Collection, RFQs, Quotes, Accept RFQ Quote). Not tried on the real exchange.
+
+  /** The collection that lets these exact legs be combined, or a plain-words reason why none does. */
+  async findComboCollection(legs: ComboLegRef[]): Promise<{ collection: string } | { error: string }> {
+    const r = await this.request<{ multivariate_contracts: Array<{ collection_ticker: string; size_min?: number; size_max?: number; associated_events?: Array<{ ticker: string; is_yes_only?: boolean }> }> }>("GET", "/multivariate_event_collections", {
+      query: { associated_event_ticker: legs[0].eventTicker, status: "open", limit: 50 },
+    });
+    let why = "No Kalshi combo collection lists these markets";
+    for (const c of r?.multivariate_contracts ?? []) {
+      const events = new Map((c.associated_events ?? []).map((e) => [e.ticker, e]));
+      if (!legs.every((l) => events.has(l.eventTicker))) continue;
+      if (legs.some((l) => l.side === "no" && events.get(l.eventTicker)?.is_yes_only)) {
+        why = "That Kalshi combo collection only allows YES picks, and this combo needs a NO pick";
+        continue;
+      }
+      if ((c.size_min ?? 0) > legs.length || (c.size_max ?? 99) < legs.length) {
+        why = `That Kalshi combo collection needs between ${c.size_min ?? 0} and ${c.size_max ?? "any number of"} picks`;
+        continue;
+      }
+      return { collection: c.collection_ticker };
+    }
+    return { error: why };
+  }
+
+  /** Create (or fetch, if it already exists) the combo market for these legs. */
+  async createComboMarket(collection: string, legs: ComboLegRef[]): Promise<{ marketTicker: string; eventTicker: string }> {
+    const r = await this.request<{ market_ticker: string; event_ticker: string }>("POST", `/multivariate_event_collections/${encodeURIComponent(collection)}`, {
+      body: { selected_markets: legs.map((l) => ({ market_ticker: l.marketTicker, event_ticker: l.eventTicker, side: l.side })) },
+    });
+    if (!r?.market_ticker) throw new Error("Unexpected combo market response from Kalshi");
+    return { marketTicker: r.market_ticker, eventTicker: r.event_ticker };
+  }
+
+  async createRfq(marketTicker: string, contracts: number): Promise<string> {
+    const r = await this.request<{ id: string }>("POST", "/communications/rfqs", { body: { market_ticker: marketTicker, contracts, rest_remainder: false } });
+    if (!r?.id) throw new Error("Unexpected request-for-quote response from Kalshi");
+    return r.id;
+  }
+
+  async rfqQuotes(rfqId: string): Promise<ComboQuote[]> {
+    const r = await this.request<{ quotes: Array<Record<string, unknown>> }>("GET", "/communications/quotes", { query: { rfq_id: rfqId, status: "open", limit: 50 } });
+    return (r?.quotes ?? []).map((q) => ({ id: String(q.id), status: String(q.status), yesBid: num(q.yes_bid_dollars), noBid: num(q.no_bid_dollars), contracts: num(q.contracts_fp) }));
+  }
+
+  async quoteStatus(rfqId: string, quoteId: string): Promise<string> {
+    const r = await this.request<{ quotes: Array<Record<string, unknown>> }>("GET", "/communications/quotes", { query: { rfq_id: rfqId, limit: 50 } });
+    return String((r?.quotes ?? []).find((q) => String(q.id) === quoteId)?.status ?? "unknown");
+  }
+
+  async acceptQuote(rfqId: string, quoteId: string, side: "yes" | "no"): Promise<void> {
+    await this.request("PUT", `/communications/rfqs/${encodeURIComponent(rfqId)}/quotes/${encodeURIComponent(quoteId)}/accept`, { body: { accepted_side: side } });
+  }
+
+  async deleteRfq(rfqId: string): Promise<void> {
+    await this.request("DELETE", `/communications/rfqs/${encodeURIComponent(rfqId)}`);
+  }
+}
+
+export interface ComboLegRef {
+  marketTicker: string;
+  eventTicker: string;
+  side: "yes" | "no";
+}
+
+export interface ComboQuote {
+  id: string;
+  status: string;
+  yesBid: number;
+  noBid: number;
+  contracts: number;
 }

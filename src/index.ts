@@ -622,6 +622,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       } catch (e) {
         return { label: v.label, error: (e as Error).message };
       }
+      if (cfg.comboOn) return { label: v.label, error: "A combo bot cannot be backtested: combo prices are only quoted by market makers at the moment of the trade." };
       if (cfg.minEdge > 0) return { label: v.label, error: "A bot with a minimum edge cannot be backtested yet: it learns from the same recorded history the test would replay, so the result would look better than it is. Use the Edge report on the Trades tab instead." };
       return { label: v.label, overrides: v.overrides, report: simulate(cfg, markets, obs, { feePerContract: feePer, slippage: 0.01 }, flowMap) };
     });

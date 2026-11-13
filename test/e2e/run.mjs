@@ -469,6 +469,45 @@ try {
   ok("volume: split by minute (one row per minute of the contract; the fake contract lasts an hour; the block trade is in the second minute)", vol.minutes.length === 60 && vol.minutes[0].yes.trades === 1 && vol.minutes[1].block.trades === 1 && vol.minutes[2].yes.dollars === 3.44, JSON.stringify(vol.minutes.slice(0, 3)));
   ok("volume: an unknown contract is refused", (await api("/chart/volume?ticker=NOPE")).status === 404);
 
+  // ---- K. combos: one Kalshi combo of several assets (request for a price, accept, then check the position really held)
+  const combo = (reset, set) => fetch(`http://127.0.0.1:${KP}/_combo`, { method: "POST", body: JSON.stringify({ reset, set }) });
+  await quote([T("BTC"), T("SOL")], 0.94, 0.95);
+  await combo(true, { invert: false, noQuote: false });
+  const comboCfg = { strategy: "crypto", assets: ["BTC", "SOL"], tradeAsset: "BTC", agreeCount: 0, durationMin: 60, comboOn: true, comboAssets: ["BTC", "SOL"], betSide: "favorite", probThreshold: 0.9, probMax: 0.99, comboWindowMin: 59, minRemainingSec: 15, tradeAmount: 5, stopLossOn: false, takeProfitOn: false, timeDelaySec: 0 };
+  ok("a combo bot needs two assets", (await api("/bots", "POST", { name: "bad combo", config: { ...comboCfg, comboAssets: ["BTC"] } })).status >= 400);
+  const comboA = (await api("/bots", "POST", { name: "Combo A", config: comboCfg })).j.id;
+  await api(`/bots/${comboA}/start`, "POST");
+  const posA = await waitFor(async () => (await api("/positions")).j.open.find((p) => p.bot_id === comboA), 60000);
+  const csA = (await mockState()).combo;
+  ok("combo: the bot buys one combo (one contract at first) of both assets with the right sides, at the offered price", !!posA && posA.asset === "COMBO" && posA.outcome === "yes" && posA.entry_qty === 1 && Math.abs(posA.avg_entry - 0.95) < 0.001 && csA.rfqs.length === 1 && csA.rfqs[0].contracts === 1 && csA.accepted === "yes" && csA.created[0].map((l) => `${l.event_ticker}:${l.side}`).join() === "KXBTC15M-E1:yes,KXSOL15M-E1:yes", JSON.stringify({ posA, csA }).slice(0, 600));
+  await sleep(12000);
+  ok("combo: only one request for a price per contract", (await mockState()).combo.rfqs.length === 1);
+  await api(`/bots/${comboA}/stop`, "POST");
+  // the opposite meaning of the accept button: the bot must notice, switch itself off and use the other side next time
+  await combo(true, { invert: true, noQuote: false });
+  const comboB = (await api("/bots", "POST", { name: "Combo B", config: comboCfg })).j.id;
+  await api(`/bots/${comboB}/start`, "POST");
+  const posB = await waitFor(async () => (await api("/positions")).j.open.find((p) => p.bot_id === comboB), 60000);
+  const botB = await waitFor(async () => { const b = (await api("/bots")).j.find((x) => x.id === comboB); return b && !b.enabled ? b : null; }, 30000);
+  const csB = (await mockState()).combo;
+  ok("combo: if the accepted side gave NO instead of YES, the bot is switched off and the position is recorded as NO", !!posB && posB.outcome === "no" && posB.entry_qty === 5 && csB.accepted === "yes" && !!botB, JSON.stringify({ posB, csB }).slice(0, 500));
+  await combo(false, { accepted: null });
+  const comboC = (await api("/bots", "POST", { name: "Combo C", config: comboCfg })).j.id;
+  await api(`/bots/${comboC}/start`, "POST");
+  const posC = await waitFor(async () => (await api("/positions")).j.open.find((p) => p.bot_id === comboC), 60000);
+  const csC = (await mockState()).combo;
+  ok("combo: the next combo accepts the other side and now holds YES", !!posC && posC.outcome === "yes" && csC.accepted === "no", JSON.stringify({ posC, csC }).slice(0, 500));
+  await api(`/bots/${comboC}/stop`, "POST");
+  await api("/settings", "POST", { accountLimits: { dailyLossLimit: 40, dailyInvestLimit: 100, maxPositions: 20 } }); // the combos bought above are still open and count toward the account's limit of 3
+  await combo(true, { invert: false, noQuote: true, accepted: null });
+  const comboD = (await api("/bots", "POST", { name: "Combo D", config: comboCfg })).j.id;
+  await api(`/bots/${comboD}/start`, "POST");
+  await waitFor(async () => (await mockState()).combo.rfqs.length >= 1, 40000);
+  await sleep(9000);
+  const csD = (await mockState()).combo;
+  ok("combo: with no price offered under the limit nothing is bought and the request is withdrawn", csD.rfqs.length === 1 && csD.deleted === true && !(await api("/positions")).j.open.find((p) => p.bot_id === comboD), JSON.stringify(csD) + " " + JSON.stringify((await api("/logs?limit=8")).j.map((l) => l.message.slice(0, 160))));
+  await api(`/bots/${comboD}/stop`, "POST");
+
   // ---- J. delete rules + disconnect rules
   ok("cannot delete a bot while ON", await (async () => { await api(`/bots/${bot1}/start`, "POST"); const r = await api(`/bots/${bot1}`, "DELETE"); await api(`/bots/${bot1}/stop`, "POST"); return r.status === 409; })());
   ok("badAuth count on fake exchange only came from the deliberately wrong key", (await mockState()).badAuth === 1, String((await mockState()).badAuth));
