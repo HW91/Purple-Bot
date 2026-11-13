@@ -348,18 +348,19 @@ function vBots(){
       var assets=[h('div',{class:'mute',text:'Metals'})].concat(boxes(METALS_AZ),[h('div',{class:'mute',style:'margin-top:6px',text:'Cryptocurrencies'})],boxes(CRYPTO_AZ));
       var sideSel=h('select',null,[['favorite','High probability'],['underdog','Low probability'],['either','Either (needs a minimum edge)']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.betSide||'favorite')===o[0])op.selected=true;return op}));
       var tradeSel=h('select',null,assetGroups(cfg.tradeAsset));
+      var fTrade,fAgree;
       var fl=chk('flowOn');fl.checked=!!cfg.flowOn;
       var sl=chk('stopLossOn');sl.checked=cfg.stopLossOn;var tp=chk('takeProfitOn');tp.checked=cfg.takeProfitOn;
       var nt=h('select',null,['immediate','daily','off'].map(function(o){var op=h('option',{value:o,text:o});if(cfg.notify===o)op.selected=true;return op}));
       f.appendChild(h('h2',{text:(b?'Edit ':'New ')+s+' bot'}));
       f.appendChild(h('div',{class:'grid'},
         field('Name',name),
-        field('Asset to trade',tradeSel,'The only asset this bot buys. The other checked assets only confirm the direction.'),
+        (fTrade=field('Asset to trade',tradeSel,'The only asset this bot buys. The other checked assets only confirm the direction.')),
         field('Minimum edge (cents per contract, after fees; 0 = off)',num('minEdge',100,0.1),'When above 0, the bot buys only when the price is wrong by at least this much, judged from how contracts like this really ended in this app\'s recorded history. The Edge report on the Trades tab shows that history.'),
         field('Contracts needed behind a win rate',num('edgeMinSamples',1,1),'The win rate is only trusted when at least this many contracts were counted at that price and time.'),
         field('Side to bet',sideSel,'High probability buys the side the market leans toward. Low probability buys the other, cheap side. The probability range below applies to the side being bought (for example 3% to 7% for the low side).'),
         field('Probability range (%)',h('div',{class:'row'},num('probThreshold',100,1),h('span',{class:'mute',text:'to'}),num('probMax',100,1)),'The bot only buys when the probability of the side it buys is inside this range, and skips if the price you would pay is above the top number. 0 to 100 means no limit.'),
-        field('Assets that must agree (0 = do not check)',num('agreeCount',1,1),'How many of the checked assets must lean the same way before the bot trades. 0 turns the check off, so the asset it trades decides on its own.'),
+        (fAgree=field('Assets that must agree (0 = do not check)',num('agreeCount',1,1),'How many of the checked assets must lean the same way before the bot trades. 0 turns the check off, so the asset it trades decides on its own.')),
         field('Time Delay after open (seconds, 0–'+((cfg.durationMin-1)*60)+')',num('timeDelaySec',1,1)),
         field('Minimum time remaining (seconds)',num('minRemainingSec',1,1)),
         field('Trade amount ($)',num('tradeAmount'),'The bot buys whole contracts: as many as this amount pays for at the price (fees are extra). To buy one contract, enter at least its price and less than double it, for example $0.10 for a contract at 6 cents. Below one contract price, nothing is bought. Kalshi sets no fixed largest amount; your balance and your daily limits cap it.'),
@@ -390,17 +391,22 @@ function vBots(){
         }
         edgeWas=on;
       });
-      f.appendChild(h('div',{style:'margin-top:10px'},h('label',{text:'Assets to check for agreement (tick the ones that may have to lean the same way)'}),assets));
+      var agreeBox=h('div',{style:'margin-top:10px'},h('label',{text:'Assets to check for agreement (tick the ones that may have to lean the same way)'}),assets);
+      f.appendChild(agreeBox);
       // combo: one Kalshi contract on several assets that pays only if every pick wins
       var comboBoxes=[h('div',{class:'mute',text:'Metals'})].concat(METALS_AZ.map(comboBox),[h('div',{class:'mute',style:'margin-top:6px',text:'Cryptocurrencies'})],CRYPTO_AZ.map(comboBox));
       function comboBox(a){var cb=h('input',{type:'checkbox','data-c':a});cb.checked=(cfg.comboAssets||[]).indexOf(a)>=0;return h('label',{class:'chk'},cb,a)}
       var comboOn=chk('comboOn');comboOn.checked=!!cfg.comboOn;
+      // a combo uses only the assets ticked in the combo section, so the single-contract fields are hidden while it is on (their saved values stay as they were)
+      function showSingleFields(){var on=!comboOn.checked;[fTrade,fAgree,agreeBox].forEach(function(e){e.style.display=on?'':'none'})}
+      comboOn.addEventListener('change',showSingleFields);
       f.appendChild(h('div',{style:'margin-top:14px'},h('label',{class:'chk',style:'font-weight:600'},comboOn,'Buy as a combo'),
         h('small',{style:'display:block;margin:2px 0 8px',text:'Instead of one contract, the bot buys ONE Kalshi combo of the assets ticked below. It pays $1 per contract only if every pick wins, and loses the whole price if any pick fails. Each ticked asset must have been inside the probability range at some point in the last minutes of the contract (not all at once). The probability range, side to bet, trade amount and limits above apply. Stop loss and take profit do not apply: a combo is held until it settles. Until one combo has been confirmed, the bot buys a single contract.'}),
         h('div',{class:'grid'},
           field('Minutes at the end of the contract to watch',num('comboWindowMin',1,1),'Every ticked asset must be in range at some point in this many final minutes.'),
           field('Highest combo cost (% of the payout)',num('comboMaxCost',100,1),'The bot only buys when a market maker offers the combo at or under this price. A combo of three assets at 98% each costs about 95% to 96%.')),
         h('label',{text:'Assets in the combo'}),comboBoxes));
+      showSingleFields();
       // no-trade windows: times of day (US Eastern) when this bot opens no new trades; tap + to add another
       var winBox=h('div');
       function addWin(w){

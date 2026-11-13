@@ -16,7 +16,7 @@ import { FlowTracker } from "./flow";
 import { samplesFromCandles, samplesFromObs, type Cell, type EdgeLookup } from "./edge";
 import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
-import { evaluateCombo, pickComboQuote, type ComboDecision, type ComboState } from "./combo";
+import { describeComboOffers, evaluateCombo, pickComboQuote, type ComboDecision, type ComboState } from "./combo";
 
 const TICK_MS = 10_000;
 const OBS_MIN_INTERVAL_MS = 10_000;
@@ -969,14 +969,16 @@ export class Engine extends DurableObject<Env> {
       const mk = await this.client.createComboMarket(found.collection, refs);
       const rfqId = await this.client.createRfq(mk.marketTicker, count);
       let pick: { id: string; cost: number } | null = null;
+      let offers: Awaited<ReturnType<KalshiClient["rfqQuotes"]>> = [];
       for (let i = 0; i < 12; i++) {
         await sleep(500);
-        pick = pickComboQuote(await this.client.rfqQuotes(rfqId), bot.config.comboMaxCost);
+        offers = await this.client.rfqQuotes(rfqId);
+        pick = pickComboQuote(offers, bot.config.comboMaxCost);
         if (pick && i >= 3) break; // give a few makers a moment to answer, then take the cheapest
       }
       if (!pick) {
         await this.client.deleteRfq(rfqId).catch(() => {});
-        const why = `No market maker offered the combo at or under ${(bot.config.comboMaxCost * 100).toFixed(1)}%, so nothing was bought`;
+        const why = `No market maker offered the combo at or under ${(bot.config.comboMaxCost * 100).toFixed(1)}%, so nothing was bought: ${describeComboOffers(offers, bot.config.comboMaxCost)}`;
         await log(this.env, "info", "order", why, bot.id);
         this.noteComboReason(bot, { ok: false, reason: why }, now);
         return;

@@ -71,6 +71,16 @@ export function evaluateCombo(cfg: BotConfig, views: AssetView[], now: number, p
   return { state, decision: { ok: true, code: "ok", reason: `Every combo asset was inside ${pct(cfg.probThreshold)} to ${pct(cfg.probMax)} in the last ${cfg.comboWindowMin} minutes: ${legs.map((l) => `${l.asset} ${l.side.toUpperCase()} ${pct(l.prob)}`).join(", ")}`, legs, closeTs } };
 }
 
+/** Plain words for what the market makers sent back, for the log when nothing was acceptable. */
+export function describeComboOffers(quotes: Array<{ yesBid: number; noBid: number }>, maxCost: number): string {
+  if (!quotes.length) return "no market maker sent a price";
+  const priced = quotes.filter((q) => q.yesBid > 0 && q.noBid > 0).map((q) => Math.max(q.yesBid, 1 - q.noBid));
+  const parts = [`${quotes.length} price${quotes.length === 1 ? "" : "s"} came back`];
+  if (priced.length) parts.push(`the cheapest cost ${(Math.min(...priced) * 100).toFixed(1)}% (your limit is ${(maxCost * 100).toFixed(1)}%)`);
+  if (quotes.length > priced.length) parts.push(`${quotes.length - priced.length} declined one side, so the price could not be checked`);
+  return parts.join(", ");
+}
+
 /**
  * Pick the cheapest acceptable quote. What the buyer pays for the combo's YES is not spelled out in Kalshi's documentation, so BOTH readings of a quote
  * are priced (the "yes bid" itself, and one minus the "no bid") and the dearer one must still be at or under the highest cost the owner allows.

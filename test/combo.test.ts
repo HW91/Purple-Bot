@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { comboLegSide, evaluateCombo, pickComboQuote } from "../src/combo";
+import { comboLegSide, describeComboOffers, evaluateCombo, pickComboQuote } from "../src/combo";
 import type { AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
 
@@ -67,6 +67,13 @@ describe("combo quote choice", () => {
     expect(pickComboQuote([{ id: "a", yesBid: 0.94, noBid: 0.04 }, { id: "b", yesBid: 0.93, noBid: 0.05 }], 0.96)).toEqual({ id: "b", cost: 0.95 });
     expect(pickComboQuote([{ id: "a", yesBid: 0.94, noBid: 0.02 }], 0.96)).toBeNull(); // 1 - 0.02 = 0.98 is over the limit
     expect(pickComboQuote([{ id: "a", yesBid: 0.9, noBid: 0 }], 0.96)).toBeNull(); // a side declined: cannot be sure of the price
+  });
+});
+
+describe("combo offers in plain words", () => {
+  it("says whether nobody answered or the prices were too high", () => {
+    expect(describeComboOffers([], 0.96)).toBe("no market maker sent a price");
+    expect(describeComboOffers([{ yesBid: 0.97, noBid: 0.02 }, { yesBid: 0.9, noBid: 0 }], 0.96)).toBe("2 prices came back, the cheapest cost 98.0% (your limit is 96.0%), 1 declined one side, so the price could not be checked");
   });
 });
 
