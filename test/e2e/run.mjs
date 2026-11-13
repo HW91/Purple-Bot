@@ -150,8 +150,11 @@ try {
   ok("AI chat answers via the coach worker and is saved", chat.status === 200 && chat.j.answer === "MOCK AI ANSWER" && (await api(`/chat/${chat.j.convId}`)).j.length === 2, JSON.stringify(chat.j));
   await api("/bots", "POST", { name: "Metals check (never started)", config: { strategy: "metals" } }); // a metals bot exists, so the skipped-because-they-disagreed estimate is built and sent
   const chatData = await api("/chat", "POST", { message: "ECHO_DATA what does the stop loss do?" });
-  ok("chat receives the strategy data (hindsight, blocked reasons, entry hours) and the recent trades", chatData.status === 200 && /\[has:strategyStats,stopLossTakeProfitHindsight,blockedBy,byEntryHour,moneyFlow,recentTrades,priceVsProbability,tradeFiles,latestDailyOverview,missedMetals,tradeSeries,rules,tradeDetail\]/.test(chatData.j.answer) && Number((chatData.j.answer.match(/trades:(\d+)/) || [])[1]) >= 4, chatData.j.answer);
+  ok("chat receives the strategy data (hindsight, blocked reasons, entry hours) and the recent trades", chatData.status === 200 && /\[has:strategyStats,stopLossTakeProfitHindsight,blockedBy,byEntryHour,moneyFlow,recentTrades,tradeFiles,latestDailyOverview,missedMetals,tradeSeries,rules,tradeDetail\]/.test(chatData.j.answer) && Number((chatData.j.answer.match(/trades:(\d+)/) || [])[1]) >= 4, chatData.j.answer);
   await api(`/chat/${chatData.j.convId}`, "DELETE");
+  const chatPrice = await api("/chat", "POST", { message: "ECHO_DATA which price levels are expensive?" });
+  ok("a question about prices also gets the price-versus-probability table (other questions do not, to save AI usage)", chatPrice.status === 200 && /priceVsProbability/.test(chatPrice.j.answer), chatPrice.j.answer);
+  await api(`/chat/${chatPrice.j.convId}`, "DELETE");
   const chatFail = await api("/chat", "POST", { message: "FAIL_AI please", botId: bot1 });
   ok("the coach's apology reply is treated as a failure, not shown as an answer", chatFail.status === 200 && /couldn't reach the AI/.test(chatFail.j.answer) && !/having trouble connecting/.test(chatFail.j.answer), JSON.stringify(chatFail.j));
   await api(`/chat/${chatFail.j.convId}`, "DELETE");
