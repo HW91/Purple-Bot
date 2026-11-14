@@ -56,6 +56,7 @@ export interface BotConfig {
   comboAssets: string[]; // the assets in the combo (two or more)
   comboWindowMin: number; // every combo asset must have been inside the probability range at some point in the last this many minutes of the contract
   comboMaxCost: number; // highest price per $1 of payout the bot will accept for the combo (0.96 = 96 cents)
+  pivotBandPct: number; // skip a contract whose target price is within this many percent of a daily pivot level (0 = off)
 }
 
 export interface Bot {
@@ -80,6 +81,7 @@ export interface MarketInfo {
   openTs: number;
   closeTs: number;
   status: string;
+  strike?: number; // the contract's target price (Kalshi's floor strike), when known
 }
 
 /** Latest top-of-book for a market, from the Kalshi ticker channel. */
@@ -139,6 +141,7 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     comboAssets: [],
     comboWindowMin: 5,
     comboMaxCost: 0.96,
+    pivotBandPct: 0,
   };
 }
 
@@ -204,7 +207,9 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     comboAssets: [...new Set((Array.isArray(input.comboAssets) ? input.comboAssets : d.comboAssets).map((a) => String(a).toUpperCase()))],
     comboWindowMin: Math.round(num(input.comboWindowMin, d.comboWindowMin)),
     comboMaxCost: num(input.comboMaxCost, d.comboMaxCost),
+    pivotBandPct: num(input.pivotBandPct, d.pivotBandPct),
   };
+  if (!(cfg.pivotBandPct >= 0 && cfg.pivotBandPct <= 5)) throw new Error("Pivot distance must be between 0% (off) and 5%");
   for (const a of cfg.comboAssets) if (!universe.includes(a)) throw new Error(`Combo asset ${a} is not a tradable asset`);
   if (cfg.comboOn) {
     if (cfg.comboAssets.length < 2 || cfg.comboAssets.length > 5) throw new Error("A combo needs 2 to 5 assets ticked");

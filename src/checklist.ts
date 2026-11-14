@@ -20,7 +20,7 @@ const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 /** A dollar amount exactly as set ($0.10, $2.50, $5), never rounded to whole dollars. */
 const amt = (x: number) => "$" + (Number.isInteger(x) ? String(x) : x.toFixed(2));
 
-export function checklistFor(cfg: BotConfig, views: AssetView[], now: number, lookup?: EdgeLookup): CheckLine[] {
+export function checklistFor(cfg: BotConfig, views: AssetView[], now: number, lookup?: EdgeLookup, extra?: { pivot?: string | null }): CheckLine[] {
   const fresh = views.filter((v) => v.market && v.quote && now - v.quote.ts <= QUOTE_MAX_AGE_MS && v.quote.yesBid > 0 && v.quote.yesAsk > 0 && v.quote.yesAsk >= v.quote.yesBid);
   const dirs = new Map<string, Direction | null>();
   let up = 0;
@@ -40,6 +40,9 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number, lo
     const win = activeWindow(cfg.noTradeWindows, now);
     line("window", win === null, win ? `Inside a no-trade window: ${windowText(win)}` : "Outside your no-trade windows");
   }
+
+  // 0b. daily pivot levels (only shown when the bot uses the check)
+  if (cfg.pivotBandPct > 0 && extra && extra.pivot !== undefined) line("pivot", extra.pivot === null, extra.pivot ?? `Contract target is more than ${cfg.pivotBandPct}% away from every daily pivot level`);
 
   // 1. live prices
   const needed = [cfg.tradeAsset];

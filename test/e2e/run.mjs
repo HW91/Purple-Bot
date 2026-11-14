@@ -508,6 +508,14 @@ try {
   ok("combo: with no price offered under the limit nothing is bought and the request is withdrawn", csD.rfqs.length === 1 && csD.deleted === true && !(await api("/positions")).j.open.find((p) => p.bot_id === comboD), JSON.stringify(csD) + " " + JSON.stringify((await api("/logs?limit=8")).j.map((l) => l.message.slice(0, 160))));
   await api(`/bots/${comboD}/stop`, "POST");
 
+  // ---- L. daily pivot levels: with the check on and no usable previous day, the bot does not trade and the checklist says why
+  const pivBot = (await api("/bots", "POST", { name: "Pivot bot", config: { strategy: "crypto", assets: ["BTC"], tradeAsset: "BTC", agreeCount: 0, timeDelaySec: 0, minRemainingSec: 15, tradeAmount: 5, probThreshold: 0.5, probMax: 0.99, pivotBandPct: 0.1, stopLossOn: false, takeProfitOn: false } })).j.id;
+  await api(`/bots/${pivBot}/start`, "POST");
+  const pivCheck = await waitFor(async () => { const r = (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}&bot=${pivBot}`)).j; const c = r.checks?.find((x) => x.key === "pivot"); return c && c.ok === false ? c : null; }, 40000);
+  await sleep(4000);
+  ok("pivot check: no trade while the daily levels cannot be worked out, and the checklist says why", !!pivCheck && /not available/.test(pivCheck.text) && !(await api("/positions")).j.open.find((p) => p.bot_id === pivBot), JSON.stringify(pivCheck));
+  await api(`/bots/${pivBot}/stop`, "POST");
+
   // ---- J. delete rules + disconnect rules
   ok("cannot delete a bot while ON", await (async () => { await api(`/bots/${bot1}/start`, "POST"); const r = await api(`/bots/${bot1}`, "DELETE"); await api(`/bots/${bot1}/stop`, "POST"); return r.status === 409; })());
   ok("badAuth count on fake exchange only came from the deliberately wrong key", (await mockState()).badAuth === 1, String((await mockState()).badAuth));

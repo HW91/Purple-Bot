@@ -17,6 +17,7 @@ import { samplesFromCandles, samplesFromObs, type Cell, type EdgeLookup } from "
 import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
 import { describeComboOffers, evaluateCombo, pickComboQuote, type ComboDecision, type ComboState } from "./combo";
+import { classicPivots, dailyPrices, levelText, pivotNear, type PivotLevel } from "./pivots";
 
 const TICK_MS = 10_000;
 const OBS_MIN_INTERVAL_MS = 10_000;
@@ -122,6 +123,7 @@ export class Engine extends DurableObject<Env> {
   private resultTried = new Map<string, number>(); // ticker -> last time we asked Kalshi for its final result
   private entered = new Set<string>(); // "botId|ticker" of contracts a bot has already entered
   private comboStates = new Map<string, ComboState>(); // botId -> which combo assets have been inside the range in this contract
+  private pivots = new Map<string, { day: string; levels: PivotLevel[] | null; tried: number }>(); // asset -> today's daily pivot levels (null = could not be worked out yet)
   private comboTried = new Set<string>(); // "botId|closeTs": a combo was already attempted for this contract (one request for a price per contract)
   private settingsSeen = new Map<string, string>(); // "botId|ticker" -> the probability min|max last saved for it
   private notes = new Map<string, { botId: string; ticker: string; samples: number; counts: Record<string, number>; texts: Record<string, string>; checks: CheckLine[] | null; last: number; dirty: boolean }>();
@@ -220,6 +222,7 @@ export class Engine extends DurableObject<Env> {
       // Check entries on the clock too, not only when a price message arrives: the Time Delay can
       // pass, or a quiet market can sit still, with no new message to trigger a check.
       await this.refreshEdgeTables(); // the edge rule needs its history loaded before it is asked
+      await this.refreshPivots();
       await this.evaluateAllEntries();
       await this.flush();
       await this.checkSettlements();
@@ -349,7 +352,7 @@ export class Engine extends DurableObject<Env> {
         const openTs = Date.parse(m.open_time);
         const closeTs = Date.parse(m.close_time);
         if (!Number.isFinite(openTs) || !Number.isFinite(closeTs)) continue;
-        found.set(m.ticker, { ticker: m.ticker, asset, series, title: m.yes_sub_title || m.title || m.ticker, openTs, closeTs, status: m.status });
+        found.set(m.ticker, { ticker: m.ticker, asset, series, title: m.yes_sub_title || m.title || m.ticker, openTs, closeTs, status: m.status, strike: m.floor_strike != null && Number.isFinite(Number(m.floor_strike)) ? Number(m.floor_strike) : undefined });
         rows.push(m);
         // seed quote so the dashboard has something even before the first WebSocket tick
         if (!this.quotes.has(m.ticker) && m.yes_bid_dollars && m.yes_ask_dollars) {
@@ -720,7 +723,7 @@ export class Engine extends DurableObject<Env> {
         await this.evaluateComboBot(bot, now);
         continue;
       }
-      const d = evaluateEntry(bot.config, this.viewsFor(bot, now), now, this.edgeLookup);
+      const d = this.decideEntry(bot, now);
       this.noteReason(bot, d, now);
       if (d.ok && d.trade) await this.attemptEntry(bot, d, now);
     }
@@ -737,9 +740,76 @@ export class Engine extends DurableObject<Env> {
         continue;
       }
       if (!bot.config.assets.includes(m.asset)) continue;
-      const d = evaluateEntry(bot.config, this.viewsFor(bot, now), now, this.edgeLookup);
+      const d = this.decideEntry(bot, now);
       this.noteReason(bot, d, now);
       if (d.ok && d.trade) await this.attemptEntry(bot, d, now);
+    }
+  }
+
+  /** The normal entry decision, then the daily pivot check on top of it. */
+  private decideEntry(bot: Bot, now: number): EntryDecision {
+    const d = evaluateEntry(bot.config, this.viewsFor(bot, now), now, this.edgeLookup);
+    if (d.ok && d.trade && bot.config.pivotBandPct > 0) {
+      const why = this.pivotBlock(bot.config.pivotBandPct, d.trade.asset, d.trade.market);
+      if (why) return { ok: false, code: "pivot", reason: why, upCount: d.upCount, downCount: d.downCount };
+    }
+    return d;
+  }
+
+  /** Why a contract is too close to a daily pivot level (or why that cannot be checked yet); null when it is clear of every level. */
+  private pivotBlock(bandPct: number, asset: string, market: MarketInfo | null): string | null {
+    if (!(bandPct > 0)) return null;
+    const entry = this.pivots.get(asset);
+    if (!entry || entry.day !== etDateString(Date.now()) || !entry.levels) return `The daily pivot levels for ${asset} are not available yet, so this contract cannot be checked`;
+    if (!market || market.strike === undefined) return `The target price of the ${asset} contract is not known, so it cannot be checked against the daily pivot levels`;
+    const near = pivotNear(market.strike, entry.levels, bandPct);
+    if (!near) return null;
+    return `${asset} target ${levelText(market.strike)} is within ${bandPct}% of the daily ${near.level.name} level ${levelText(near.level.value)} (${near.distPct.toFixed(2)}% away)`;
+  }
+
+  /** Once per US Eastern day per asset a bot uses the pivot check on: work out that day's pivot levels from the previous trading day's contracts. */
+  private async refreshPivots(): Promise<void> {
+    if (!this.client) return;
+    const now = Date.now();
+    const today = etDateString(now);
+    const assets = new Set<string>();
+    for (const b of this.bots) {
+      if (!b.enabled || !(b.config.pivotBandPct > 0)) continue;
+      for (const a of b.config.comboOn ? b.config.comboAssets : [b.config.tradeAsset]) assets.add(a);
+    }
+    for (const asset of assets) {
+      const have = this.pivots.get(asset);
+      if (have && have.day === today && (have.levels || now - have.tried < 600_000)) continue;
+      try {
+        const saved = await this.env.DB.prepare("SELECT high, low, close FROM pivot_levels WHERE asset=? AND day=?").bind(asset, today).first<{ high: number; low: number; close: number }>();
+        if (saved) {
+          this.pivots.set(asset, { day: today, levels: classicPivots(saved.high, saved.low, saved.close), tried: now });
+          continue;
+        }
+        const series = await this.seriesFor(asset);
+        const minSettled = Math.floor((dayStartMs(now) - 4 * 86_400_000) / 1000); // up to four days back, so a weekend or holiday still finds the last trading day
+        const all: KalshiMarket[] = [];
+        let cursor: string | undefined;
+        for (let page = 0; page < 6; page++) {
+          const r = await this.client.settledMarkets(series, minSettled, cursor);
+          all.push(...r.markets);
+          cursor = r.cursor;
+          if (!cursor) break;
+        }
+        const prices = dailyPrices(all, today, etDateString);
+        if (!prices) {
+          this.pivots.set(asset, { day: today, levels: null, tried: now });
+          await log(this.env, "warn", "system", `Daily pivot levels for ${asset}: no previous trading day with enough contracts was found`);
+          continue;
+        }
+        await this.env.DB.prepare("INSERT OR REPLACE INTO pivot_levels (asset, day, src_day, high, low, close, samples, ts) VALUES (?,?,?,?,?,?,?,?)").bind(asset, today, prices.day, prices.high, prices.low, prices.close, prices.samples, now).run();
+        this.pivots.set(asset, { day: today, levels: classicPivots(prices.high, prices.low, prices.close), tried: now });
+        await log(this.env, "info", "system", `Daily pivot levels for ${asset} from ${prices.day}: high ${levelText(prices.high)}, low ${levelText(prices.low)}, close ${levelText(prices.close)}`);
+      } catch (e) {
+        if (e instanceof KalshiAuthError) throw e;
+        this.pivots.set(asset, { day: today, levels: null, tried: now });
+        await log(this.env, "warn", "system", `Daily pivot levels for ${asset} could not be loaded: ${(e as Error).message}`);
+      }
     }
   }
 
@@ -754,7 +824,7 @@ export class Engine extends DurableObject<Env> {
     n.last = now;
     // the checklist: every requirement as it is right now (the risk line is only known once the engine has tested the limits)
     const prevRisk = n.checks?.find((c) => c.key === "risk") ?? null;
-    n.checks = checklistFor(bot.config, this.viewsFor(bot, now), now, this.edgeLookup).map((c) => (c.key !== "risk" ? c : d.code === "risk" ? { key: "risk", ok: false, text: d.reason.slice(0, 200) } : d.ok && prevRisk ? prevRisk : c));
+    n.checks = checklistFor(bot.config, this.viewsFor(bot, now), now, this.edgeLookup, bot.config.pivotBandPct > 0 ? { pivot: this.pivotBlock(bot.config.pivotBandPct, bot.config.tradeAsset, m) } : undefined).map((c) => (c.key !== "risk" ? c : d.code === "risk" ? { key: "risk", ok: false, text: d.reason.slice(0, 200) } : d.ok && prevRisk ? prevRisk : c));
     n.dirty = true;
     this.notes.set(key, n);
     if (now - m.openTs < bot.config.timeDelaySec * 1000) return; // the "how often" counts only start after the Time Delay
@@ -910,7 +980,10 @@ export class Engine extends DurableObject<Env> {
   }
 
   private async evaluateComboBot(bot: Bot, now: number): Promise<void> {
-    const { state, decision } = evaluateCombo(bot.config, this.comboViewsFor(bot, now), now, this.comboStates.get(bot.id));
+    const views = this.comboViewsFor(bot, now);
+    const blocked = new Map<string, string>();
+    if (bot.config.pivotBandPct > 0) for (const v of views) { const why = this.pivotBlock(bot.config.pivotBandPct, v.asset, v.market); if (why) blocked.set(v.asset, why); }
+    const { state, decision } = evaluateCombo(bot.config, views, now, this.comboStates.get(bot.id), blocked);
     if (state) this.comboStates.set(bot.id, state);
     this.noteComboReason(bot, decision, now);
     if (decision.ok && decision.legs && decision.closeTs) await this.attemptCombo(bot, decision, now);

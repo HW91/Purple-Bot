@@ -29,7 +29,7 @@ export interface AssetView {
 }
 
 /** Machine-readable version of the reason, used to summarise why a contract had no trade. */
-export type EntryCode = "ok" | "window" | "edge" | "flow" | "above_max" | "no_data" | "disagree" | "agreement" | "trade_asset_direction" | "threshold" | "delay" | "time_left" | "spread" | "price" | "size" | "liquidity" | "risk";
+export type EntryCode = "ok" | "window" | "edge" | "flow" | "above_max" | "no_data" | "disagree" | "agreement" | "trade_asset_direction" | "threshold" | "delay" | "time_left" | "spread" | "price" | "size" | "liquidity" | "risk" | "pivot";
 
 export interface EntryDecision {
   ok: boolean;

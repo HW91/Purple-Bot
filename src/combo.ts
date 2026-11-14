@@ -37,7 +37,7 @@ export function comboLegSide(cfg: Pick<BotConfig, "betSide" | "probThreshold" | 
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 /** `views` are the combo assets only. Returns the updated memory (keep it for the next call) and the decision. */
-export function evaluateCombo(cfg: BotConfig, views: AssetView[], now: number, prev: ComboState | undefined): { state: ComboState | undefined; decision: ComboDecision } {
+export function evaluateCombo(cfg: BotConfig, views: AssetView[], now: number, prev: ComboState | undefined, blocked?: Map<string, string>): { state: ComboState | undefined; decision: ComboDecision } {
   const win = activeWindow(cfg.noTradeWindows, now);
   if (win) return { state: prev, decision: { ok: false, code: "window", reason: `No-trade window: ${windowText(win)}` } };
   const withMarket = views.filter((v) => v.market);
@@ -55,7 +55,7 @@ export function evaluateCombo(cfg: BotConfig, views: AssetView[], now: number, p
   if (now >= closeTs - cfg.minRemainingSec * 1000) return { state, decision: { ok: false, code: "time_left", reason: "Too little time is left in the contract to buy the combo" } };
 
   for (const v of withMarket) {
-    if (state.seen.has(v.asset)) continue;
+    if (state.seen.has(v.asset) || blocked?.has(v.asset)) continue; // an asset whose contract sits on a daily pivot level is never counted
     const q = v.quote;
     if (!q || now - q.ts > QUOTE_MAX_AGE_MS || !(q.yesBid > 0 && q.yesAsk > 0 && q.yesAsk >= q.yesBid)) continue;
     const yes = yesProb(q);
@@ -65,7 +65,8 @@ export function evaluateCombo(cfg: BotConfig, views: AssetView[], now: number, p
   const notYet = cfg.comboAssets.filter((a) => !state.seen.has(a));
   if (notYet.length) {
     const have = cfg.comboAssets.filter((a) => state.seen.has(a));
-    return { state, decision: { ok: false, code: "waiting", reason: `Waiting for ${notYet.join(", ")} to be inside ${pct(cfg.probThreshold)} to ${pct(cfg.probMax)}${have.length ? ` (already seen in range: ${have.join(", ")})` : ""}` } };
+    const skipped = notYet.filter((a) => blocked?.has(a)).map((a) => blocked!.get(a)!);
+    return { state, decision: { ok: false, code: "waiting", reason: `Waiting for ${notYet.join(", ")} to be inside ${pct(cfg.probThreshold)} to ${pct(cfg.probMax)}${have.length ? ` (already seen in range: ${have.join(", ")})` : ""}${skipped.length ? `. Skipped: ${skipped.join("; ")}` : ""}` } };
   }
   const legs = cfg.comboAssets.map((a) => state.seen.get(a)!);
   return { state, decision: { ok: true, code: "ok", reason: `Every combo asset was inside ${pct(cfg.probThreshold)} to ${pct(cfg.probMax)} in the last ${cfg.comboWindowMin} minutes: ${legs.map((l) => `${l.asset} ${l.side.toUpperCase()} ${pct(l.prob)}`).join(", ")}`, legs, closeTs } };
