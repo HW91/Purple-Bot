@@ -150,7 +150,7 @@ try {
   ok("AI chat answers via the coach worker and is saved", chat.status === 200 && chat.j.answer === "MOCK AI ANSWER" && (await api(`/chat/${chat.j.convId}`)).j.length === 2, JSON.stringify(chat.j));
   await api("/bots", "POST", { name: "Metals check (never started)", config: { strategy: "metals" } }); // a metals bot exists, so the skipped-because-they-disagreed estimate is built and sent
   const chatData = await api("/chat", "POST", { message: "ECHO_DATA what does the stop loss do?" });
-  ok("chat receives the strategy data (hindsight, blocked reasons, entry hours) and the recent trades", chatData.status === 200 && /\[has:strategyStats,stopLossTakeProfitHindsight,blockedBy,byEntryHour,moneyFlow,recentTrades,tradeFiles,latestDailyOverview,missedMetals,tradeSeries,rules,tradeDetail\]/.test(chatData.j.answer) && Number((chatData.j.answer.match(/trades:(\d+)/) || [])[1]) >= 4, chatData.j.answer);
+  ok("chat receives the strategy data (hindsight, blocked reasons, entry hours) and the recent trades", chatData.status === 200 && /\[has:strategyStats,stopLossTakeProfitHindsight,blockedBy,byEntryHour,moneyFlow,recentTrades,modelReport,tradeFiles,latestDailyOverview,missedMetals,tradeSeries,rules,tradeDetail\]/.test(chatData.j.answer) && Number((chatData.j.answer.match(/trades:(\d+)/) || [])[1]) >= 4, chatData.j.answer);
   await api(`/chat/${chatData.j.convId}`, "DELETE");
   const chatPrice = await api("/chat", "POST", { message: "ECHO_DATA which price levels are expensive?" });
   ok("a question about prices also gets the price-versus-probability table (other questions do not, to save AI usage)", chatPrice.status === 200 && /priceVsProbability/.test(chatPrice.j.answer), chatPrice.j.answer);
@@ -522,6 +522,17 @@ try {
   ok("live price: a running crypto contract shows the live price from the CF Benchmarks feed, and its target price is saved", !!liveChart && liveChart.market.strike === 100 && Math.abs(liveChart.live.avg60 - 100.4) < 1e-9, JSON.stringify(liveChart?.live) + " " + JSON.stringify(liveChart?.market));
   ok("live price: the bot subscribed to the Bitcoin index (BRTI) on the same connection", (await mockState()).cfSubscribes.flat().includes("BRTI"));
   ok("live price: a metal has no live price (that feed costs $1,000 a month)", (await api(`/chart?ticker=${encodeURIComponent(T("GOLD"))}`)).j.live == null || (await api(`/chart?ticker=${encodeURIComponent(T("GOLD"))}`)).status === 404);
+
+  // ---- N. my own estimate of finishing above the target: a bot that requires more edge than the price offers does not enter, and says why
+  const mdlBot = (await api("/bots", "POST", { name: "Estimate bot", config: { strategy: "crypto", assets: ["BTC"], tradeAsset: "BTC", agreeCount: 0, timeDelaySec: 0, minRemainingSec: 15, tradeAmount: 5, probThreshold: 0.5, probMax: 0.99, modelEdgePts: 10, stopLossOn: false, takeProfitOn: false } })).j.id;
+  await api(`/bots/${mdlBot}/start`, "POST");
+  const mdlLog = await waitFor(async () => (await api("/logs?limit=60&kind=signal")).j.find((l) => l.bot_id === mdlBot && /points of edge, below the 10 you require/.test(l.message)), 200000, 4000);
+  ok("estimate check: with the price feed running, the bot compares its estimate with the price and skips an entry that does not clear the required points", !!mdlLog, JSON.stringify(mdlLog));
+  ok("estimate check: no position was opened", !(await api("/positions")).j.open.find((p) => p.bot_id === mdlBot));
+  await api(`/bots/${mdlBot}/stop`, "POST");
+  const mr = (await api("/model")).j;
+  ok("estimate report: returns its rows and an explanation", Array.isArray(mr.rows) && typeof mr.howToRead === "string" && typeof mr.contractsLogged === "number", JSON.stringify(mr).slice(0, 300));
+  ok("estimate report: the AI is given it too", /modelReport/.test((await api("/chat", "POST", { message: "ECHO_DATA how is the estimate doing" })).j.answer));
 
   // ---- J. delete rules + disconnect rules
   ok("cannot delete a bot while ON", await (async () => { await api(`/bots/${bot1}/start`, "POST"); const r = await api(`/bots/${bot1}`, "DELETE"); await api(`/bots/${bot1}/stop`, "POST"); return r.status === 409; })());

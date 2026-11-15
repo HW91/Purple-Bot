@@ -18,6 +18,7 @@ import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favora
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
 import { describeComboOffers, evaluateCombo, pickComboQuote, type ComboDecision, type ComboState } from "./combo";
 import { classicPivots, dailyPrices, levelText, pivotNear, type PivotLevel } from "./pivots";
+import { probAbove, realizedSigma } from "./model";
 
 /** Kalshi's CF Benchmarks index id for each coin (docs.kalshi.com/websockets/cfbenchmarks-value). Coins missing here have no live price feed. */
 const CF_INDEX: Record<string, string> = { BTC: "BRTI", ETH: "ETHUSD_RTI", SOL: "SOLUSD_RTI", XRP: "XRPUSD_RTI", DOGE: "DOGEUSD_RTI", BNB: "BNBUSD_RTI", HYPE: "HYPEUSD_RTI", ADA: "ADAUSD_RTI", BCH: "BCHUSD_RTI", NEAR: "NEARUSD_RTI", ZEC: "ZECUSD_RTI" };
@@ -93,7 +94,9 @@ export class Engine extends DurableObject<Env> {
   private cfSid: number | null = null; // Kalshi's CF Benchmarks index feed (the live crypto prices its contracts settle on)
   private cfSubscribed = new Set<string>();
   private cfExtra = new Set<string>(); // assets whose chart the dashboard is showing, even if no bot trades them
-  private cfPrices = new Map<string, { value: number; avg60: number | null; ts: number }>();
+  private cfPrices = new Map<string, { value: number; avg60: number | null; final60: number | null; ts: number }>();
+  private cfTicks = new Map<string, Array<[number, number]>>(); // the last ~11 minutes of live ticks per coin, to measure how much the price is moving
+  private modelLogged = new Map<string, number>(); // ticker -> the minute its estimate was last saved
   // order flow: Kalshi's live trade channel (only subscribed while an enabled bot uses it) and the running money totals
   private tradeSid: number | null = null;
   private tradeSubscribed = new Set<string>();
@@ -243,6 +246,7 @@ export class Engine extends DurableObject<Env> {
       // pass, or a quiet market can sit still, with no new message to trigger a check.
       await this.refreshEdgeTables(); // the edge rule needs its history loaded before it is asked
       await this.refreshPivots();
+      await this.logModel();
       await this.evaluateAllEntries();
       await this.flush();
       await this.checkSettlements();
@@ -616,7 +620,13 @@ export class Engine extends DurableObject<Env> {
         const value = num(frame.value, NaN);
         if (Number.isFinite(value) && value > 0) {
           const avg = num((m.msg.avg_60s_data as { value?: string } | undefined)?.value, NaN);
-          this.cfPrices.set(asset, { value, avg60: Number.isFinite(avg) ? avg : null, ts: Date.now() });
+          const fin = num((m.msg.last_60s_windowed_average_15min as { value?: string } | undefined)?.value, NaN);
+          const now = Date.now();
+          this.cfPrices.set(asset, { value, avg60: Number.isFinite(avg) ? avg : null, final60: Number.isFinite(fin) ? fin : null, ts: now });
+          const buf = this.cfTicks.get(asset) ?? [];
+          buf.push([now, value]);
+          while (buf.length && now - buf[0][0] > 660_000) buf.shift();
+          this.cfTicks.set(asset, buf);
         }
       } catch {
         /* a frame we cannot read is ignored */
@@ -811,7 +821,55 @@ export class Engine extends DurableObject<Env> {
       const why = this.pivotBlock(bot.config.pivotBandPct, d.trade.asset, d.trade.market);
       if (why) return { ok: false, code: "pivot", reason: why, upCount: d.upCount, downCount: d.downCount };
     }
+    if (d.ok && d.trade && bot.config.modelEdgePts > 0) {
+      const why = this.modelBlock(bot.config.modelEdgePts, d.trade.asset, d.trade.outcome, d.trade.costPerContract, now);
+      if (why) return { ok: false, code: "model", reason: why, upCount: d.upCount, downCount: d.downCount };
+    }
     return d;
+  }
+
+  /** My own estimate of the chance the current contract finishes above its target, from the live price and recent movement. null when it cannot be worked out. */
+  private modelFor(asset: string, now: number): { pYes: number; price: number; target: number; secsLeft: number; sigma: number } | null {
+    const p = this.cfPrices.get(asset);
+    const m = this.currentMarket(asset, now);
+    if (!p || !m || m.strike === undefined || now - p.ts > 10_000) return null;
+    const sigma = realizedSigma(this.cfTicks.get(asset) ?? [], now);
+    if (sigma === null) return null;
+    const secsLeft = (m.closeTs - now) / 1000;
+    const pYes = probAbove({ price: p.value, target: m.strike, secsLeft, sigmaRel: sigma, avgSoFar: secsLeft <= 60 ? p.final60 : null });
+    return Number.isFinite(pYes) ? { pYes, price: p.value, target: m.strike, secsLeft, sigma } : null;
+  }
+
+  /** Why my estimate does not back this entry (or cannot be made); null when it beats the price by the required points. */
+  private modelBlock(pts: number, asset: string, outcome: "yes" | "no", cost: number, now: number): string | null {
+    if (!(pts > 0)) return null;
+    const e = this.modelFor(asset, now);
+    if (!e) return `There is no live estimate for ${asset} yet (it needs the live price feed and a few minutes of price movement, and it works for cryptocurrencies only), so the entry check cannot run`;
+    const p = outcome === "yes" ? e.pYes : 1 - e.pYes;
+    const edge = p - cost;
+    if (edge * 100 + 1e-9 >= pts) return null;
+    return `My estimate of ${asset} ${outcome.toUpperCase()} winning is ${(p * 100).toFixed(1)}% against a price of ${(cost * 100).toFixed(1)}%: ${(edge * 100).toFixed(1)} points of edge, below the ${pts} you require`;
+  }
+
+  /** Once a minute per coin an enabled bot uses: save my estimate next to Kalshi's price (the Trades tab compares them with how contracts ended). */
+  private async logModel(): Promise<void> {
+    const now = Date.now();
+    const minute = Math.floor(now / 60_000);
+    const assets = new Set<string>();
+    for (const b of this.bots) if (b.enabled) for (const a of [...b.config.assets, ...(b.config.comboOn ? b.config.comboAssets : [])]) if (CF_INDEX[a]) assets.add(a);
+    const stmt = this.env.DB.prepare("INSERT OR IGNORE INTO model_log (ticker, minute, ts, asset, price, target, secs_left, sigma, p_yes, k_yes) VALUES (?,?,?,?,?,?,?,?,?,?)");
+    const batch = [];
+    for (const asset of assets) {
+      const m = this.currentMarket(asset, now);
+      if (!m || this.modelLogged.get(m.ticker) === minute) continue;
+      const e = this.modelFor(asset, now);
+      if (!e) continue;
+      const q = this.quotes.get(m.ticker);
+      this.modelLogged.set(m.ticker, minute);
+      batch.push(stmt.bind(m.ticker, minute, now, asset, e.price, e.target, e.secsLeft, e.sigma, e.pYes, q && q.yesBid > 0 && q.yesAsk > 0 ? yesProb(q) : null));
+    }
+    if (this.modelLogged.size > 200) for (const k of [...this.modelLogged.keys()].slice(0, 100)) this.modelLogged.delete(k);
+    if (batch.length) await this.env.DB.batch(batch).catch((e) => console.error("model log failed", e));
   }
 
   /** Why a contract is too close to a daily pivot level (or why that cannot be checked yet); null when it is clear of every level. */

@@ -57,6 +57,7 @@ export interface BotConfig {
   comboWindowMin: number; // every combo asset must have been inside the probability range at some point in the last this many minutes of the contract
   comboMaxCost: number; // highest price per $1 of payout the bot will accept for the combo (0.96 = 96 cents)
   pivotBandPct: number; // skip a contract whose target price is within this many percent of a daily pivot level (0 = off)
+  modelEdgePts: number; // only enter when the bot's own estimate of winning beats the price it would pay by at least this many percentage points (0 = off; crypto only)
 }
 
 export interface Bot {
@@ -142,6 +143,7 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     comboWindowMin: 5,
     comboMaxCost: 0.96,
     pivotBandPct: 0,
+    modelEdgePts: 0,
   };
 }
 
@@ -208,7 +210,9 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     comboWindowMin: Math.round(num(input.comboWindowMin, d.comboWindowMin)),
     comboMaxCost: num(input.comboMaxCost, d.comboMaxCost),
     pivotBandPct: num(input.pivotBandPct, d.pivotBandPct),
+    modelEdgePts: num(input.modelEdgePts, d.modelEdgePts),
   };
+  if (!(cfg.modelEdgePts >= 0 && cfg.modelEdgePts <= 20)) throw new Error("Required estimate edge must be between 0 (off) and 20 percentage points");
   if (!(cfg.pivotBandPct >= 0 && cfg.pivotBandPct <= 5)) throw new Error("Pivot distance must be between 0% (off) and 5%");
   for (const a of cfg.comboAssets) if (!universe.includes(a)) throw new Error(`Combo asset ${a} is not a tradable asset`);
   if (cfg.comboOn) {

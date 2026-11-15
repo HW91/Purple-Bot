@@ -375,6 +375,7 @@ function vBots(){
         field('Stop loss ($ per position)',h('div',{class:'row'},sl,num('stopLoss'))),
         field('Take profit ($ per position)',h('div',{class:'row'},tp,num('takeProfit'))),
         field('Stay away from daily pivot levels (% either side, 0 = off)',num('pivotBandPct',1,0.01),'The bot works out the standard daily pivot, support (S1 to S3) and resistance (R1 to R3) levels from the previous trading day\'s contract prices on Kalshi, and skips a contract whose target price is within this many percent of any of them. For example 0.1 skips targets within 0.1% (about $4 on gold at $3,900). Any number from 0.01 up to 5 works.'),
+        field('Only enter when my estimate beats the price by (points, 0 = off)',num('modelEdgePts',1,0.5),'Cryptocurrencies only. The bot estimates the chance of winning from the live price, how far it is from the target, how much it has been moving and the time left, and enters only when that estimate is at least this many percentage points above the price it would pay. For example 1 means 99% estimated against a 98% price. The Trades tab shows how the estimate has compared with real results; turn this on only once it has proved itself. It needs the live price feed and a few minutes of price movement.'),
         field('Email notifications',nt),
         field('Email me after this many winning trades in a row (0 = off)',num('notifyEveryTrades',1,1),'Sends one email when the bot\'s last trades, this many of them, were all wins. It then waits for this many new trades that all won before it emails again. The email shows the profit, your current trade amount and your balance, so you can decide whether to change the trade size.')));
       // the first time a minimum edge is typed in, settings still at the standard defaults move to safer starting values (small trades, tight spread, hold to settlement); anything you already changed is left alone
@@ -420,7 +421,7 @@ function vBots(){
       f.appendChild(h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){
         var out={strategy:s,durationMin:cfg.durationMin};
         ['probThreshold','probMax','minEdge'].forEach(function(k){out[k]=+inp[k].value/100});
-        ['pivotBandPct','notifyEveryTrades','agreeCount','edgeMinSamples','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
+        ['modelEdgePts','pivotBandPct','notifyEveryTrades','agreeCount','edgeMinSamples','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
         out.betSide=sideSel.value;
         out.flowOn=fl.checked;
         out.noTradeWindows=[].slice.call(winBox.children).map(function(r){return {start:r._s.value,end:r._e.value}}).filter(function(w){return w.start||w.end});
@@ -521,6 +522,19 @@ function edgeCard(){
   asset.addEventListener('change',load);mins.addEventListener('change',load);view.addEventListener('change',function(){sortKey=null;sortDir=1;draw()});load();progress();
   return h('div',{class:'card'},h('h2',{text:'Edge report: price vs how often it won'}),h('div',{class:'row'},asset,mins,view),h('div',{class:'row',style:'margin-top:8px'},span,loadBtn),h('small',{class:'mute',style:'display:block'},'Loads gold first, then silver, then Bitcoin. Contracts the bot already recorded are not counted twice.'),prog,body);
 }
+function modelCard(){
+  // the bot's own estimate of finishing above the target, next to Kalshi's price and how contracts really ended
+  var body=h('div','Loading…');
+  api('/model').then(function(r){
+    body.textContent='';
+    body.appendChild(h('p',{class:'mute',text:r.contractsLogged+' settled crypto contracts so far (last '+r.days+' days). Each row: Kalshi\'s price for the side it favored about '+r.minutesLeft+' minutes before the close, the bot\'s own estimate for that same side, and how often that side really won. The estimate has proved itself only if "Really won" sits closer to "My estimate" than to "Kalshi price", over many contracts.'}));
+    if(!r.rows.length){body.appendChild(h('div',{class:'mute',text:'Nothing saved yet. Estimates are saved once a minute for the coins an enabled bot uses; they need the live price feed and a few minutes of price movement.'}));return}
+    var p1=function(x){return (x*100).toFixed(1)+'%'};
+    body.appendChild(h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['Asset','Kalshi price','Contracts','Kalshi price (avg)','My estimate (avg)','Really won'].map(function(x){return h('th',{text:x})}))),
+      h('tbody',null,r.rows.map(function(x){return h('tr',null,h('td',{text:x.asset}),h('td',{text:x.bucket}),h('td',{text:x.n}),h('td',{text:p1(x.kalshi)}),h('td',{text:p1(x.model)}),h('td',{text:p1(x.actual)}))})))));
+  }).catch(function(e){body.textContent=e.message});
+  return h('div',{class:'card'},h('h2',{text:'My estimate vs Kalshi\'s price'}),body);
+}
 function vTrades(){
   var root=$('#main');
   var sel=h('select',null,h('option',{value:'',text:'All bots'}));
@@ -528,7 +542,7 @@ function vTrades(){
   api('/bots').then(function(b){b.forEach(function(x){sel.appendChild(h('option',{value:x.id,text:x.name}))})});
   sel.addEventListener('change',loadPerf);
   root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('label',{text:'Performance for'}),sel));
-  root.appendChild(hoursCard());root.appendChild(edgeCard());root.appendChild(perf);root.appendChild(open);root.appendChild(hist);
+  root.appendChild(hoursCard());root.appendChild(edgeCard());root.appendChild(modelCard());root.appendChild(perf);root.appendChild(open);root.appendChild(hist);
   function grp(title,g){return h('div',{class:'card'},h('h2',{text:title}),h('div',{class:'scroll'},h('table',null,h('thead',null,h('tr',null,['','Trades','Wins','Losses','Win rate','P/L'].map(function(x){return h('th',{text:x})}))),h('tbody',null,g.length?g.map(function(x){return h('tr',null,h('td',{text:x.key}),h('td',{text:x.trades}),h('td',{text:x.wins}),h('td',{text:x.losses}),h('td',{text:x.winRate==null?'—':(x.winRate*100).toFixed(0)+'%'}),h('td',{class:pnlCls(x.pnl),text:usd(x.pnl)}))}):[h('tr',null,h('td',{colspan:6,class:'mute',text:'No data yet'}))]))))}
   function loadPerf(){api('/performance'+(sel.value?'?bot='+sel.value:'')).then(function(p){
     perf.textContent='';
