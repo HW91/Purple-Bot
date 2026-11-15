@@ -468,7 +468,7 @@ function edgeCard(){
   var savedAsset=pref('pb_edge_asset','GOLD');
   var asset=h('select',null,assetGroups(savedAsset));
   asset.value=savedAsset;
-  var mins=h('select',null,[['0-14','Whole contract'],['10-14','Early (10-14 min left)'],['6-9','Middle (6-9 min left)'],['3-5','Late (3-5 min left)'],['0-2','Last 3 minutes']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
+  var mins=h('select',null,[['0-14','Whole contract'],['0-9','Early (10 - 0 mins left)'],['5-9','Middle (10 - 5 mins left)'],['3-9','Late (10 - 3 mins left)'],['0-4','Last (5 mins left)']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
   var view=h('select',null,[['even','Price vs probability (where they are even)'],['edge','Edge after fees']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
   var body=h('div'),last=null,sortKey=null,sortDir=1;
   function cents(x){return (x>0?'+':'')+(x*100).toFixed(1)+'¢'}
