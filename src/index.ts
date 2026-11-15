@@ -381,7 +381,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const loaded = await env.DB.prepare("SELECT COUNT(*) c FROM calibration_done WHERE asset = ?").bind(asset).first<{ c: number }>();
     const waiting = await env.DB.prepare("SELECT COUNT(*) c FROM markets WHERE asset = ? AND calibrated = 0 AND result IN ('yes','no')").bind(asset).first<{ c: number }>();
     // the bot's own estimate (from the live price) for the same price levels and minutes: average estimate, and how often YES really won on those same contracts
-    const est = new Map<number, { n: number; p: number; w: number }>();
+    const est = new Map<number, { n: number; p: number; w: number; k: number }>();
     const lo = Math.min(from, to);
     const hi = Math.max(from, to);
     const estRows = (
@@ -391,8 +391,9 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     ).results ?? [];
     for (const r of estRows) {
       const b = bucketOf(r.k_yes);
-      const e = est.get(b) ?? { n: 0, p: 0, w: 0 };
+      const e = est.get(b) ?? { n: 0, p: 0, w: 0, k: 0 };
       e.n++;
+      e.k += r.k_yes;
       e.p += r.p_yes;
       e.w += r.result === "yes" ? 1 : 0;
       est.set(b, e);
@@ -405,7 +406,9 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
         const mid = (r.bucket + 0.5) / BUCKETS;
         const e = sideEdges({ n: r.n, yesWins: r.w }, mid, mid); // priced at the middle of the range, before any spread
         const em = est.get(r.bucket);
-        return { estN: em?.n ?? 0, estimate: em ? em.p / em.n : null, estYesWon: em ? em.w / em.n : null, from: r.bucket / BUCKETS, to: (r.bucket + 1) / BUCKETS, n: r.n, yesWinRate: r.n ? r.w / r.n : null, gap: r.n ? Math.round((r.w / r.n - mid) * 1000) / 1000 : null, verdict: priceVerdict({ n: r.n, yesWins: r.w }, mid), edgeYes: Math.round(e.yes.edge * 1000) / 1000, edgeNo: Math.round(e.no.edge * 1000) / 1000 };
+        const estGap = em ? em.p / em.n - em.k / em.n : null; // my estimate minus Kalshi's price, on the same contracts
+        const estVerdict = !em || em.n < 30 || estGap === null ? "too_few" : estGap >= 0.01 ? "yes_underpriced" : estGap <= -0.01 ? "yes_overpriced" : "even";
+        return { estN: em?.n ?? 0, estimate: em ? em.p / em.n : null, estYesWon: em ? em.w / em.n : null, estPrice: em ? em.k / em.n : null, estGap, estVerdict, from: r.bucket / BUCKETS, to: (r.bucket + 1) / BUCKETS, n: r.n, yesWinRate: r.n ? r.w / r.n : null, gap: r.n ? Math.round((r.w / r.n - mid) * 1000) / 1000 : null, verdict: priceVerdict({ n: r.n, yesWins: r.w }, mid), edgeYes: Math.round(e.yes.edge * 1000) / 1000, edgeNo: Math.round(e.no.edge * 1000) / 1000 };
       }),
     });
   }

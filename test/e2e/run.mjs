@@ -539,7 +539,7 @@ try {
   ok("estimate check: no position was opened", !(await api("/positions")).j.open.find((p) => p.bot_id === mdlBot));
   await api(`/bots/${mdlBot}/stop`, "POST");
   const mr = (await api("/model")).j;
-  ok("edge report: every price row also carries the bot's estimate numbers (count, average estimate, YES won on those contracts)", await (async () => { const r = (await api("/calibration?asset=ETH")).j; return r.rows.length > 0 && r.rows.every((x) => typeof x.estN === "number" && "estimate" in x && "estYesWon" in x); })());
+  ok("edge report: every price row also carries the bot's estimate numbers (count, average estimate, YES won on those contracts)", await (async () => { const r = (await api("/calibration?asset=ETH")).j; return r.rows.length > 0 && r.rows.every((x) => typeof x.estN === "number" && "estimate" in x && "estYesWon" in x && "estGap" in x && ["too_few", "even", "yes_underpriced", "yes_overpriced"].includes(x.estVerdict)); })());
   ok("estimate report: returns its rows and an explanation", Array.isArray(mr.rows) && typeof mr.howToRead === "string" && typeof mr.contractsLogged === "number", JSON.stringify(mr).slice(0, 300));
   ok("estimate report: the AI is given it too", /modelReport/.test((await api("/chat", "POST", { message: "ECHO_DATA how is the estimate doing" })).j.answer));
 
