@@ -462,8 +462,12 @@ function hoursCard(){
 }
 // Edge report: how often contracts at each price level really settled YES, and what that means for buying either side (from the bot's recorded history)
 function edgeCard(){
-  var asset=h('select',null,assetGroups('GOLD'));
-  asset.value='GOLD';
+  // the choices stay as they were after a refresh (kept in this browser)
+  function pref(k,def){try{return localStorage.getItem(k)||def}catch(e){return def}}
+  function savePref(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+  var savedAsset=pref('pb_edge_asset','GOLD');
+  var asset=h('select',null,assetGroups(savedAsset));
+  asset.value=savedAsset;
   var mins=h('select',null,[['0-14','Whole contract'],['10-14','Early (10-14 min left)'],['6-9','Middle (6-9 min left)'],['3-5','Late (3-5 min left)'],['0-2','Last 3 minutes']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
   var view=h('select',null,[['even','Price vs probability (where they are even)'],['edge','Edge after fees']].map(function(o){return h('option',{value:o[0],text:o[1]})}));
   var body=h('div'),last=null,sortKey=null,sortDir=1;
@@ -523,7 +527,9 @@ function edgeCard(){
       else if(wasRunning){wasRunning=false;load()}
     }).catch(function(){});
   }
-  asset.addEventListener('change',load);mins.addEventListener('change',load);view.addEventListener('change',function(){sortKey=null;sortDir=1;draw()});load();progress();
+  mins.value=pref('pb_edge_mins','0-14');if(!mins.value)mins.value='0-14';
+  view.value=pref('pb_edge_view','even');if(!view.value)view.value='even';
+  asset.addEventListener('change',function(){savePref('pb_edge_asset',asset.value);load()});mins.addEventListener('change',function(){savePref('pb_edge_mins',mins.value);load()});view.addEventListener('change',function(){savePref('pb_edge_view',view.value);sortKey=null;sortDir=1;draw()});load();progress();
   return h('div',{class:'card'},h('h2',{text:'Edge report: price vs how often it won'}),h('div',{class:'row'},asset,mins,view),h('div',{class:'row',style:'margin-top:8px'},span,loadBtn),h('small',{class:'mute',style:'display:block'},'Loads gold first, then silver, then Bitcoin. Contracts the bot already recorded are not counted twice.'),prog,body);
 }
 function vTrades(){

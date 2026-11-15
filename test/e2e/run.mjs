@@ -384,6 +384,14 @@ try {
     await edgeCardBox.locator("th:text('Edge buying YES')").first().waitFor({ timeout: 20000 });
     ok("the Edge report has the Load past contracts button and says gold comes first", (await edgeCardBox.textContent()).includes("Load past contracts from Kalshi") && (await edgeCardBox.textContent()).includes("Loads gold first"));
     ok("the other view shows the edge of buying YES or NO after fees", (await edgeCardBox.textContent()).includes("Edge buying NO"));
+    // the choices survive a screen refresh
+    await edgeCardBox.locator("select").first().selectOption("ETH");
+    await page.reload();
+    await page.click("nav >> text=Trades");
+    await page.waitForSelector("text=Edge report: price vs how often it won", { timeout: 15000 });
+    ok("the Edge report keeps its asset and view after the screen refreshes", (await edgeCardBox.locator("select").first().inputValue()) === "ETH" && (await edgeCardBox.locator("select").nth(2).inputValue()) === "edge");
+    await edgeCardBox.locator("select").first().selectOption("GOLD");
+    await edgeCardBox.locator("select").nth(2).selectOption("even");
     const wrapping = await page.evaluate(() => [...document.querySelectorAll("#main th, #main td")].filter((c) => getComputedStyle(c).whiteSpace !== "nowrap" && !c.classList.contains("wrap")).length);
     ok("no table cell is allowed to wrap its text onto a second line (Trades tab tables)", wrapping === 0, String(wrapping));
     // the asset choice changes the table: each asset shows only its own trades
