@@ -7,7 +7,7 @@ export function startMock(port) {
   const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
   const pem = privateKey.export({ type: "pkcs8", format: "pem" });
   const KEY_ID = "test-key-id";
-  const state = { settledClose: new Map(), quotes: new Map(), positions: new Map(), orders: [], badAuth: 0, results: new Map(), balance: 100, exposure: new Map(), combo: { collectionAsks: [], created: [], rfqs: [], accepted: null, deleted: false, noQuote: false, invert: false, ticker: "", yesBid: 0.93, noBid: 0.05 } };
+  const state = { settledClose: new Map(), quotes: new Map(), positions: new Map(), orders: [], badAuth: 0, results: new Map(), balance: 100, cfSubscribes: [], exposure: new Map(), combo: { collectionAsks: [], created: [], rfqs: [], accepted: null, deleted: false, noQuote: false, invert: false, ticker: "", yesBid: 0.93, noBid: 0.05 } };
   const open = Date.now() - 360000; // current window opened 6 min ago
   const close = open + 3600000; // far enough away that 'minimum time remaining' never interferes with the test
   const iso = (t) => new Date(t).toISOString();
@@ -46,7 +46,7 @@ export function startMock(port) {
       if (url.pathname === "/_quiet") { state.quiet = b.on !== false; return send(200, {}); }
       if (url.pathname === "/_settle") { state.results.set(b.ticker, b.result); return send(200, {}); }
       if (url.pathname === "/_combo") { Object.assign(state.combo, b.set ?? {}); if (b.reset) { state.combo.collectionAsks = []; state.combo.created = []; state.combo.rfqs = []; state.combo.accepted = null; state.combo.deleted = false; for (const t of [...state.positions.keys()]) if (t.startsWith("KXMVEEV")) { state.positions.delete(t); state.exposure.delete(t); } } return send(200, state.combo); }
-      if (url.pathname === "/_state") return send(200, { orders: state.orders, positions: [...state.positions], badAuth: state.badAuth, combo: state.combo });
+      if (url.pathname === "/_state") return send(200, { orders: state.orders, positions: [...state.positions], badAuth: state.badAuth, combo: state.combo, cfSubscribes: state.cfSubscribes });
       return send(404, {});
     }
     if (!verify(req)) { state.badAuth++; return send(401, { code: "unauthorized", message: "bad signature" }); }
@@ -128,6 +128,17 @@ export function startMock(port) {
       ws.on("close", () => clients.delete(ws));
       ws.on("message", (raw) => {
         const m = JSON.parse(raw.toString());
+        if (m.cmd === "subscribe" && (m.params.channels ?? [])[0] === "cfbenchmarks_value") { // Kalshi's CF Benchmarks index feed
+          ws.cfIndices = new Set(m.params.index_ids ?? []);
+          state.cfSubscribes.push([...ws.cfIndices]);
+          ws.send(JSON.stringify({ id: m.id, type: "subscribed", msg: { channel: "cfbenchmarks_value", sid: 3 } }));
+          return;
+        }
+        if (m.cmd === "update_subscription" && m.params.action === "subscribe_indices") {
+          (m.params.index_ids ?? []).forEach((i) => ws.cfIndices?.add(i));
+          state.cfSubscribes.push(m.params.index_ids ?? []);
+          return;
+        }
         if (m.cmd === "subscribe") {
           const channel = (m.params.channels ?? ["ticker"])[0];
           const set = channel === "trade" ? ws.tradeTickers : ws.tickers;
@@ -144,5 +155,8 @@ export function startMock(port) {
     });
   });
   setInterval(() => { if (state.quiet) return; for (const t of state.quotes.keys()) tick(t); }, 2000);
+  setInterval(() => { // live index values, shaped like docs.kalshi.com/websockets/cfbenchmarks-value
+    for (const c of clients) for (const id of c.cfIndices ?? []) if (c.readyState === 1) c.send(JSON.stringify({ type: "cfbenchmarks_value", sid: 3, seq: 1, msg: { index_id: id, received_at: Date.now(), data: JSON.stringify({ type: "value", id, time: Date.now(), value: "100.50" }), avg_60s_data: { value: "100.40000000", window_size: 5, window_start_ts_ms: Date.now() - 60000, window_end_ts_exclusive: Date.now() } } }));
+  }, 1000);
   return new Promise((r) => server.listen(port, "127.0.0.1", () => r({ KEY_ID, pem, state, close: () => server.close() })));
 }

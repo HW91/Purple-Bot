@@ -19,6 +19,10 @@ import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type 
 import { describeComboOffers, evaluateCombo, pickComboQuote, type ComboDecision, type ComboState } from "./combo";
 import { classicPivots, dailyPrices, levelText, pivotNear, type PivotLevel } from "./pivots";
 
+/** Kalshi's CF Benchmarks index id for each coin (docs.kalshi.com/websockets/cfbenchmarks-value). Coins missing here have no live price feed. */
+const CF_INDEX: Record<string, string> = { BTC: "BRTI", ETH: "ETHUSD_RTI", SOL: "SOLUSD_RTI", XRP: "XRPUSD_RTI", DOGE: "DOGEUSD_RTI", BNB: "BNBUSD_RTI", HYPE: "HYPEUSD_RTI", ADA: "ADAUSD_RTI", BCH: "BCHUSD_RTI", NEAR: "NEARUSD_RTI", ZEC: "ZECUSD_RTI" };
+const CF_ASSET: Record<string, string> = Object.fromEntries(Object.entries(CF_INDEX).map(([a, i]) => [i, a]));
+
 const TICK_MS = 10_000;
 const OBS_MIN_INTERVAL_MS = 10_000;
 const WATCH_LEASE_MS = 90_000;
@@ -86,6 +90,10 @@ export class Engine extends DurableObject<Env> {
   private ws: WebSocket | null = null;
   private sid: number | null = null;
   private subscribed = new Set<string>();
+  private cfSid: number | null = null; // Kalshi's CF Benchmarks index feed (the live crypto prices its contracts settle on)
+  private cfSubscribed = new Set<string>();
+  private cfExtra = new Set<string>(); // assets whose chart the dashboard is showing, even if no bot trades them
+  private cfPrices = new Map<string, { value: number; avg60: number | null; ts: number }>();
   // order flow: Kalshi's live trade channel (only subscribed while an enabled bot uses it) and the running money totals
   private tradeSid: number | null = null;
   private tradeSubscribed = new Set<string>();
@@ -144,6 +152,18 @@ export class Engine extends DurableObject<Env> {
   }
 
   /** Dashboard heartbeat: keeps the engine alive while someone is looking, returns live state. */
+  /** The live price of one coin (from Kalshi's CF Benchmarks feed), for the chart. The first call for a coin starts its feed, so the answer can be empty for a few seconds. */
+  async cryptoPrice(asset: string): Promise<{ value: number; avg60: number | null; ageSec: number } | null> {
+    if (!CF_INDEX[asset]) return null;
+    await this.watch(); // keeps the engine running (and its feed connected) while the chart is open
+    if (!this.cfExtra.has(asset)) {
+      this.cfExtra.add(asset);
+      this.syncSubscription();
+    }
+    const p = this.cfPrices.get(asset);
+    return p && Date.now() - p.ts < 30_000 ? { value: p.value, avg60: p.avg60, ageSec: Math.round((Date.now() - p.ts) / 1000) } : null;
+  }
+
   async watch(): Promise<LiveState> {
     const wasWatching = this.watchUntil > Date.now();
     this.watchUntil = Date.now() + WATCH_LEASE_MS;
@@ -376,8 +396,8 @@ export class Engine extends DurableObject<Env> {
     }
     this.markets = found;
     if (found.size) {
-      const stmt = this.env.DB.prepare("INSERT INTO markets (ticker, asset, series, title, open_ts, close_ts, status, updated_ts) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(ticker) DO UPDATE SET status=excluded.status, title=excluded.title, updated_ts=excluded.updated_ts");
-      await this.env.DB.batch([...found.values()].map((m) => stmt.bind(m.ticker, m.asset, m.series, m.title, m.openTs, m.closeTs, m.status, now)));
+      const stmt = this.env.DB.prepare("INSERT INTO markets (ticker, asset, series, title, open_ts, close_ts, status, updated_ts, strike) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(ticker) DO UPDATE SET status=excluded.status, title=excluded.title, updated_ts=excluded.updated_ts, strike=COALESCE(excluded.strike, markets.strike)");
+      await this.env.DB.batch([...found.values()].map((m) => stmt.bind(m.ticker, m.asset, m.series, m.title, m.openTs, m.closeTs, m.status, now, m.strike ?? null)));
     }
     this.syncSubscription();
   }
@@ -393,6 +413,8 @@ export class Engine extends DurableObject<Env> {
     this.ws = null;
     this.sid = null;
     this.subscribed.clear();
+    this.cfSid = null;
+    this.cfSubscribed.clear();
     this.dropTradeFeed();
   }
 
@@ -460,6 +482,23 @@ export class Engine extends DurableObject<Env> {
         } // else: waiting for the subscribed reply
       } catch (e) {
         console.error("subscribe send failed", e);
+      }
+    }
+    // live crypto prices (Kalshi's CF Benchmarks feed): only the coins a bot uses or the chart is showing
+    {
+      const wantC = [...new Set([...this.trackedAssets(), ...this.cfExtra].map((a) => CF_INDEX[a]).filter((i): i is string => !!i))].filter((i) => !this.cfSubscribed.has(i));
+      if (wantC.length > 0) {
+        try {
+          if (this.cfSid === null && this.cfSubscribed.size === 0) {
+            this.ws.send(JSON.stringify({ id: 3, cmd: "subscribe", params: { channels: ["cfbenchmarks_value"], index_ids: wantC } }));
+            for (const i of wantC) this.cfSubscribed.add(i);
+          } else if (this.cfSid !== null) {
+            this.ws.send(JSON.stringify({ id: Date.now() % 1_000_000, cmd: "update_subscription", params: { sid: this.cfSid, action: "subscribe_indices", index_ids: wantC } }));
+            for (const i of wantC) this.cfSubscribed.add(i);
+          } // else: waiting for the subscribed reply
+        } catch (e) {
+          console.error("crypto price subscribe send failed", e);
+        }
       }
     }
     // trade channel: only the contract each enabled bot trades (order-flow decisions, and the money record the AI reads)
@@ -562,6 +601,25 @@ export class Engine extends DurableObject<Env> {
       } else if (Number.isFinite(sid) && m.msg?.channel === "trade") {
         this.tradeSid = sid;
         this.syncSubscription();
+      } else if (Number.isFinite(sid) && m.msg?.channel === "cfbenchmarks_value") {
+        this.cfSid = sid;
+        this.syncSubscription();
+      }
+      return;
+    }
+    if (m.type === "cfbenchmarks_value" && m.msg) {
+      // one live index value: { index_id, data: '{"type":"value","id":"BRTI","time":...,"value":"68000.12"}', avg_60s_data: { value } }
+      const asset = CF_ASSET[String(m.msg.index_id ?? "")];
+      if (!asset) return;
+      try {
+        const frame = JSON.parse(String(m.msg.data ?? "{}")) as { value?: string | number };
+        const value = num(frame.value, NaN);
+        if (Number.isFinite(value) && value > 0) {
+          const avg = num((m.msg.avg_60s_data as { value?: string } | undefined)?.value, NaN);
+          this.cfPrices.set(asset, { value, avg60: Number.isFinite(avg) ? avg : null, ts: Date.now() });
+        }
+      } catch {
+        /* a frame we cannot read is ignored */
       }
       return;
     }

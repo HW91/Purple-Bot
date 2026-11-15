@@ -492,7 +492,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
   }
   if (path === "/api/chart" && m === "GET") {
     const ticker = url.searchParams.get("ticker") ?? "";
-    const mk = await env.DB.prepare("SELECT ticker, asset, title, open_ts, close_ts, result FROM markets WHERE ticker=?").bind(ticker).first();
+    const mk = await env.DB.prepare("SELECT ticker, asset, title, open_ts, close_ts, result, strike FROM markets WHERE ticker=?").bind(ticker).first();
     if (!mk) return err("Unknown market", 404);
     const obs = (await env.DB.prepare("SELECT ts, yes_bid, yes_ask FROM observations WHERE ticker=? ORDER BY ts").bind(ticker).all<{ ts: number; yes_bid: number; yes_ask: number }>()).results;
     const trades = (await env.DB.prepare("SELECT outcome, opened_ts, closed_ts, avg_entry, realized_pnl, close_reason FROM positions WHERE ticker=?").bind(ticker).all()).results;
@@ -546,7 +546,16 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
         } catch { /* Kalshi did not give it (for example an archived contract): leave it blank */ }
       }
     }
-    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), minutes, trades, why, checks, settings, final });
+    // a contract that is still running: the coin's live price from Kalshi's CF Benchmarks feed (cryptocurrencies only)
+    let live: { value: number; avg60: number | null; ageSec: number } | null = null;
+    if (!(mk as { result?: string }).result && mkRow.close_ts > Date.now() && mkRow.open_ts <= Date.now()) {
+      try {
+        live = await engine(env).cryptoPrice(String((mk as { asset?: string }).asset ?? ""));
+      } catch {
+        /* the live price is optional */
+      }
+    }
+    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), minutes, trades, why, checks, settings, final, live });
   }
 
   // ---------------- AI chat (only calls AI when the user sends a message)

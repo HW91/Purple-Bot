@@ -516,6 +516,13 @@ try {
   ok("pivot check: no trade while the daily levels cannot be worked out, and the checklist says why", !!pivCheck && /not available/.test(pivCheck.text) && !(await api("/positions")).j.open.find((p) => p.bot_id === pivBot), JSON.stringify(pivCheck));
   await api(`/bots/${pivBot}/stop`, "POST");
 
+  // ---- M. live crypto price on the chart (Kalshi's CF Benchmarks feed) with the contract's target price
+  const livePage = async () => (await api(`/chart?ticker=${encodeURIComponent(T("BTC"))}`)).j;
+  const liveChart = await waitFor(async () => { const r = await livePage(); return r.live && r.live.value === 100.5 ? r : null; }, 40000, 2500);
+  ok("live price: a running crypto contract shows the live price from the CF Benchmarks feed, and its target price is saved", !!liveChart && liveChart.market.strike === 100 && Math.abs(liveChart.live.avg60 - 100.4) < 1e-9, JSON.stringify(liveChart?.live) + " " + JSON.stringify(liveChart?.market));
+  ok("live price: the bot subscribed to the Bitcoin index (BRTI) on the same connection", (await mockState()).cfSubscribes.flat().includes("BRTI"));
+  ok("live price: a metal has no live price (that feed costs $1,000 a month)", (await api(`/chart?ticker=${encodeURIComponent(T("GOLD"))}`)).j.live == null || (await api(`/chart?ticker=${encodeURIComponent(T("GOLD"))}`)).status === 404);
+
   // ---- J. delete rules + disconnect rules
   ok("cannot delete a bot while ON", await (async () => { await api(`/bots/${bot1}/start`, "POST"); const r = await api(`/bots/${bot1}`, "DELETE"); await api(`/bots/${bot1}/stop`, "POST"); return r.status === 409; })());
   ok("badAuth count on fake exchange only came from the deliberately wrong key", (await mockState()).badAuth === 1, String((await mockState()).badAuth));
