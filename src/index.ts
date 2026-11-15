@@ -5,7 +5,7 @@ import { deleteSetting, getAccountLimits, getCreds, getSetting, loadBots, log, r
 import { askAI } from "./notify";
 import { computePerformance } from "./stats";
 import { dayStartMs } from "./strategy";
-import { BUCKETS, priceVerdict, sideEdges } from "./edge";
+import { BUCKETS, bucketOf, priceVerdict, sideEdges } from "./edge";
 import { loadModelReport } from "./modelreport";
 import { buildDayStats, buildTradeFiles, loadPriceVsProbability, describeTrades, etDateString, runOverview } from "./analysis";
 import { KALSHI_RULES_PROMPT } from "./kalshi-rules";
@@ -380,6 +380,23 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const contracts = await env.DB.prepare("SELECT COUNT(*) c FROM markets WHERE asset = ? AND calibrated = 1").bind(asset).first<{ c: number }>();
     const loaded = await env.DB.prepare("SELECT COUNT(*) c FROM calibration_done WHERE asset = ?").bind(asset).first<{ c: number }>();
     const waiting = await env.DB.prepare("SELECT COUNT(*) c FROM markets WHERE asset = ? AND calibrated = 0 AND result IN ('yes','no')").bind(asset).first<{ c: number }>();
+    // the bot's own estimate (from the live price) for the same price levels and minutes: average estimate, and how often YES really won on those same contracts
+    const est = new Map<number, { n: number; p: number; w: number }>();
+    const lo = Math.min(from, to);
+    const hi = Math.max(from, to);
+    const estRows = (
+      await env.DB.prepare("SELECT l.k_yes, l.p_yes, m.result FROM model_log l JOIN markets m ON m.ticker = l.ticker WHERE l.asset = ? AND m.result IN ('yes','no') AND l.k_yes IS NOT NULL AND l.secs_left >= ? AND l.secs_left < ? AND l.ts >= ?")
+        .bind(asset, lo * 60, (hi + 1) * 60, Date.now() - 60 * 86_400_000)
+        .all<{ k_yes: number; p_yes: number; result: string }>()
+    ).results ?? [];
+    for (const r of estRows) {
+      const b = bucketOf(r.k_yes);
+      const e = est.get(b) ?? { n: 0, p: 0, w: 0 };
+      e.n++;
+      e.p += r.p_yes;
+      e.w += r.result === "yes" ? 1 : 0;
+      est.set(b, e);
+    }
     return json({
       asset,
       contractsCounted: (contracts?.c ?? 0) + (loaded?.c ?? 0),
@@ -387,7 +404,8 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       rows: rows.map((r) => {
         const mid = (r.bucket + 0.5) / BUCKETS;
         const e = sideEdges({ n: r.n, yesWins: r.w }, mid, mid); // priced at the middle of the range, before any spread
-        return { from: r.bucket / BUCKETS, to: (r.bucket + 1) / BUCKETS, n: r.n, yesWinRate: r.n ? r.w / r.n : null, gap: r.n ? Math.round((r.w / r.n - mid) * 1000) / 1000 : null, verdict: priceVerdict({ n: r.n, yesWins: r.w }, mid), edgeYes: Math.round(e.yes.edge * 1000) / 1000, edgeNo: Math.round(e.no.edge * 1000) / 1000 };
+        const em = est.get(r.bucket);
+        return { estN: em?.n ?? 0, estimate: em ? em.p / em.n : null, estYesWon: em ? em.w / em.n : null, from: r.bucket / BUCKETS, to: (r.bucket + 1) / BUCKETS, n: r.n, yesWinRate: r.n ? r.w / r.n : null, gap: r.n ? Math.round((r.w / r.n - mid) * 1000) / 1000 : null, verdict: priceVerdict({ n: r.n, yesWins: r.w }, mid), edgeYes: Math.round(e.yes.edge * 1000) / 1000, edgeNo: Math.round(e.no.edge * 1000) / 1000 };
       }),
     });
   }
