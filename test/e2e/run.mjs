@@ -394,6 +394,17 @@ try {
     await edgeCardBox.locator("select").nth(2).selectOption("even");
     const wrapping = await page.evaluate(() => [...document.querySelectorAll("#main th, #main td")].filter((c) => getComputedStyle(c).whiteSpace !== "nowrap" && !c.classList.contains("wrap")).length);
     ok("no table cell is allowed to wrap its text onto a second line (Trades tab tables)", wrapping === 0, String(wrapping));
+    // the AI tab's "Run overview" button needs two taps, so a stray tap cannot spend AI tokens
+    await page.click("nav >> text=AI");
+    const runOv = page.locator("button:text('Run overview for today so far')");
+    await runOv.waitFor({ timeout: 15000 });
+    await runOv.click();
+    const armedText = await page.locator("button:text('Tap again to run it')").count();
+    ok("the Run overview button asks for a second tap instead of running at once", armedText === 1);
+    await page.waitForTimeout(5600);
+    ok("the Run overview button goes back to normal if it is not tapped a second time", (await page.locator("button:text('Run overview for today so far')").count()) === 1 && (await page.locator("button:text('Tap again to run it')").count()) === 0);
+    await page.click("nav >> text=Trades");
+    await page.waitForSelector("text=Edge report: price vs how often it won", { timeout: 15000 });
     // the asset choice changes the table: each asset shows only its own trades
     const tradeSum = async () => page.evaluate(() => { const card = [...document.querySelectorAll(".card")].find((c) => c.querySelector("h2")?.textContent.includes("Time of day")); return [...card.querySelectorAll("tbody tr")].reduce((s, r) => s + Number(r.children[1].textContent), 0); });
     const pick = async (a) => { await todCard.locator("select").nth(1).selectOption(a); await page.waitForTimeout(1500); return tradeSum(); };

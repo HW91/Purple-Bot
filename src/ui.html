@@ -764,9 +764,15 @@ function vAI(){
   var botSel=h('select',null,h('option',{value:'',text:'Whole account'}));
   var cur=null;
   api('/bots').then(function(b){b.forEach(function(x){botSel.appendChild(h('option',{value:x.id,text:x.name}))})});
-  var runBtn=h('button',{class:'btn gray',text:'Run overview for today so far',onclick:function(){
+  // two taps to run, so a stray tap cannot spend AI tokens: the first tap asks, the second (within 5 seconds) runs it
+  var runLabel='Run overview for today so far',armed=false,armTimer=null;
+  function disarm(){armed=false;if(armTimer){clearTimeout(armTimer);armTimer=null}runBtn.textContent=runLabel;runBtn.className='btn gray'}
+  var runBtn=h('button',{class:'btn gray',text:runLabel,onclick:function(){
+    if(!armed){armed=true;runBtn.textContent='Tap again to run it (uses AI)';runBtn.className='btn amber';armTimer=setTimeout(disarm,5000);return}
+    if(armTimer){clearTimeout(armTimer);armTimer=null}
+    armed=false;runBtn.className='btn gray';
     runBtn.disabled=true;runBtn.textContent='Running… (can take up to a minute)';
-    act('/analyze',{method:'POST'}).then(function(){loadAna()}).catch(function(){}).then(function(){runBtn.disabled=false;runBtn.textContent='Run overview for today so far'});
+    act('/analyze',{method:'POST'}).then(function(){loadAna()}).catch(function(){}).then(function(){runBtn.disabled=false;runBtn.textContent=runLabel});
   }});
   root.appendChild(h('div',{class:'card'},h('h2',{text:'Daily overview (AI, advisory only)'}),
     h('p',{class:'mute',text:'Written once a day, after midnight Eastern, for the day that just ended. It skips trade-by-trade recaps and looks at what is hard to see by eye: what blocked trades, whether stop loss and take profit helped in hindsight, which hours were reliable, and what is worth testing.'}),runBtn,ana));
