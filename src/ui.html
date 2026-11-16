@@ -590,7 +590,7 @@ function vCharts(){
   var botSel=h('select'),asset=h('select'),flt=h('select',null,[['all','All contracts'],['win','Winners'],['loss','Losers'],['none','No trade']].map(function(o){return h('option',{value:o[0],text:o[1]})})),period=h('select',{style:'width:100%;max-width:100%;box-sizing:border-box;text-overflow:ellipsis'}),info=h('div',{class:'row'}),canvas=h('canvas'),tip=h('small',{class:'mute',style:'display:block;margin-top:6px',text:'Hover or tap the chart to inspect a data point.'}),whyEl=h('small',{style:'display:block;margin-top:6px'}),volEl=h('div');
   var all=ASSETS_AZ;assetGroups(null).forEach(function(g){asset.appendChild(g)});
   root.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('div',null,h('label',{text:'Bot'}),botSel),h('div',null,h('label',{text:'Asset'}),asset),h('div',null,h('label',{text:'Show'}),flt),h('div',{style:'flex:1 1 100%;min-width:0'},h('label',{text:'Contract period (current or past)'}),period)),info,canvas,tip,whyEl,volEl));
-  var data=null,chartBots=[];
+  var data=null,chartBots=[],clockTimer=null;
   function curBot(){return chartBots.find(function(b){return b.id===botSel.value})||null}
   // picking a bot shows the asset that bot trades (its Time Delay line is drawn too)
   function remember(){try{localStorage.setItem('pb_chart_bot',botSel.value);localStorage.setItem('pb_chart_asset',asset.value)}catch(e){}}
@@ -687,7 +687,7 @@ function vCharts(){
     lastVolTicker=t;lastVolTs=Date.now();
     api('/chart/volume?ticker='+encodeURIComponent(t)).then(function(v){if(period.value!==t)return;volEl.textContent='';volRows(v).forEach(function(x){volEl.appendChild(x)})}).catch(function(e){if(period.value===t){volEl.textContent='';volEl.appendChild(h('small',{text:'Volume is not available: '+e.message}))}});
   }
-  function loadChart(){if(!period.value){data=null;draw();showWhy();loadVolume();return}api('/chart?ticker='+encodeURIComponent(period.value)+(botSel.value?'&bot='+encodeURIComponent(botSel.value):'')).then(function(d){data=d;draw();showWhy();loadVolume()})}
+  function loadChart(){if(!period.value){data=null;draw();showWhy();loadVolume();return}api('/chart?ticker='+encodeURIComponent(period.value)+(botSel.value?'&bot='+encodeURIComponent(botSel.value):'')).then(function(d){data=d;data.skew=(d.serverNow||Date.now())-Date.now();draw();showWhy();loadVolume()})}
   function geom(){var dpr=window.devicePixelRatio||1;var w=canvas.clientWidth,hh=canvas.clientHeight;canvas.width=w*dpr;canvas.height=hh*dpr;var c=canvas.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);return{c:c,w:w,h:hh,l:44,r:10,t:10,b:24}}
   function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n)}
   function draw(hoverTs){
@@ -733,7 +733,20 @@ function vCharts(){
     data.trades.forEach(function(t){c.fillStyle=css('--accent');c.beginPath();c.arc(X(t.opened_ts),t.avg_entry!=null?Y(t.avg_entry):g.t+6,4,0,7);c.fill()});
     var last=mpts[mpts.length-1];
     info.textContent='';if(last){info.appendChild(h('span',{class:'g',text:'YES '+pct(last.yes)}));info.appendChild(h('span',{class:'r',text:'NO '+pct(1-last.yes)}));
-      // a finished contract: the final price minus the target price, right after the NO percentage
+      // right after the NO percentage: the countdown to the close while the contract runs, replaced by the final price minus the target once it has closed
+      var nowS=function(){return Date.now()+(data.skew||0)};
+      if(clockTimer){clearInterval(clockTimer);clockTimer=null}
+      if(!data.market.result&&data.market.close_ts>nowS()){
+        var clockEl=h('span',{style:'font-weight:600;font-variant-numeric:tabular-nums',text:''});
+        var closeAt=data.market.close_ts,reloaded=false;
+        var tick=function(){
+          if(!document.body.contains(clockEl)){clearInterval(clockTimer);clockTimer=null;return}
+          var s=Math.max(0,Math.ceil((closeAt-nowS())/1000));
+          clockEl.textContent=Math.floor(s/60)+':'+('0'+(s%60)).slice(-2);
+          if(s===0&&!reloaded){reloaded=true;setTimeout(loadChart,5000)} // the contract just closed: fetch the final result once
+        };
+        tick();info.appendChild(clockEl);clockTimer=setInterval(tick,1000);
+      }else if(data.final)info.appendChild(h('span',{class:data.final.diff>=0?'g':'r',text:'Closed '+(data.final.diff>=0?'+':'-')+'$'+Math.abs(data.final.diff).toFixed(2)+' vs target'}));
       // a running crypto contract: the live price (Kalshi's CF Benchmarks feed) and how far it is from the target
       if(data.live){
         var lp=data.live.value,tg=data.market.strike;
@@ -741,7 +754,6 @@ function vCharts(){
         if(tg!=null){var df=lp-tg;info.appendChild(h('span',{class:df>=0?'g':'r',text:'Now $'+px(lp)+' ('+(df>=0?'+':'-')+'$'+px(Math.abs(df))+' vs target)'}))}
         else info.appendChild(h('span',{class:'mute',text:'Now $'+px(lp)}));
       }
-      if(data.final)info.appendChild(h('span',{class:data.final.diff>=0?'g':'r',text:'Closed '+(data.final.diff>=0?'+':'-')+'$'+Math.abs(data.final.diff).toFixed(2)+' vs target'}));
       info.appendChild(h('span',{class:'mute',text:mpts.length+' recorded points · '+data.market.title}))}
     if(fin!==null)info.appendChild(h('span',{class:'mute',text:'Dashed = settled '+data.market.result.toUpperCase()+' at close'}));
     if(data.settings)info.appendChild(h('span',{class:'mute',text:'White lines = probability range for this contract: '+pct(data.settings.probMin)+' to '+pct(data.settings.probMax>0?data.settings.probMax:1)}));

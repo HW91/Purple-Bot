@@ -349,6 +349,14 @@ try {
     await page.locator("#main select").nth(1).selectOption("BTC");
     await page.waitForFunction(() => document.querySelectorAll("#main select")[3]?.value === "KXBTC15M-T1", null, { timeout: 15000 });
     ok("the Charts tab follows the selected asset (ETH loads the ETH contract, then BTC loads the BTC contract)", (await periodValue()) === "KXBTC15M-T1");
+    // the countdown to the close sits right after YES / NO: minutes and seconds only, ticking every second
+    const readClock = async () => page.evaluate(() => { const el = [...document.querySelectorAll("#main span")].find((s) => /^\d+:\d\d$/.test(s.textContent.trim())); if (!el) return null; const [m, s] = el.textContent.trim().split(":").map(Number); return m * 60 + s; });
+    await page.waitForFunction(() => [...document.querySelectorAll("#main span")].some((s) => /^\d+:\d\d$/.test(s.textContent.trim())), null, { timeout: 20000 });
+    const clock1 = await readClock();
+    await page.waitForTimeout(2300);
+    const clock2 = await readClock();
+    ok("the countdown to the close shows minutes and seconds only and ticks down every second", clock1 > 0 && clock2 !== null && clock1 - clock2 >= 2 && clock1 - clock2 <= 3, JSON.stringify({ clock1, clock2 }));
+    ok("the countdown is the span right after NO on the YES / NO line", await page.evaluate(() => { const spans = [...document.querySelectorAll("#main span")]; const i = spans.findIndex((s) => /^NO \d/.test(s.textContent.trim())); return i >= 0 && /^\d+:\d\d$/.test((spans[i + 1]?.textContent || "").trim()); }));
     await page.reload();
     await page.waitForSelector("text=Volume behind this contract", { timeout: 25000 });
     await page.waitForFunction(() => document.querySelectorAll("#main select")[3]?.value === "KXBTC15M-T1", null, { timeout: 15000 });

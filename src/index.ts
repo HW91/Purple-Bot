@@ -609,7 +609,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
         /* the live price is optional */
       }
     }
-    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), minutes, trades, why, checks, settings, final, live });
+    return json({ market: mk, points: obs.map((o) => ({ ts: o.ts, yes: (o.yes_bid + o.yes_ask) / 2, bid: o.yes_bid, ask: o.yes_ask })), minutes, trades, why, checks, settings, final, live, serverNow: Date.now() });
   }
 
   // ---------------- AI chat (only calls AI when the user sends a message)
