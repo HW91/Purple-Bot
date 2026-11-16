@@ -8,7 +8,7 @@ import type { Env } from "./types";
 import { askAI, emailShell, esc } from "./notify";
 import { computePerformance, type Performance } from "./stats";
 import type { BotRow, PositionRow } from "./db";
-import { getSetting, log, rowToBot, setSetting } from "./db";
+import { getSetting, log, rowToBot, setSetting, viewDemo } from "./db";
 import { simulate, type Obs, type SimMarket, type SimReport } from "./backtest";
 import { BUCKETS, priceVerdict, sideEdges } from "./edge";
 import { KALSHI_RULES_PROMPT } from "./kalshi-rules";
@@ -601,10 +601,11 @@ export interface DayStats {
 
 const hourLabel = (n: number) => `${n % 12 === 0 ? 12 : n % 12} ${n < 12 ? "AM" : "PM"}`;
 
-export async function buildDayStats(env: Env, start: number, end: number, label: string, botId?: string | null): Promise<DayStats> {
+export async function buildDayStats(env: Env, start: number, end: number, label: string, botId?: string | null, demoMode?: 0 | 1): Promise<DayStats> {
+  const dm = demoMode ?? (await viewDemo(env)); // follows the Real / Demo switch unless told otherwise (the scheduled overview is always real)
   const bf = (col: string) => (botId ? ` AND ${col} = ?` : "");
   const bb = (...a: unknown[]) => (botId ? [...a, botId] : a);
-  const closed = (await env.DB.prepare("SELECT * FROM positions WHERE status != 'open' AND closed_ts >= ? AND closed_ts < ?" + bf("bot_id")).bind(...bb(start, end)).all<PositionRow>()).results ?? [];
+  const closed = (await env.DB.prepare(`SELECT * FROM positions WHERE status != 'open' AND demo = ${dm} AND closed_ts >= ? AND closed_ts < ?` + bf("bot_id")).bind(...bb(start, end)).all<PositionRow>()).results ?? [];
   const perf = computePerformance(closed);
 
   const hours = new Map<number, { trades: number; wins: number; losses: number; pnl: number }>();
@@ -620,7 +621,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
   const early = (
     await env.DB.prepare(
       "SELECT p.close_reason, p.outcome, p.entry_qty, p.entry_cost, p.entry_fee, p.realized_pnl, m.result FROM positions p JOIN markets m ON m.ticker = p.ticker " +
-        "WHERE p.status != 'open' AND p.closed_ts >= ? AND p.closed_ts < ? AND p.close_reason IN ('stop_loss','take_profit')" + bf("p.bot_id"),
+        `WHERE p.status != 'open' AND p.demo = ${dm} AND p.closed_ts >= ? AND p.closed_ts < ? AND p.close_reason IN ('stop_loss','take_profit')` + bf("p.bot_id"),
     )
       .bind(...bb(start, end))
       .all<HindsightRow>()
@@ -675,7 +676,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
       takeProfit: c.takeProfitOn ? `$${c.takeProfit}` : "off",
     };
   });
-  const open = await env.DB.prepare("SELECT COUNT(*) c FROM positions WHERE status='open'" + bf("bot_id")).bind(...bb()).first<{ c: number }>();
+  const open = await env.DB.prepare(`SELECT COUNT(*) c FROM positions WHERE status='open' AND demo = ${dm}` + bf("bot_id")).bind(...bb()).first<{ c: number }>();
 
   return {
     label,
@@ -717,8 +718,8 @@ export interface Overview {
   stats: DayStats;
 }
 
-export async function runOverview(env: Env, start: number, end: number, label: string): Promise<Overview> {
-  const stats = await buildDayStats(env, start, end, label);
+export async function runOverview(env: Env, start: number, end: number, label: string, demoMode?: 0 | 1): Promise<Overview> {
+  const stats = await buildDayStats(env, start, end, label, null, demoMode);
   const answer = await askAI(env, PROMPT + KALSHI_RULES_PROMPT + "\n\nDATA:\n" + JSON.stringify(stats).slice(0, 14_000));
   const text = `Overview for ${label}\n\n` + (answer ?? "The AI could not be reached, so there is no written overview for this period. The measured numbers are still saved with it.");
   await env.DB.prepare("INSERT INTO analyses (ts, stats, text) VALUES (?,?,?)").bind(Date.now(), JSON.stringify(stats).slice(0, 60_000), text).run();

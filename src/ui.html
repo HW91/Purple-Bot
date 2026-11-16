@@ -71,9 +71,11 @@ a.chatlink{color:var(--text);text-decoration:underline;font-weight:600}
   <h1>Purple Bot</h1>
   <span id="hBalance" class="pill">Balance —</span>
   <span id="hConn" class="pill">—</span>
+  <span style="display:inline-flex;gap:4px"><button class="btn" id="modeReal">Real</button><button class="btn gray" id="modeDemo">Demo</button></span>
   <span style="flex:1"></span>
   <button class="btn red" id="emergencyBtn">EMERGENCY SHUTDOWN</button>
 </header>
+<div id="demoBar" class="banner hidden" style="margin:8px 12px">DEMO: every screen shows demo results only. Demo bots send no real orders and use a pretend $1,000 balance. Switch back to Real to see your real results.</div>
 <nav id="nav"></nav>
 <main id="main"></main>
 </div>
@@ -159,6 +161,10 @@ function go(t){tab=t;try{history.replaceState(null,'','#'+encodeURIComponent(t))
   if(t!=='Dashboard')api('/live').then(function(l){live=l;updateHeader()}).catch(function(){});
 }
 
+// the Real / Demo switch: every results screen follows it
+function setMode(mode){api('/view',{method:'POST',body:{mode:mode}}).then(function(){return api('/live')}).then(function(l){live=l;updateHeader();go(tab)}).catch(function(e){toast(e.message,true)})}
+$('#modeReal').addEventListener('click',function(){if(live&&live.demoView)setMode('real')});
+$('#modeDemo').addEventListener('click',function(){if(!live||!live.demoView)setMode('demo')});
 $('#emergencyBtn').addEventListener('click',function(){
   if(!confirm('EMERGENCY SHUTDOWN: turn every bot OFF and try to close every open position now. Continue?'))return;
   act('/emergency',{method:'POST'},'Emergency shutdown started').then(function(r){toast('Closing '+r.closing+' position(s)')});
@@ -166,7 +172,10 @@ $('#emergencyBtn').addEventListener('click',function(){
 
 function updateHeader(){
   if(!live)return;
-  $('#hBalance').textContent='Balance '+usd(live.balance)+(live.portfolioValue!=null?' · Portfolio '+usd(live.portfolioValue):'');
+  var dv=!!live.demoView;
+  $('#hBalance').textContent=(dv?'Demo balance ':'Balance ')+usd(live.balance)+(live.portfolioValue!=null?' · '+(dv?'Demo portfolio ':'Portfolio ')+usd(live.portfolioValue):'');
+  $('#modeReal').className=dv?'btn gray':'btn';$('#modeDemo').className=dv?'btn':'btn gray';
+  $('#demoBar').classList.toggle('hidden',!dv);
   var c=$('#hConn');
   c.className='pill '+(live.connected?'ok':live.restFallback?'warn':'bad');
   c.textContent=live.connected?'Live feed connected':live.restFallback?'Live feed down — slow backup mode':'Live feed offline';
@@ -283,7 +292,7 @@ function openBot(id){
       var lossToday=Math.max(0,-s.today.pnl);
       body.textContent='';
       body.appendChild(h('div',{class:'card'},
-        h('div',{class:'row'},h('h2',{text:b.name,style:'margin:0'}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:cfg.strategy+' · '+(cfg.comboOn?'combo of '+cfg.comboAssets.join(' + '):'trades '+cfg.tradeAsset+' · confirmed by '+cfg.assets.join(', '))})),
+        h('div',{class:'row'},h('h2',{text:b.name,style:'margin:0'}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),b.config.demo?h('span',{class:'pill warn',text:'DEMO'}):null,h('span',{class:'mute',text:cfg.strategy+' · '+(cfg.comboOn?'combo of '+cfg.comboAssets.join(' + '):'trades '+cfg.tradeAsset+' · confirmed by '+cfg.assets.join(', '))})),
         h('div',{class:'mute',style:'margin-top:8px',text:'Signal: '+st.reason})));
       body.appendChild(h('div',{class:'card'},h('h2',{text:'Profit / loss — this bot only'}),[
         tileGroup('Open trades',[
@@ -327,7 +336,7 @@ function vBots(){
   root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn',text:'+ New bot',onclick:function(){editBot(null)}})));
   root.appendChild(form);root.appendChild(list);
   function load(){api('/bots').then(function(bots){botsCache=bots;list.textContent='';bots.forEach(function(b){
-    list.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:(b.config.comboOn?'combo of '+b.config.comboAssets.join(' + '):'trades '+b.config.tradeAsset+' · confirmed by '+b.config.assets.join(', '))})),
+    list.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),b.config.demo?h('span',{class:'pill warn',text:'DEMO'}):null,h('span',{class:'mute',text:(b.config.comboOn?'combo of '+b.config.comboAssets.join(' + '):'trades '+b.config.tradeAsset+' · confirmed by '+b.config.assets.join(', '))})),
       h('div',{class:'row',style:'margin-top:10px'},
       h('button',{class:'btn gray',text:'Edit',onclick:function(){editBot(b)}}),
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
@@ -395,6 +404,10 @@ function vBots(){
       });
       var agreeBox=h('div',{style:'margin-top:10px'},h('label',{text:'Assets to check for agreement (tick the ones that may have to lean the same way)'}),assets);
       f.appendChild(agreeBox);
+      // demo mode: the same rules on live prices, no real orders
+      var demoOn=chk('demoOn');demoOn.checked=!!cfg.demo;
+      f.appendChild(h('div',{style:'margin-top:14px'},h('label',{class:'chk',style:'font-weight:600'},demoOn,'Demo mode (no real orders)'),
+        h('small',{style:'display:block;margin:2px 0 8px',text:'The bot runs the same rules on live prices but sends nothing to Kalshi. Each entry is filled at the price it would pay, with Kalshi\'s fee formula, and exits sell at the current bid. Demo trades are saved apart from real ones and appear only when the Demo switch at the top is on. They use a pretend $1,000 balance and the limits set on this bot. The mode can only be changed while the bot is off with no open trades. Not available for combos.'})));
       // combo: one Kalshi contract on several assets that pays only if every pick wins
       var comboBoxes=[h('div',{class:'mute',text:'Metals'})].concat(METALS_AZ.map(comboBox),[h('div',{class:'mute',style:'margin-top:6px',text:'Cryptocurrencies'})],CRYPTO_AZ.map(comboBox));
       function comboBox(a){var cb=h('input',{type:'checkbox','data-c':a});cb.checked=(cfg.comboAssets||[]).indexOf(a)>=0;return h('label',{class:'chk'},cb,a)}
@@ -426,6 +439,7 @@ function vBots(){
         out.flowOn=fl.checked;
         out.noTradeWindows=[].slice.call(winBox.children).map(function(r){return {start:r._s.value,end:r._e.value}}).filter(function(w){return w.start||w.end});
         out.tradeAsset=tradeSel.value;
+        out.demo=demoOn.checked;
         out.comboOn=comboOn.checked;out.comboWindowMin=+inp.comboWindowMin.value;out.comboMaxCost=+inp.comboMaxCost.value/100;
         out.comboAssets=[].slice.call(f.querySelectorAll('[data-c]')).filter(function(x){return x.checked}).map(function(x){return x.getAttribute('data-c')});
         out.stopLossOn=sl.checked;out.takeProfitOn=tp.checked;out.notify=nt.value;

@@ -8,12 +8,12 @@
 import { DurableObject } from "cloudflare:workers";
 import { KalshiAuthError, KalshiClient, KalshiHttpError, num, type ComboLegRef, type KalshiMarket } from "./kalshi";
 import { authHeaders, importSigningKey, type SigningKey } from "./kalshi-auth";
-import { getAccountLimits, getCreds, getSetting, isBotEnabled, loadBots, log, openPositions, setSetting, type PositionRow } from "./db";
+import { demoBalance, getAccountLimits, getCreds, getSetting, isBotEnabled, loadBots, log, openPositions, setSetting, type PositionRow } from "./db";
 import { emailShell, esc, sendEmail } from "./notify";
 import { etDateString, overviewEmail, runOverview } from "./analysis";
 import { checklistFor, type CheckLine } from "./checklist";
 import { FlowTracker } from "./flow";
-import { samplesFromCandles, weightedSamplesFromObs, type Cell, type EdgeLookup } from "./edge";
+import { feePerContract, samplesFromCandles, weightedSamplesFromObs, type Cell, type EdgeLookup } from "./edge";
 import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
 import { describeComboOffers, evaluateCombo, pickComboQuote, type ComboDecision, type ComboState } from "./combo";
@@ -980,6 +980,7 @@ export class Engine extends DurableObject<Env> {
   }
 
   private async attemptEntry(bot: Bot, d: EntryDecision, now: number): Promise<void> {
+    if (bot.config.demo) return this.attemptDemoEntry(bot, d, now); // demo bots never reach the order code below
     const t = d.trade!;
     const lockKey = `entry:${bot.id}:${t.ticker}`;
     if (this.inflight.has(lockKey)) return;
@@ -1016,6 +1017,7 @@ export class Engine extends DurableObject<Env> {
       submitted = true;
       let res;
       try {
+        if (bot.config.demo) throw new Error("A demo bot must never send a real order"); // hard guard
         res = await this.client.createOrder({ ticker: t.ticker, clientOrderId: orderId, side: t.orderSide, count: t.count, price: t.orderPrice, reduceOnly: false });
       } catch (e) {
         await this.orderFailed(bot, orderId, t.ticker, e, "entry");
@@ -1230,6 +1232,68 @@ export class Engine extends DurableObject<Env> {
     }
   }
 
+  // ---------------------------------------------------------------- demo (paper) trading: the same rules on live prices, no orders sent to Kalshi
+
+  /** A demo entry: the trade the rules chose is "filled" at the price it would pay, with Kalshi's fee formula. Saved as a demo trade. */
+  private async attemptDemoEntry(bot: Bot, d: EntryDecision, now: number): Promise<void> {
+    const t = d.trade!;
+    const lockKey = `entry:${bot.id}:${t.ticker}`;
+    if (this.inflight.has(lockKey) || this.entered.has(`${bot.id}|${t.ticker}`)) return;
+    this.inflight.add(lockKey);
+    try {
+      if (!(await isBotEnabled(this.env, bot.id))) {
+        bot.enabled = false;
+        return;
+      }
+      // a restart forgets memory, so the database also says whether this demo bot already entered this contract
+      if (await this.env.DB.prepare("SELECT 1 AS x FROM positions WHERE bot_id=? AND ticker=? AND demo=1").bind(bot.id, t.ticker).first()) {
+        this.entered.add(`${bot.id}|${t.ticker}`);
+        return;
+      }
+      const cost = t.count * t.costPerContract;
+      const blocked = checkRisk(bot.config, await getAccountLimits(this.env), await this.riskStats(bot), cost);
+      if (blocked) {
+        this.noteReason(bot, { ...d, ok: false, code: "risk", reason: `Risk limit: ${blocked}` }, now);
+        return;
+      }
+      const price = t.costPerContract;
+      const qty = t.count;
+      const fee = Math.ceil(feePerContract(price) * qty * 1e6) / 1e6;
+      const pos: PositionRow = {
+        id: crypto.randomUUID(), bot_id: bot.id, ticker: t.ticker, asset: t.asset, outcome: t.outcome, entry_qty: qty, open_qty: qty, avg_entry: price, entry_cost: qty * price, entry_fee: fee,
+        exit_proceeds: 0, exit_fee: 0, status: "open", opened_ts: now, closed_ts: null, close_reason: null, market_close_ts: t.market.closeTs, entry_prob: t.prob, exit_prob: null,
+        fav_max: t.prob, fav_min: t.prob, prob_before_close: t.prob, agree_count: t.direction === "up" ? d.upCount : d.downCount, duration_min: bot.config.durationMin, realized_pnl: null, result: null, demo: 1,
+      };
+      await this.env.DB.prepare("INSERT INTO positions (id, bot_id, ticker, asset, outcome, entry_qty, open_qty, avg_entry, entry_cost, entry_fee, exit_proceeds, exit_fee, status, opened_ts, market_close_ts, entry_prob, fav_max, fav_min, prob_before_close, agree_count, duration_min, demo) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)")
+        .bind(pos.id, pos.bot_id, pos.ticker, pos.asset, pos.outcome, pos.entry_qty, pos.open_qty, pos.avg_entry, pos.entry_cost, pos.entry_fee, 0, 0, "open", pos.opened_ts, pos.market_close_ts, pos.entry_prob, pos.fav_max, pos.fav_min, pos.prob_before_close, pos.agree_count, pos.duration_min)
+        .run();
+      this.posCache.set(pos.id, pos);
+      this.entered.add(`${bot.id}|${t.ticker}`);
+      const frozen = this.notes.get(`${bot.id}|${t.ticker}`);
+      if (frozen?.checks) {
+        frozen.checks = frozen.checks.map((c) => (c.key === "risk" ? { key: "risk", ok: true, text: "Risk limits passed" } : c));
+        frozen.dirty = true;
+      }
+      await log(this.env, "info", "order", `DEMO ENTERED ${t.asset} ${t.outcome.toUpperCase()} x${qty} @ ${price.toFixed(3)} fee $${fee.toFixed(3)} — ${d.reason}`, bot.id);
+    } finally {
+      this.inflight.delete(lockKey);
+      await this.flush().catch(() => {});
+    }
+  }
+
+  /** A demo exit (stop loss, take profit, manual close): sold at the current bid of our side, with the fee formula. */
+  private async closeDemoPosition(p: PositionRow, reason: string, q: Quote): Promise<void> {
+    if (q.yesBid <= 0 || q.yesAsk <= 0) return;
+    const price = p.outcome === "yes" ? q.yesBid : 1 - q.yesAsk;
+    const qty = r2(p.open_qty);
+    if (qty < 0.01) return;
+    this.lastExitAttempt.set(p.id, Date.now());
+    p.exit_proceeds += qty * price;
+    p.exit_fee += Math.ceil(feePerContract(price) * qty * 1e6) / 1e6;
+    p.open_qty = 0;
+    await this.finalize(p, reason, q);
+  }
+
   private async orderFailed(bot: Bot | null, orderId: string, ticker: string, e: unknown, kind: "entry" | "exit"): Promise<void> {
     const definite = e instanceof KalshiHttpError && e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429;
     const msg = (e as Error).message;
@@ -1247,18 +1311,19 @@ export class Engine extends DurableObject<Env> {
   private async riskStats(bot: Bot): Promise<RiskStats> {
     const now = Date.now();
     const day = dayStartMs(now);
+    const demo = bot.config.demo ? 1 : 0; // a demo bot is checked against demo trades only, a real bot against real trades only
     const q = async (sql: string, ...b: unknown[]) => (await this.env.DB.prepare(sql).bind(...b).first<Record<string, number>>()) ?? {};
     const [openBot, openAll, trades, invBot, invAll, pnlBot, pnlAll, pending] = await Promise.all([
-      q("SELECT COUNT(*) c FROM positions WHERE status='open' AND bot_id=?", bot.id),
-      q("SELECT COUNT(*) c FROM positions WHERE status='open'"),
-      q("SELECT COUNT(*) c FROM orders WHERE kind='entry' AND bot_id=? AND fill_count>0 AND created_ts>=?", bot.id, now - 3_600_000),
-      q("SELECT COALESCE(SUM(entry_cost+entry_fee),0) c FROM positions WHERE bot_id=? AND opened_ts>=?", bot.id, day),
-      q("SELECT COALESCE(SUM(entry_cost+entry_fee),0) c FROM positions WHERE opened_ts>=?", day),
-      q("SELECT COALESCE(SUM(realized_pnl),0) c FROM positions WHERE bot_id=? AND closed_ts>=? AND realized_pnl IS NOT NULL", bot.id, day),
-      q("SELECT COALESCE(SUM(realized_pnl),0) c FROM positions WHERE closed_ts>=? AND realized_pnl IS NOT NULL", day),
-      q("SELECT COUNT(*) c FROM orders WHERE status='submitted'"),
+      q("SELECT COUNT(*) c FROM positions WHERE status='open' AND bot_id=? AND demo=?", bot.id, demo),
+      q("SELECT COUNT(*) c FROM positions WHERE status='open' AND demo=?", demo),
+      demo ? q("SELECT COUNT(*) c FROM positions WHERE demo=1 AND bot_id=? AND opened_ts>=?", bot.id, now - 3_600_000) : q("SELECT COUNT(*) c FROM orders WHERE kind='entry' AND bot_id=? AND fill_count>0 AND created_ts>=?", bot.id, now - 3_600_000),
+      q("SELECT COALESCE(SUM(entry_cost+entry_fee),0) c FROM positions WHERE bot_id=? AND opened_ts>=? AND demo=?", bot.id, day, demo),
+      q("SELECT COALESCE(SUM(entry_cost+entry_fee),0) c FROM positions WHERE opened_ts>=? AND demo=?", day, demo),
+      q("SELECT COALESCE(SUM(realized_pnl),0) c FROM positions WHERE bot_id=? AND closed_ts>=? AND realized_pnl IS NOT NULL AND demo=?", bot.id, day, demo),
+      q("SELECT COALESCE(SUM(realized_pnl),0) c FROM positions WHERE closed_ts>=? AND realized_pnl IS NOT NULL AND demo=?", day, demo),
+      demo ? Promise.resolve({ c: 0 } as Record<string, number>) : q("SELECT COUNT(*) c FROM orders WHERE status='submitted'"),
     ]);
-    const bal = await this.getBalance();
+    const bal = demo ? (await demoBalance(this.env)).cash : await this.getBalance();
     return {
       botOpenPositions: openBot.c ?? 0,
       accountOpenPositions: openAll.c ?? 0,
@@ -1267,9 +1332,9 @@ export class Engine extends DurableObject<Env> {
       accountInvestedToday: invAll.c ?? 0,
       botNetPnlToday: pnlBot.c ?? 0,
       accountNetPnlToday: pnlAll.c ?? 0,
-      pendingOrders: (pending.c ?? 0) + [...this.inflight].filter((k) => k.startsWith("exit:")).length,
+      pendingOrders: demo ? 0 : (pending.c ?? 0) + [...this.inflight].filter((k) => k.startsWith("exit:")).length,
       balance: bal,
-      reconciled: this.reconciled,
+      reconciled: demo ? true : this.reconciled,
     };
   }
 
@@ -1326,6 +1391,7 @@ export class Engine extends DurableObject<Env> {
     const now = Date.now();
     if (now - (this.lastExitAttempt.get(p.id) ?? 0) < 3_000) return;
     if (now >= p.market_close_ts) return; // contract over: settlement path handles it
+    if (p.demo === 1) return this.closeDemoPosition(p, reason, q); // demo positions never reach Kalshi
     if (!this.client || q.yesBid <= 0 || q.yesAsk <= 0) return;
     this.lastExitAttempt.set(p.id, now);
     this.inflight.add(lockKey);
@@ -1341,6 +1407,7 @@ export class Engine extends DurableObject<Env> {
         .run();
       let res;
       try {
+        if (p.demo === 1) throw new Error("A demo position must never send a real order"); // hard guard
         res = await this.client.createOrder({ ticker: p.ticker, clientOrderId: orderId, side, count: qty, price, reduceOnly: true });
       } catch (e) {
         await this.orderFailed(this.bots.find((b) => b.id === p.bot_id) ?? null, orderId, p.ticker, e, "exit");
@@ -1394,7 +1461,8 @@ export class Engine extends DurableObject<Env> {
     this.posCache.delete(p.id);
     this.dirtyPos.delete(p.id);
     this.closeRequests.delete(p.id);
-    await log(this.env, "info", "order", `CLOSED ${p.asset} ${p.outcome.toUpperCase()} (${reason}): ${result.toUpperCase()} $${pnl.toFixed(2)} after fees`, p.bot_id);
+    await log(this.env, "info", "order", `${p.demo === 1 ? "DEMO " : ""}CLOSED ${p.asset} ${p.outcome.toUpperCase()} (${reason}): ${result.toUpperCase()} $${pnl.toFixed(2)} after fees`, p.bot_id);
+    if (p.demo === 1) return; // demo trades send no emails
     const bot = this.bots.find((b) => b.id === p.bot_id);
     if (bot?.config.notify === "immediate") {
       await sendEmail(this.env, `Purple Bot closed ${p.asset}: ${result} $${pnl.toFixed(2)}`, emailShell("Trade closed", `<p><b>${esc(bot.name)}</b> closed ${esc(p.asset)} ${p.outcome.toUpperCase()} (${esc(reason)}).</p><p>Result: <b>${result.toUpperCase()}</b> $${pnl.toFixed(2)} after fees.</p>`));
@@ -1402,7 +1470,7 @@ export class Engine extends DurableObject<Env> {
     const every = bot?.config.notifyEveryTrades ?? 0;
     if (bot && every > 0) {
       // email only when the bot's last N finished trades were ALL wins, and only once per run: the next email needs N new trades after the newest one already reported
-      const rows = (await this.env.DB.prepare("SELECT realized_pnl, result, closed_ts FROM positions WHERE bot_id=? AND status IN ('closed','settled') ORDER BY closed_ts DESC LIMIT ?").bind(bot.id, every).all<{ realized_pnl: number | null; result: string | null; closed_ts: number }>()).results ?? [];
+      const rows = (await this.env.DB.prepare("SELECT realized_pnl, result, closed_ts FROM positions WHERE bot_id=? AND demo=0 AND status IN ('closed','settled') ORDER BY closed_ts DESC LIMIT ?").bind(bot.id, every).all<{ realized_pnl: number | null; result: string | null; closed_ts: number }>()).results ?? [];
       const key = `win_streak_notified_${bot.id}`;
       const lastTs = Number((await getSetting(this.env, key)) ?? 0) || 0;
       if (rows.length === every && rows.every((r) => r.result === "win") && Math.min(...rows.map((r) => r.closed_ts)) > lastTs) {
@@ -1596,7 +1664,7 @@ export class Engine extends DurableObject<Env> {
       const acct = await this.client.positions();
       const byTicker = new Map(acct.map((a) => [a.ticker, a.position]));
       const local = new Map<string, number>();
-      for (const p of this.posCache.values()) local.set(p.ticker, (local.get(p.ticker) ?? 0) + (p.outcome === "yes" ? p.open_qty : -p.open_qty));
+      for (const p of this.posCache.values()) if (p.demo !== 1) local.set(p.ticker, (local.get(p.ticker) ?? 0) + (p.outcome === "yes" ? p.open_qty : -p.open_qty));
       const problems: string[] = [];
       const now = Date.now();
       for (const [ticker, qty] of local) {
@@ -1673,7 +1741,7 @@ export class Engine extends DurableObject<Env> {
     const start = dayStartMs(end - 3_600_000);
     const active = await this.env.DB.prepare("SELECT (SELECT COUNT(*) FROM positions WHERE opened_ts >= ?1 AND opened_ts < ?2) + (SELECT COUNT(*) FROM contract_notes WHERE updated_ts >= ?1 AND updated_ts < ?2) c").bind(start, end).first<{ c: number }>();
     if ((active?.c ?? 0) === 0) return; // nothing happened that day
-    const o = await runOverview(this.env, start, end, etDateString(start));
+    const o = await runOverview(this.env, start, end, etDateString(start), 0); // the scheduled overview is always about real trades
     if (this.bots.some((b) => b.config.notify === "daily")) await sendEmail(this.env, `Purple Bot daily overview: ${etDateString(start)}`, overviewEmail(o));
   }
 

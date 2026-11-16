@@ -1,7 +1,7 @@
 import { Engine } from "./engine";
 import { KalshiAuthError, KalshiClient } from "./kalshi";
 import { b64encode, encryptSecret, importSigningKey } from "./kalshi-auth";
-import { deleteSetting, getAccountLimits, getCreds, getSetting, loadBots, log, rowToBot, setSetting, type PositionRow } from "./db";
+import { deleteSetting, demoBalance, getAccountLimits, getCreds, getSetting, loadBots, log, rowToBot, setSetting, viewDemo, type PositionRow } from "./db";
 import { askAI } from "./notify";
 import { computePerformance } from "./stats";
 import { dayStartMs } from "./strategy";
@@ -86,7 +86,8 @@ async function kalshiClient(env: Env): Promise<KalshiClient | null> {
 }
 
 async function closedPositions(env: Env, botId?: string | null, limit = 2000): Promise<PositionRow[]> {
-  const sql = botId ? "SELECT * FROM positions WHERE status != 'open' AND bot_id = ? ORDER BY closed_ts DESC LIMIT ?" : "SELECT * FROM positions WHERE status != 'open' ORDER BY closed_ts DESC LIMIT ?";
+  const dm = await viewDemo(env); // results follow the Real / Demo switch at the top of the app
+  const sql = botId ? `SELECT * FROM positions WHERE status != 'open' AND demo = ${dm} AND bot_id = ? ORDER BY closed_ts DESC LIMIT ?` : `SELECT * FROM positions WHERE status != 'open' AND demo = ${dm} ORDER BY closed_ts DESC LIMIT ?`;
   const st = botId ? env.DB.prepare(sql).bind(botId, limit) : env.DB.prepare(sql).bind(limit);
   return (await st.all<PositionRow>()).results ?? [];
 }
@@ -102,9 +103,10 @@ async function minuteProbs(env: Env, ticker: string, openTs: number, closeTs: nu
 
 /** Profit/loss totals (realized, after fees) from closed positions since `since`, for the whole account or one bot. */
 async function plAgg(env: Env, since: number, botId?: string): Promise<{ trades: number; wins: number; losses: number; pnl: number; fees: number; winRate: number | null }> {
+  const dm = await viewDemo(env);
   const sql =
     "SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN result='win' THEN 1 ELSE 0 END),0) w, COALESCE(SUM(CASE WHEN result='loss' THEN 1 ELSE 0 END),0) l, " +
-    "COALESCE(SUM(realized_pnl),0) pnl, COALESCE(SUM(entry_fee+exit_fee),0) fees FROM positions WHERE status != 'open' AND realized_pnl IS NOT NULL AND closed_ts >= ?" +
+    `COALESCE(SUM(realized_pnl),0) pnl, COALESCE(SUM(entry_fee+exit_fee),0) fees FROM positions WHERE status != 'open' AND demo = ${dm} AND realized_pnl IS NOT NULL AND closed_ts >= ?` +
     (botId ? " AND bot_id = ?" : "");
   const r = await (botId ? env.DB.prepare(sql).bind(since, botId) : env.DB.prepare(sql).bind(since)).first<{ n: number; w: number; l: number; pnl: number; fees: number }>();
   const w = r?.w ?? 0;
@@ -115,7 +117,7 @@ async function plAgg(env: Env, since: number, botId?: string): Promise<{ trades:
 async function plSummary(env: Env, botId?: string) {
   const now = Date.now();
   const day = dayStartMs(now);
-  const where = botId ? " AND bot_id = ?" : "";
+  const where = (botId ? " AND bot_id = ?" : "") + ` AND demo = ${await viewDemo(env)}`;
   const bind = (sql: string, ...b: unknown[]) => (botId ? env.DB.prepare(sql).bind(...b, botId) : env.DB.prepare(sql).bind(...b));
   const [today, week, all, open, invested] = await Promise.all([
     plAgg(env, day, botId),
@@ -233,7 +235,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     return json({ ok: true, ...b });
   }
   if (path === "/api/kalshi/disconnect" && m === "POST") {
-    const open = await env.DB.prepare("SELECT COUNT(*) c FROM positions WHERE status='open'").first<{ c: number }>();
+    const open = await env.DB.prepare("SELECT COUNT(*) c FROM positions WHERE status='open' AND demo=0").first<{ c: number }>();
     const on = await env.DB.prepare("SELECT COUNT(*) c FROM bots WHERE enabled=1").first<{ c: number }>();
     if ((open?.c ?? 0) > 0 || (on?.c ?? 0) > 0) return err("Turn every bot off and close all positions before disconnecting Kalshi", 409);
     await deleteSetting(env, "kalshi_key_id");
@@ -250,7 +252,24 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
   }
 
   // ---------------- live view + controls
-  if (path === "/api/live" && m === "GET") return json(await engine(env).watch());
+  if (path === "/api/live" && m === "GET") {
+    const live = await engine(env).watch();
+    const dv = await viewDemo(env);
+    const positions = live.positions.filter((p) => (p.demo === 1) === !!dv); // open positions of the kind being shown only
+    if (dv) {
+      const d = await demoBalance(env); // the demo view shows the pretend account instead of the real balance
+      return json({ ...live, positions, balance: d.cash, portfolioValue: d.portfolio, demoView: true });
+    }
+    return json({ ...live, positions, demoView: false });
+  }
+  // the Real / Demo switch at the top of the app: every results screen follows it
+  if (path === "/api/view" && m === "GET") return json({ mode: (await viewDemo(env)) ? "demo" : "real", demo: await demoBalance(env) });
+  if (path === "/api/view" && m === "POST") {
+    const b = await body<{ mode?: string }>(req);
+    if (b.mode !== "real" && b.mode !== "demo") return err("Mode must be real or demo");
+    await setSetting(env, "view_mode", b.mode);
+    return json({ mode: b.mode });
+  }
   if (path === "/api/emergency" && m === "POST") {
     const n = await engine(env).emergency();
     return json({ ok: true, closing: n });
@@ -278,9 +297,20 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     if (m === "PUT") {
       const b = await body<{ name?: string; config?: Record<string, unknown> }>(req);
       const cfg = validateBotConfig((b.config ?? {}) as never);
-      const cur = await env.DB.prepare("SELECT strategy FROM bots WHERE id=?").bind(id).first<{ strategy: string }>();
+      const cur = await env.DB.prepare("SELECT strategy, config, enabled FROM bots WHERE id=?").bind(id).first<{ strategy: string; config: string; enabled: number }>();
       if (!cur) return err("Bot not found", 404);
       if (cur.strategy !== cfg.strategy) return err("A bot's strategy cannot be changed. Create a new bot instead.");
+      // demo and real never mix: the mode can only change while the bot is off and has no open trades (an open real trade must stay managed as a real one)
+      let wasDemo = false;
+      try {
+        wasDemo = !!(JSON.parse(cur.config) as { demo?: boolean }).demo;
+      } catch {
+        /* an unreadable saved config counts as real */
+      }
+      if (wasDemo !== cfg.demo) {
+        const openNow = await env.DB.prepare("SELECT COUNT(*) c FROM positions WHERE status='open' AND bot_id=?").bind(id).first<{ c: number }>();
+        if (cur.enabled || (openNow?.c ?? 0) > 0) return err("Turn the bot off and close its open trades before switching it between demo and real", 409);
+      }
       await env.DB.prepare("UPDATE bots SET name=?, config=?, updated_ts=? WHERE id=?").bind((b.name ?? "").trim() || "Bot", JSON.stringify(cfg), Date.now(), id).run();
       await log(env, "info", "control", "Bot settings saved", id, cfg);
       await engine(env).poke();
@@ -333,14 +363,15 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const id = g[1];
     const row = await env.DB.prepare("SELECT id, name, strategy, config, enabled FROM bots WHERE id=?").bind(id).first<{ id: string; name: string; strategy: string; config: string; enabled: number }>();
     if (!row) return err("Bot not found", 404);
-    const closed = (await env.DB.prepare("SELECT * FROM positions WHERE status != 'open' AND bot_id = ? ORDER BY closed_ts DESC LIMIT 50").bind(id).all()).results;
+    const closed = (await env.DB.prepare(`SELECT * FROM positions WHERE status != 'open' AND demo = ${await viewDemo(env)} AND bot_id = ? ORDER BY closed_ts DESC LIMIT 50`).bind(id).all()).results;
     return json({ bot: rowToBot(row), ...(await plSummary(env, id)), closed });
   }
 
   // ---------------- trades / performance / logs
   if (path === "/api/positions" && m === "GET") {
-    const open = (await env.DB.prepare("SELECT * FROM positions WHERE status='open' ORDER BY opened_ts DESC").all()).results;
-    const closed = (await env.DB.prepare("SELECT * FROM positions WHERE status!='open' ORDER BY closed_ts DESC LIMIT ?").bind(Math.min(Number(url.searchParams.get("limit") ?? 200), 1000)).all()).results;
+    const dmView = await viewDemo(env);
+    const open = (await env.DB.prepare(`SELECT * FROM positions WHERE status='open' AND demo = ${dmView} ORDER BY opened_ts DESC`).all()).results;
+    const closed = (await env.DB.prepare(`SELECT * FROM positions WHERE status!='open' AND demo = ${dmView} ORDER BY closed_ts DESC LIMIT ?`).bind(Math.min(Number(url.searchParams.get("limit") ?? 200), 1000)).all()).results;
     return json({ open, closed });
   }
   if (path === "/api/orders" && m === "GET") return json((await env.DB.prepare("SELECT * FROM orders ORDER BY created_ts DESC LIMIT ?").bind(Math.min(Number(url.searchParams.get("limit") ?? 100), 500)).all()).results);
@@ -441,7 +472,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       if (settled) h.reversed += (yesTouch && r.result === "no" ? 1 : 0) + (noTouch && r.result === "yes" ? 1 : 0);
     }
     const trades = (
-      await env.DB.prepare("SELECT opened_ts, realized_pnl, result FROM positions WHERE status != 'open' AND realized_pnl IS NOT NULL AND opened_ts >= ?" + (asset ? " AND asset = ?" : ""))
+      await env.DB.prepare(`SELECT opened_ts, realized_pnl, result FROM positions WHERE status != 'open' AND demo = ${await viewDemo(env)} AND realized_pnl IS NOT NULL AND opened_ts >= ?` + (asset ? " AND asset = ?" : ""))
         .bind(...(asset ? [since, asset] : [since]))
         .all<{ opened_ts: number; realized_pnl: number; result: string }>()
     ).results;
@@ -476,7 +507,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const asset = (url.searchParams.get("asset") ?? "").toUpperCase();
     // each contract also says whether the chosen bot traded it and how that trade ended (for the Winners / Losers / No trade filter)
     const bot = url.searchParams.get("bot");
-    const bf = bot ? " AND p.bot_id = ?" : "";
+    const bf = (bot ? " AND p.bot_id = ?" : "") + ` AND p.demo = ${await viewDemo(env)}`;
     const rows = (
       await env.DB.prepare(
         "SELECT m.ticker, m.title, m.open_ts, m.close_ts, m.result, " +
@@ -518,7 +549,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const mk = await env.DB.prepare("SELECT ticker, asset, title, open_ts, close_ts, result, strike FROM markets WHERE ticker=?").bind(ticker).first();
     if (!mk) return err("Unknown market", 404);
     const obs = (await env.DB.prepare("SELECT ts, yes_bid, yes_ask FROM observations WHERE ticker=? ORDER BY ts").bind(ticker).all<{ ts: number; yes_bid: number; yes_ask: number }>()).results;
-    const trades = (await env.DB.prepare("SELECT outcome, opened_ts, closed_ts, avg_entry, realized_pnl, close_reason FROM positions WHERE ticker=?").bind(ticker).all()).results;
+    const trades = (await env.DB.prepare("SELECT outcome, opened_ts, closed_ts, avg_entry, realized_pnl, close_reason FROM positions WHERE ticker=? AND demo = " + (await viewDemo(env))).bind(ticker).all()).results;
     // Why the chosen bot did not trade this contract (counts of what blocked it, after its Time Delay)
     let why: { samples: number; top: Array<{ code: string; text: string; pct: number }> } | null = null;
     let checks: unknown = null; // the latest requirement-by-requirement check (frozen when the bot entered)
@@ -609,7 +640,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       "You are the assistant inside a personal Kalshi trading-bot dashboard. You are ADVISORY ONLY: you can explain and recommend, but you cannot change settings, start/stop bots, place orders, close positions or override risk limits, and you must never say you did. " +
       "If you recommend a setting change, say the owner must apply it themselves in the bot's settings, but do not add reminders that you are advisory or cannot change settings unless the owner asks you to change something. Answer only from the data below; if the data does not say, say you do not know. " +
       "HOW TO WRITE: plain text only. No markdown: no asterisks, no bold, no headings, no code formatting. Never use field names or technical words from the data (say 'whether the contract finished in your favor', not endedInOurFavor; do not say telemetry or hindsight tracking). Do not write the words measured or hypothesis or label points with tags. Start with the direct answer in one or two sentences, then the supporting numbers. For lists, put one item per line starting with a dash. Keep it short, and say how many trades each conclusion rests on. If you are guessing, say 'My guess:' before it.\n\n" +
-      "How to read the data: strategyStats covers the last 14 days. Inside it, moneyFlow is how much money (dollars) was placed on YES and on NO in each 15-minute contract the bot watched live (money counts for the side that started each trade): recentContracts gives each contract's totals and its final result, tradesWithMoney gives the money on our side versus the other side over the 3 minutes up to each trade's entry (ratio = our side divided by the other side; null means the other side had no money), and winsVsLosses compares the typical ratio for winners and losers. modelReport compares, for settled crypto contracts about 3 minutes before the close, Kalshi's price for the favored side (kalshi), the bot's own estimate of that side winning from the live price and recent movement (model), and how often that side really won (actual), by Kalshi price bucket; it is only useful when n is large, and its howToRead field explains it. priceVsProbability (only included when the owner's question is about prices, probabilities or edge; if it is missing and the question needs it, tell the owner to ask again mentioning price or edge) is the Edge report's table, per asset and per time left in the contract: for each 2.5% YES price level, how often YES really won, the gap versus the price, a verdict (even, YES cheap, YES expensive), and the edge of buying YES or NO after fees; its howToRead field explains each column. Use it to answer which price levels were mispriced and what that implies. tradeFiles has everything recorded about each of the 3 most recent trades: the probability range and Time Delay the bot used on that contract (its other settings are the bot's current ones), each requirement as it stood at the moment of entry (OK, FAILED or NOT TESTED), the best prices and how many contracts were on offer (null = not recorded) just before entry, the other checked assets' YES probability at entry, and pricesAround, a list of [seconds from entry (negative = before), YES bid, YES ask] from 5 minutes before entry until the contract closed (a new entry only appears when a price changed, so gaps mean no change). Use it to explain what the market did around a specific trade. Contracts the bot did not watch live have no money record; say so instead of guessing. exitEarlyHindsight re-prices the trades that were held to settlement as if they had been sold 3 or 2 minutes before the contract closed (difference = sold-early profit minus what really happened, so positive means selling early would have made more; winnersGaveUp is what the winners would have lost by selling early and losersSaved is what the losers would have recovered); it is hindsight with estimated prices, so say so and give tradesCompared. missedByDisagreement (metals bots only; null if none) counts the contracts a bot skipped because its checked metals (gold and silver) did not lean the same way, with how many of those would have won or lost and the estimated profit or loss if they had been taken, for roughly the last 3 days; it is a replay estimate with estimated fills, so say that when you quote it. stopLossTakeProfitHindsight compares trades that exited early (stop loss or take profit) with what holding to settlement would have paid (hindsight only; it ignores the risk the exit removed). blockedBy is what kept the bots from trading and the share of tradeable time. reliability is how often a side that reached 80% then lost at settlement. byEntryHour is results by entry hour in US Eastern. performance is by asset, probability range, YES/NO and how trades ended. recentTrades lists up to the last 20 closed trades, newest first, each in full: amount put in, entry and exit price per contract, how it ended (how), actual pnl, the lowest and highest probability while open, finalResult (how the 15-minute contract finally settled: yes or no; null = not settled yet), endedInOurFavor, ifHeldPnl (what holding to settlement would have made; hindsight only), and for early exits afterExit (our side's best, worst and last probability between the exit and the contract close). A stopped-out trade with endedInOurFavor true recovered after the exit. Always say how many trades a conclusion rests on.\n\n" +
+      "How to read the data: viewMode says whether every trade in this data is a real trade or a DEMO (paper) trade with no real money; when it is demo, say so in your answers. strategyStats covers the last 14 days. Inside it, moneyFlow is how much money (dollars) was placed on YES and on NO in each 15-minute contract the bot watched live (money counts for the side that started each trade): recentContracts gives each contract's totals and its final result, tradesWithMoney gives the money on our side versus the other side over the 3 minutes up to each trade's entry (ratio = our side divided by the other side; null means the other side had no money), and winsVsLosses compares the typical ratio for winners and losers. modelReport compares, for settled crypto contracts about 3 minutes before the close, Kalshi's price for the favored side (kalshi), the bot's own estimate of that side winning from the live price and recent movement (model), and how often that side really won (actual), by Kalshi price bucket; it is only useful when n is large, and its howToRead field explains it. priceVsProbability (only included when the owner's question is about prices, probabilities or edge; if it is missing and the question needs it, tell the owner to ask again mentioning price or edge) is the Edge report's table, per asset and per time left in the contract: for each 2.5% YES price level, how often YES really won, the gap versus the price, a verdict (even, YES cheap, YES expensive), and the edge of buying YES or NO after fees; its howToRead field explains each column. Use it to answer which price levels were mispriced and what that implies. tradeFiles has everything recorded about each of the 3 most recent trades: the probability range and Time Delay the bot used on that contract (its other settings are the bot's current ones), each requirement as it stood at the moment of entry (OK, FAILED or NOT TESTED), the best prices and how many contracts were on offer (null = not recorded) just before entry, the other checked assets' YES probability at entry, and pricesAround, a list of [seconds from entry (negative = before), YES bid, YES ask] from 5 minutes before entry until the contract closed (a new entry only appears when a price changed, so gaps mean no change). Use it to explain what the market did around a specific trade. Contracts the bot did not watch live have no money record; say so instead of guessing. exitEarlyHindsight re-prices the trades that were held to settlement as if they had been sold 3 or 2 minutes before the contract closed (difference = sold-early profit minus what really happened, so positive means selling early would have made more; winnersGaveUp is what the winners would have lost by selling early and losersSaved is what the losers would have recovered); it is hindsight with estimated prices, so say so and give tradesCompared. missedByDisagreement (metals bots only; null if none) counts the contracts a bot skipped because its checked metals (gold and silver) did not lean the same way, with how many of those would have won or lost and the estimated profit or loss if they had been taken, for roughly the last 3 days; it is a replay estimate with estimated fills, so say that when you quote it. stopLossTakeProfitHindsight compares trades that exited early (stop loss or take profit) with what holding to settlement would have paid (hindsight only; it ignores the risk the exit removed). blockedBy is what kept the bots from trading and the share of tradeable time. reliability is how often a side that reached 80% then lost at settlement. byEntryHour is results by entry hour in US Eastern. performance is by asset, probability range, YES/NO and how trades ended. recentTrades lists up to the last 20 closed trades, newest first, each in full: amount put in, entry and exit price per contract, how it ended (how), actual pnl, the lowest and highest probability while open, finalResult (how the 15-minute contract finally settled: yes or no; null = not settled yet), endedInOurFavor, ifHeldPnl (what holding to settlement would have made; hindsight only), and for early exits afterExit (our side's best, worst and last probability between the exit and the contract close). A stopped-out trade with endedInOurFavor true recovered after the exit. Always say how many trades a conclusion rests on.\n\n" +
       "Use the Kalshi rules below to explain how contracts are defined and settled when asked. " + KALSHI_RULES_PROMPT + "\n\n" +
       `DATA (JSON):\n${context}\n\nCONVERSATION SO FAR:\n${history.map((h) => `${h.role.toUpperCase()}: ${h.content}`).join("\n")}\n\nUSER: ${text}`;
     const answer = (await askAI(env, prompt, `pb-${convId}`)) ?? "I couldn't reach the AI just now. Your question was saved; try again in a moment.";
@@ -674,13 +705,15 @@ async function chatContext(env: Env, botId: string | null, question: string): Pr
   // the Edge report's table is large, so it is only sent when the question is about prices, probabilities or edge
   const wantsPriceTable = /price|probab|edge|cheap|expensive|mispric|gap|calibrat|even|odds|%/i.test(question);
   const strategy = await buildDayStats(env, Date.now() - 14 * 86_400_000, Date.now(), "the last 14 days", botId);
-  const open = (await env.DB.prepare(botId ? "SELECT * FROM positions WHERE status='open' AND bot_id=?" : "SELECT * FROM positions WHERE status='open'").bind(...(botId ? [botId] : [])).all()).results;
+  const dmCtx = await viewDemo(env);
+  const open = (await env.DB.prepare(botId ? `SELECT * FROM positions WHERE status='open' AND demo=${dmCtx} AND bot_id=?` : `SELECT * FROM positions WHERE status='open' AND demo=${dmCtx}`).bind(...(botId ? [botId] : [])).all()).results;
   const logs = (await env.DB.prepare(botId ? "SELECT ts, level, kind, message FROM logs WHERE bot_id=? ORDER BY id DESC LIMIT 40" : "SELECT ts, level, kind, message FROM logs ORDER BY id DESC LIMIT 40").bind(...(botId ? [botId] : [])).all()).results;
   const analysis = await env.DB.prepare("SELECT ts, text FROM analyses ORDER BY id DESC LIMIT 1").first();
   const latest = (await env.DB.prepare("SELECT o.ticker, m.asset, o.ts, (o.yes_bid+o.yes_ask)/2 AS yes FROM observations o JOIN markets m ON m.ticker=o.ticker WHERE o.ts >= ? GROUP BY o.ticker HAVING o.ts = MAX(o.ts)").bind(Date.now() - 20 * 60_000).all()).results;
   const orders = (await env.DB.prepare("SELECT ticker, kind, status, fill_count, price, fee, error, created_ts FROM orders ORDER BY created_ts DESC LIMIT 20").all()).results;
   return JSON.stringify({
     now: new Date().toISOString(),
+    viewMode: dmCtx ? "demo" : "real",
     bots: scope.map((b) => ({ name: b.name, enabled: b.enabled, config: b.config })),
     strategyStats: strategy,
     performance: computePerformance(await closedPositions(env, botId, 500)),

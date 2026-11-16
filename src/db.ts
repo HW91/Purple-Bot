@@ -103,9 +103,25 @@ export interface PositionRow {
   duration_min: number | null;
   realized_pnl: number | null;
   result: string | null;
+  demo?: number; // 1 = a demo (paper) trade, 0 or missing = a real trade
 }
 
 export async function openPositions(env: Env): Promise<PositionRow[]> {
   const rs = await env.DB.prepare("SELECT * FROM positions WHERE status = 'open'").all<PositionRow>();
   return rs.results ?? [];
+}
+
+/** 1 when the dashboard is showing demo results, 0 for real (one switch at the top of the app; every results screen follows it). */
+export async function viewDemo(env: Env): Promise<0 | 1> {
+  return (await getSetting(env, "view_mode")) === "demo" ? 1 : 0;
+}
+
+export const DEMO_START_BALANCE = 1000;
+
+/** The pretend account: $1,000 plus every closed demo trade's profit or loss, minus what open demo trades have put in. */
+export async function demoBalance(env: Env): Promise<{ cash: number; portfolio: number }> {
+  const pnl = await env.DB.prepare("SELECT COALESCE(SUM(realized_pnl),0) c FROM positions WHERE demo=1 AND status != 'open' AND realized_pnl IS NOT NULL").first<{ c: number }>();
+  const open = await env.DB.prepare("SELECT COALESCE(SUM(entry_cost+entry_fee),0) c, COALESCE(SUM(entry_cost),0) v FROM positions WHERE demo=1 AND status='open'").first<{ c: number; v: number }>();
+  const start = Number(await getSetting(env, "demo_balance_start")) || DEMO_START_BALANCE;
+  return { cash: Math.round((start + (pnl?.c ?? 0) - (open?.c ?? 0)) * 100) / 100, portfolio: Math.round((open?.v ?? 0) * 100) / 100 };
 }
