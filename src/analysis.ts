@@ -74,7 +74,7 @@ export interface TradeDetail {
   qty: number;
   entryPrice: number | null; // per contract, our side
   exitPrice: number | null; // per contract, our side (null if held to settlement)
-  how: string | null; // stop_loss | take_profit | settled | manual_close | emergency | external
+  how: string | null; // stop_loss | take_profit | edge_gone | settled | manual_close | emergency | external
   pnl: number | null; // actual, after fees
   entryProb: number | null;
   lowestProbWhileOpen: number | null; // our side's lowest probability while the trade was open
@@ -621,7 +621,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
   const early = (
     await env.DB.prepare(
       "SELECT p.close_reason, p.outcome, p.entry_qty, p.entry_cost, p.entry_fee, p.realized_pnl, m.result FROM positions p JOIN markets m ON m.ticker = p.ticker " +
-        `WHERE p.status != 'open' AND p.demo = ${dm} AND p.closed_ts >= ? AND p.closed_ts < ? AND p.close_reason IN ('stop_loss','take_profit')` + bf("p.bot_id"),
+        `WHERE p.status != 'open' AND p.demo = ${dm} AND p.closed_ts >= ? AND p.closed_ts < ? AND p.close_reason IN ('stop_loss','take_profit','edge_gone')` + bf("p.bot_id"),
     )
       .bind(...bb(start, end))
       .all<HindsightRow>()
@@ -686,7 +686,7 @@ export async function buildDayStats(env: Env, start: number, end: number, label:
     exitEarlyHindsight: await exitEarlyFor(env, closed),
     missedByDisagreement: await missedByDisagreement(env, start, end, botId),
     moneyFlow,
-    earlyExits: await describeTrades(env, closed.filter((p) => p.close_reason === "stop_loss" || p.close_reason === "take_profit").slice(0, 40)),
+    earlyExits: await describeTrades(env, closed.filter((p) => p.close_reason === "stop_loss" || p.close_reason === "take_profit" || p.close_reason === "edge_gone").slice(0, 40)),
     blockedBy: { contractsWatched: notes.length, contractsTraded: tradedContracts, share },
     reliability: {
       day: day.total,

@@ -77,3 +77,13 @@ export function probAbove(i: ProbInput): number {
   if (!(sd > 1e-12)) return mean >= target ? 1 : 0;
   return normCdf((mean - target) / sd);
 }
+
+/**
+ * A trade's edge is gone when the bot's own estimate of it winning is no longer above what it could be sold for right now.
+ * `pYes` is the estimate that YES wins; selling a YES trade gets the YES bid, selling a NO trade gets one minus the YES ask.
+ */
+export function edgeIsGone(outcome: "yes" | "no", pYes: number, yesBid: number, yesAsk: number): boolean {
+  const win = outcome === "yes" ? pYes : 1 - pYes;
+  const sell = outcome === "yes" ? yesBid : 1 - yesAsk;
+  return win - sell <= 0;
+}

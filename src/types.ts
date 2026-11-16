@@ -57,6 +57,9 @@ export interface BotConfig {
   comboWindowMin: number; // every combo asset must have been inside the probability range at some point in the last this many minutes of the contract
   comboMaxCost: number; // highest price per $1 of payout the bot will accept for the combo (0.96 = 96 cents)
   pivotBandPct: number; // skip a contract whose target price is within this many percent of a daily pivot level (0 = off)
+  entriesPerContract: number; // how many trades the bot may open in ONE 15-minute contract (1 = the old behavior); several can be open at once up to "max simultaneous positions"
+  entryCooldownSec: number; // seconds to wait after one entry before the next one in the same contract
+  exitOnEdgeGone: boolean; // sell a trade when the bot's own estimate no longer beats the price it could sell at (needs "Only enter when my estimate beats the price" above 0)
   demo: boolean; // demo (paper) mode: the same rules on live prices, but no real orders; trades are saved as demo and kept apart from real results
   modelEdgePts: number; // only enter when the bot's own estimate of winning beats the price it would pay by at least this many percentage points (0 = off; crypto only)
 }
@@ -146,6 +149,9 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     pivotBandPct: 0,
     modelEdgePts: 0,
     demo: false,
+    entriesPerContract: 1,
+    entryCooldownSec: 30,
+    exitOnEdgeGone: true,
   };
 }
 
@@ -214,7 +220,12 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     pivotBandPct: num(input.pivotBandPct, d.pivotBandPct),
     modelEdgePts: num(input.modelEdgePts, d.modelEdgePts),
     demo: bool(input.demo, d.demo),
+    entriesPerContract: Math.round(num(input.entriesPerContract, d.entriesPerContract)),
+    entryCooldownSec: Math.round(num(input.entryCooldownSec, d.entryCooldownSec)),
+    exitOnEdgeGone: bool(input.exitOnEdgeGone, d.exitOnEdgeGone),
   };
+  if (!(cfg.entriesPerContract >= 1 && cfg.entriesPerContract <= 10)) throw new Error("Entries per contract must be a whole number from 1 to 10");
+  if (!(cfg.entryCooldownSec >= 0 && cfg.entryCooldownSec <= 600)) throw new Error("Seconds between entries must be from 0 to 600");
   if (cfg.demo && cfg.comboOn) throw new Error("Demo mode does not support combos: market makers' combo prices cannot be simulated");
   if (!(cfg.modelEdgePts >= 0 && cfg.modelEdgePts <= 20)) throw new Error("Required estimate edge must be between 0 (off) and 20 percentage points");
   if (!(cfg.pivotBandPct >= 0 && cfg.pivotBandPct <= 5)) throw new Error("Pivot distance must be between 0% (off) and 5%");

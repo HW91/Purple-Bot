@@ -584,6 +584,31 @@ try {
   await api("/view", "POST", { mode: "real" });
   ok("demo: switching back to Real hides the demo trade again", !(await api("/positions")).j.closed.find((p) => p.bot_id === demoBot) && (await api("/live")).j.demoView === false);
 
+  // ---- Q. several trades in one contract (demo, so no real orders): up to the entries-per-contract limit, several open at once
+  await api("/view", "POST", { mode: "demo" });
+  await quote([T("BTC")], 0.94, 0.95);
+  const multiCfg = { ...demoCfg, entriesPerContract: 3, entryCooldownSec: 0, maxPositions: 5, tradeAmount: 5 };
+  const multiBot = (await api("/bots", "POST", { name: "Multi bot", config: multiCfg })).j.id;
+  await api(`/bots/${multiBot}/start`, "POST");
+  const three = await waitFor(async () => { const o = (await api("/positions")).j.open.filter((p) => p.bot_id === multiBot); return o.length >= 3 ? o : null; }, 60000);
+  await sleep(8000);
+  const multiOpen = (await api("/positions")).j.open.filter((p) => p.bot_id === multiBot);
+  ok("several entries: the bot opens three trades in the one contract, several open at once, and stops at the limit", !!three && multiOpen.length === 3 && new Set(multiOpen.map((p) => p.ticker)).size === 1, String(multiOpen.length));
+  await api(`/bots/${multiBot}/stop-close`, "POST");
+  await waitFor(async () => (await api("/positions")).j.open.filter((p) => p.bot_id === multiBot).length === 0, 40000);
+
+  // ---- R. exit when the estimate no longer beats the price (demo): the live feed says 100.50 against a target of 100, so the estimate is 100%
+  const edgeCfg = { ...demoCfg, modelEdgePts: 4, exitOnEdgeGone: true, entriesPerContract: 1 };
+  const edgeExitBot = (await api("/bots", "POST", { name: "Edge exit bot", config: edgeCfg })).j.id;
+  await api(`/bots/${edgeExitBot}/start`, "POST");
+  const edgeOpen = await waitFor(async () => (await api("/positions")).j.open.find((p) => p.bot_id === edgeExitBot), 200000, 3000);
+  await quote([T("BTC")], 1.0, 1.0); // the price now equals the estimate: nothing left to gain by holding
+  const edgeClosed = await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === edgeExitBot), 60000);
+  ok("edge-gone exit: the trade is sold when the estimate no longer beats the price it could be sold at", !!edgeOpen && !!edgeClosed && edgeClosed.close_reason === "edge_gone", JSON.stringify({ edgeOpen: !!edgeOpen, edgeClosed }));
+  await api(`/bots/${edgeExitBot}/stop`, "POST");
+  await quote([T("BTC")], 0.94, 0.95);
+  await api("/view", "POST", { mode: "real" });
+
   // ---- J. delete rules + disconnect rules
   ok("cannot delete a bot while ON", await (async () => { await api(`/bots/${bot1}/start`, "POST"); const r = await api(`/bots/${bot1}`, "DELETE"); await api(`/bots/${bot1}/stop`, "POST"); return r.status === 409; })());
   ok("badAuth count on fake exchange only came from the deliberately wrong key", (await mockState()).badAuth === 1, String((await mockState()).badAuth));

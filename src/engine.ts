@@ -18,7 +18,7 @@ import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favora
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
 import { describeComboOffers, evaluateCombo, pickComboQuote, type ComboDecision, type ComboState } from "./combo";
 import { classicPivots, dailyPrices, levelText, pivotNear, type PivotLevel } from "./pivots";
-import { probAbove, realizedSigma } from "./model";
+import { edgeIsGone, probAbove, realizedSigma } from "./model";
 
 /** Kalshi's CF Benchmarks index id for each coin (docs.kalshi.com/websockets/cfbenchmarks-value). Coins missing here have no live price feed. */
 const CF_INDEX: Record<string, string> = { BTC: "BRTI", ETH: "ETHUSD_RTI", SOL: "SOLUSD_RTI", XRP: "XRPUSD_RTI", DOGE: "DOGEUSD_RTI", BNB: "BNBUSD_RTI", HYPE: "HYPEUSD_RTI", ADA: "ADAUSD_RTI", BCH: "BCHUSD_RTI", NEAR: "NEARUSD_RTI", ZEC: "ZECUSD_RTI" };
@@ -128,6 +128,7 @@ export class Engine extends DurableObject<Env> {
   private closeRequests = new Map<string, string>();
   private lastExitAttempt = new Map<string, number>();
   private entryAttempts = new Map<string, { n: number; last: number }>();
+  private entryCounts = new Map<string, { n: number; last: number }>(); // "botId|ticker|demo" -> trades opened in that contract and when the last one opened
   private lastReason = new Map<string, { reason: string; ts: number; up: number; down: number }>();
   private lastAlert = new Map<string, number>();
   private settleChecked = new Map<string, number>();
@@ -248,6 +249,7 @@ export class Engine extends DurableObject<Env> {
       await this.refreshPivots();
       await this.logModel();
       await this.evaluateAllEntries();
+      await this.checkEdgeExits();
       await this.flush();
       await this.checkSettlements();
       await this.backfillResults();
@@ -979,10 +981,27 @@ export class Engine extends DurableObject<Env> {
     }
   }
 
+  /** How many trades this bot has opened in this contract and when the last one opened (read from the database once, then kept up to date). */
+  private async entrySlot(bot: Bot, ticker: string): Promise<{ n: number; last: number }> {
+    const key = `${bot.id}|${ticker}|${bot.config.demo ? 1 : 0}`;
+    let e = this.entryCounts.get(key);
+    if (!e) {
+      const r = await this.env.DB.prepare("SELECT COUNT(*) n, COALESCE(MAX(opened_ts),0) last FROM positions WHERE bot_id=? AND ticker=? AND demo=?").bind(bot.id, ticker, bot.config.demo ? 1 : 0).first<{ n: number; last: number }>();
+      e = { n: r?.n ?? 0, last: r?.last ?? 0 };
+      this.entryCounts.set(key, e);
+      if (this.entryCounts.size > 400) this.entryCounts.delete(this.entryCounts.keys().next().value as string);
+    }
+    return e;
+  }
+
   private async attemptEntry(bot: Bot, d: EntryDecision, now: number): Promise<void> {
-    if (bot.config.demo) return this.attemptDemoEntry(bot, d, now); // demo bots never reach the order code below
     const t = d.trade!;
-    const lockKey = `entry:${bot.id}:${t.ticker}`;
+    // several trades in one contract: stop at the bot's limit, and wait between entries
+    const slot = await this.entrySlot(bot, t.ticker);
+    if (slot.n >= bot.config.entriesPerContract || now - slot.last < bot.config.entryCooldownSec * 1000) return;
+    if (bot.config.demo) return this.attemptDemoEntry(bot, d, now, slot); // demo bots never reach the order code below
+    const entryN = slot.n + 1;
+    const lockKey = `entry:${bot.id}:${t.ticker}:${entryN}`;
     if (this.inflight.has(lockKey)) return;
     const att = this.entryAttempts.get(lockKey) ?? { n: 0, last: 0 };
     if (att.n >= 3 || now - att.last < 3_000) return;
@@ -1008,8 +1027,8 @@ export class Engine extends DurableObject<Env> {
       this.entryAttempts.set(lockKey, att);
 
       try {
-        await this.env.DB.prepare("INSERT INTO orders (id, bot_id, ticker, kind, outcome, book_side, price, count_req, status, created_ts, updated_ts) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-          .bind(orderId, bot.id, t.ticker, "entry", t.outcome, t.orderSide, t.orderPrice, t.count, "submitted", now, now)
+        await this.env.DB.prepare("INSERT INTO orders (id, bot_id, ticker, kind, outcome, book_side, price, count_req, status, created_ts, updated_ts, entry_n) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+          .bind(orderId, bot.id, t.ticker, "entry", t.outcome, t.orderSide, t.orderPrice, t.count, "submitted", now, now, entryN)
           .run();
       } catch {
         return; // unique index: this bot already has a live entry on this contract (duplicate protection)
@@ -1071,6 +1090,8 @@ export class Engine extends DurableObject<Env> {
       ]);
       this.posCache.set(pos.id, pos);
       this.entered.add(`${bot.id}|${t.ticker}`);
+      slot.n++;
+      slot.last = Date.now();
       // freeze the checklist as it was at the entry: the risk limits passed too
       const frozen = this.notes.get(`${bot.id}|${t.ticker}`);
       if (frozen?.checks) {
@@ -1235,19 +1256,14 @@ export class Engine extends DurableObject<Env> {
   // ---------------------------------------------------------------- demo (paper) trading: the same rules on live prices, no orders sent to Kalshi
 
   /** A demo entry: the trade the rules chose is "filled" at the price it would pay, with Kalshi's fee formula. Saved as a demo trade. */
-  private async attemptDemoEntry(bot: Bot, d: EntryDecision, now: number): Promise<void> {
+  private async attemptDemoEntry(bot: Bot, d: EntryDecision, now: number, slot: { n: number; last: number }): Promise<void> {
     const t = d.trade!;
-    const lockKey = `entry:${bot.id}:${t.ticker}`;
-    if (this.inflight.has(lockKey) || this.entered.has(`${bot.id}|${t.ticker}`)) return;
+    const lockKey = `entry:${bot.id}:${t.ticker}:${slot.n + 1}`;
+    if (this.inflight.has(lockKey)) return;
     this.inflight.add(lockKey);
     try {
       if (!(await isBotEnabled(this.env, bot.id))) {
         bot.enabled = false;
-        return;
-      }
-      // a restart forgets memory, so the database also says whether this demo bot already entered this contract
-      if (await this.env.DB.prepare("SELECT 1 AS x FROM positions WHERE bot_id=? AND ticker=? AND demo=1").bind(bot.id, t.ticker).first()) {
-        this.entered.add(`${bot.id}|${t.ticker}`);
         return;
       }
       const cost = t.count * t.costPerContract;
@@ -1269,6 +1285,8 @@ export class Engine extends DurableObject<Env> {
         .run();
       this.posCache.set(pos.id, pos);
       this.entered.add(`${bot.id}|${t.ticker}`);
+      slot.n++;
+      slot.last = Date.now();
       const frozen = this.notes.get(`${bot.id}|${t.ticker}`);
       if (frozen?.checks) {
         frozen.checks = frozen.checks.map((c) => (c.key === "risk" ? { key: "risk", ok: true, text: "Risk limits passed" } : c));
@@ -1368,8 +1386,29 @@ export class Engine extends DurableObject<Env> {
       const bot = this.bots.find((b) => b.id === p.bot_id);
       if (!bot) continue;
       const open: OpenPos = { outcome: p.outcome, openQty: p.open_qty, avgEntry: p.avg_entry ?? 0, entryFee: p.entry_fee, exitFee: p.exit_fee, exitProceeds: p.exit_proceeds };
-      const reason = evaluateExit(bot.config, open, q);
+      let reason: string | null = evaluateExit(bot.config, open, q);
+      if (!reason && bot.config.exitOnEdgeGone && bot.config.modelEdgePts > 0 && this.edgeGone(p, q, Date.now())) reason = "edge_gone";
       if (reason) await this.closePosition(p, reason, q);
+    }
+  }
+
+  /** My own estimate of this trade winning is no longer above what the trade could be sold for right now: the edge it was bought for is gone. */
+  private edgeGone(p: PositionRow, q: Quote, now: number): boolean {
+    if (p.asset === "COMBO" || now >= p.market_close_ts || !(q.yesBid > 0 && q.yesAsk > 0)) return false;
+    const e = this.modelFor(p.asset, now);
+    if (!e) return false; // no estimate (no live feed yet, or not a cryptocurrency): the trade is simply held
+    return edgeIsGone(p.outcome, e.pYes, q.yesBid, q.yesAsk);
+  }
+
+  /** The estimate moves every second with the live price, even when Kalshi's own price does not, so open trades are also checked on the clock. */
+  private async checkEdgeExits(): Promise<void> {
+    const now = Date.now();
+    for (const p of [...this.posCache.values()]) {
+      const bot = this.bots.find((b) => b.id === p.bot_id);
+      if (!bot || !bot.config.exitOnEdgeGone || !(bot.config.modelEdgePts > 0) || this.closeRequests.has(p.id)) continue;
+      const q = this.quotes.get(p.ticker);
+      if (!q || now - q.ts > 30_000) continue;
+      if (this.edgeGone(p, q, now)) await this.closePosition(p, "edge_gone", q);
     }
   }
 
