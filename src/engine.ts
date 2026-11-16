@@ -13,7 +13,7 @@ import { emailShell, esc, sendEmail } from "./notify";
 import { etDateString, overviewEmail, runOverview } from "./analysis";
 import { checklistFor, type CheckLine } from "./checklist";
 import { FlowTracker } from "./flow";
-import { samplesFromCandles, samplesFromObs, type Cell, type EdgeLookup } from "./edge";
+import { samplesFromCandles, weightedSamplesFromObs, type Cell, type EdgeLookup } from "./edge";
 import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
 import { describeComboOffers, evaluateCombo, pickComboQuote, type ComboDecision, type ComboState } from "./combo";
@@ -1509,8 +1509,8 @@ export class Engine extends DurableObject<Env> {
           try {
             const candles = await this.client.candlesticks(series, b.ticker, Math.floor(b.closeTs / 1000) - 16 * 60, Math.floor(b.closeTs / 1000));
             const samples = samplesFromCandles(candles, b.closeTs);
-            const up = this.env.DB.prepare("INSERT INTO calibration (asset, minute_left, bucket, n, yes_wins) VALUES (?,?,?,1,?) ON CONFLICT(asset, minute_left, bucket) DO UPDATE SET n = n + 1, yes_wins = yes_wins + excluded.yes_wins");
-            const stmts = samples.map((x) => up.bind(asset, x.minuteLeft, x.bucket, b.result === "yes" ? 1 : 0));
+            const up = this.env.DB.prepare("INSERT INTO calibration (asset, minute_left, bucket, n, yes_wins) VALUES (?,?,?,?,?) ON CONFLICT(asset, minute_left, bucket) DO UPDATE SET n = n + excluded.n, yes_wins = yes_wins + excluded.yes_wins");
+            const stmts = samples.map((x) => up.bind(asset, x.minuteLeft, x.bucket, 1, b.result === "yes" ? 1 : 0));
             stmts.push(this.env.DB.prepare("INSERT OR IGNORE INTO calibration_done (ticker, asset, counted_ts) VALUES (?,?,?)").bind(b.ticker, asset, Date.now()));
             await this.env.DB.batch(stmts);
             job.counted++;
@@ -1547,9 +1547,9 @@ export class Engine extends DurableObject<Env> {
     const rows = (await this.env.DB.prepare("SELECT ticker, asset, close_ts, result FROM markets WHERE calibrated = 0 AND result IN ('yes','no') ORDER BY close_ts DESC LIMIT 6").all<{ ticker: string; asset: string; close_ts: number; result: string }>()).results ?? [];
     for (const r of rows) {
       const obs = (await this.env.DB.prepare("SELECT ts, yes_bid, yes_ask FROM observations WHERE ticker = ? AND ts < ? ORDER BY ts").bind(r.ticker, r.close_ts).all<{ ts: number; yes_bid: number; yes_ask: number }>()).results ?? [];
-      const samples = samplesFromObs(obs.map((o) => ({ ts: o.ts, bid: o.yes_bid, ask: o.yes_ask })), r.close_ts);
-      const up = this.env.DB.prepare("INSERT INTO calibration (asset, minute_left, bucket, n, yes_wins) VALUES (?,?,?,1,?) ON CONFLICT(asset, minute_left, bucket) DO UPDATE SET n = n + 1, yes_wins = yes_wins + excluded.yes_wins");
-      const stmts = samples.map((x) => up.bind(r.asset, x.minuteLeft, x.bucket, r.result === "yes" ? 1 : 0));
+      const samples = weightedSamplesFromObs(obs.map((o) => ({ ts: o.ts, bid: o.yes_bid, ask: o.yes_ask })), r.close_ts);
+      const up = this.env.DB.prepare("INSERT INTO calibration (asset, minute_left, bucket, n, yes_wins) VALUES (?,?,?,?,?) ON CONFLICT(asset, minute_left, bucket) DO UPDATE SET n = n + excluded.n, yes_wins = yes_wins + excluded.yes_wins");
+      const stmts = samples.map((x) => up.bind(r.asset, x.minuteLeft, x.bucket, x.weight, r.result === "yes" ? x.weight : 0));
       stmts.push(this.env.DB.prepare("UPDATE markets SET calibrated = 1 WHERE ticker = ?").bind(r.ticker));
       await this.env.DB.batch(stmts);
     }

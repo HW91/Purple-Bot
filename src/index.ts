@@ -408,7 +408,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
         const em = est.get(r.bucket);
         const estGap = em ? em.p / em.n - em.k / em.n : null; // my estimate minus Kalshi's price, on the same contracts
         const estVerdict = !em || estGap === null ? "too_few" : estGap >= 0.01 ? "yes_underpriced" : estGap <= -0.01 ? "yes_overpriced" : "even";
-        return { estN: em?.n ?? 0, estimate: em ? em.p / em.n : null, estYesWon: em ? em.w / em.n : null, estPrice: em ? em.k / em.n : null, estGap, estVerdict, from: r.bucket / BUCKETS, to: (r.bucket + 1) / BUCKETS, n: r.n, yesWinRate: r.n ? r.w / r.n : null, gap: r.n ? Math.round((r.w / r.n - mid) * 1000) / 1000 : null, verdict: priceVerdict({ n: r.n, yesWins: r.w }, mid), edgeYes: Math.round(e.yes.edge * 1000) / 1000, edgeNo: Math.round(e.no.edge * 1000) / 1000 };
+        return { estN: em?.n ?? 0, estimate: em ? em.p / em.n : null, estYesWon: em ? em.w / em.n : null, estPrice: em ? em.k / em.n : null, estGap, estVerdict, from: r.bucket / BUCKETS, to: (r.bucket + 1) / BUCKETS, n: Math.round(r.n), yesWinRate: r.n ? r.w / r.n : null, gap: r.n ? Math.round((r.w / r.n - mid) * 1000) / 1000 : null, verdict: priceVerdict({ n: r.n, yesWins: r.w }, mid), edgeYes: Math.round(e.yes.edge * 1000) / 1000, edgeNo: Math.round(e.no.edge * 1000) / 1000 };
       }),
     });
   }

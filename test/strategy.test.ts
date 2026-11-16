@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { checklistFor } from "../src/checklist";
-import { bucketOf, minuteLeftOf, feePerContract, wilson, samplesFromObs, samplesFromCandles, priceVerdict, type EdgeLookup } from "../src/edge";
+import { bucketOf, minuteLeftOf, feePerContract, wilson, samplesFromObs, weightedSamplesFromObs, samplesFromCandles, priceVerdict, type EdgeLookup } from "../src/edge";
 import { FlowTracker, flowPasses } from "../src/flow";
 import { evaluateEntry, evaluateExit, unrealizedPnl, checkRisk, dayStartMs, type AssetView } from "../src/strategy";
 import { defaultBotConfig, validateBotConfig, type MarketInfo, type Quote } from "../src/types";
@@ -361,6 +361,24 @@ describe("crypto entry", () => {
       { ts: CLOSE + 1_000, bid: 0.5, ask: 0.5 }, // after the close: ignored
     ], CLOSE);
     expect(samples.sort((a, b) => a.minuteLeft - b.minuteLeft)).toEqual([{ minuteLeft: 0, bucket: 39 }, { minuteLeft: 1, bucket: bucketOf(0.91) }, { minuteLeft: 2, bucket: bucketOf(0.51) }]);
+  });
+
+  it("every recorded price counts: a minute is shared equally by its readings, so each contract still counts once per minute", () => {
+    const CLOSE = 20 * 60_000;
+    const w = weightedSamplesFromObs([
+      { ts: CLOSE - 100_000, bid: 0.8, ask: 0.82 }, // 1 min left
+      { ts: CLOSE - 90_000, bid: 0.8, ask: 0.82 }, // 1 min left, same level
+      { ts: CLOSE - 80_000, bid: 0.9, ask: 0.92 }, // 1 min left, a higher level
+      { ts: CLOSE - 70_000, bid: 0.9, ask: 0.92 }, // 1 min left, the higher level again
+      { ts: CLOSE - 5_000, bid: 0.97, ask: 0.99 }, // 0 min left: the only reading
+      { ts: CLOSE + 1_000, bid: 0.5, ask: 0.5 }, // after the close: ignored
+    ], CLOSE);
+    const sum = (m: number) => w.filter((x) => x.minuteLeft === m).reduce((s, x) => s + x.weight, 0);
+    expect(sum(1)).toBeCloseTo(1, 9);
+    expect(sum(0)).toBeCloseTo(1, 9);
+    expect(w.find((x) => x.minuteLeft === 1 && x.bucket === bucketOf(0.81))!.weight).toBeCloseTo(0.5, 9);
+    expect(w.find((x) => x.minuteLeft === 1 && x.bucket === bucketOf(0.91))!.weight).toBeCloseTo(0.5, 9);
+    expect(w.find((x) => x.minuteLeft === 0)!.bucket).toBe(39);
   });
 
   it("trade files: prices are compacted to [seconds from entry, bid, ask] and the saved checklist is readable", () => {

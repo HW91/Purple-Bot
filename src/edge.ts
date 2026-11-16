@@ -46,6 +46,29 @@ export function samplesFromObs(obs: Array<{ ts: number; bid: number; ask: number
   return [...byMinute].map(([minuteLeft, bucket]) => ({ minuteLeft, bucket }));
 }
 
+/**
+ * Every recorded price counts. Within one minute of a contract the readings (about one every 10 seconds) share that contract-minute equally, so each
+ * contract still counts as ONE per minute (counts stay "contracts", not inflated by repeated readings of the same contract), but a minute whose price
+ * moved across a price level is split between the levels it really sat at instead of taking only the last reading.
+ */
+export function weightedSamplesFromObs(obs: Array<{ ts: number; bid: number; ask: number }>, closeTs: number): Array<{ minuteLeft: number; bucket: number; weight: number }> {
+  const byMinute = new Map<number, number[]>();
+  for (const o of obs) {
+    if (!(o.bid > 0 && o.ask > 0 && o.ask >= o.bid) || o.ts >= closeTs) continue;
+    const m = minuteLeftOf(closeTs, o.ts);
+    const list = byMinute.get(m) ?? [];
+    list.push(bucketOf((o.bid + o.ask) / 2));
+    byMinute.set(m, list);
+  }
+  const out: Array<{ minuteLeft: number; bucket: number; weight: number }> = [];
+  for (const [minuteLeft, buckets] of byMinute) {
+    const per = new Map<number, number>();
+    for (const b of buckets) per.set(b, (per.get(b) ?? 0) + 1);
+    for (const [bucket, count] of per) out.push({ minuteLeft, bucket, weight: count / buckets.length });
+  }
+  return out;
+}
+
 /** Contracts seen at this price level, pooling the minute before and after so the numbers fill in faster. */
 export function pooled(lookup: EdgeLookup, asset: string, minuteLeft: number, bucket: number): Cell {
   let n = 0;
