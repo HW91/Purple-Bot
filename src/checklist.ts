@@ -138,12 +138,14 @@ export function checklistFor(cfg: BotConfig, views: AssetView[], now: number, lo
   }
   if (edgeOn && sides) {
     const enough = cell.n >= cfg.edgeMinSamples;
-    line("history", enough, `${cell.n} contracts priced near ${pct(yesProb(q))} with about ${minuteLeft} min left (need ${cfg.edgeMinSamples})`);
+    line("history", enough, `${Math.round(cell.n)} contracts priced near ${pct(yesProb(q))} with about ${minuteLeft} min left (need ${cfg.edgeMinSamples})`);
     const e = sides[outcome];
     if (!enough) {
       line("edge", null, `Edge at least ${(cfg.minEdge * 100).toFixed(1)} cents per contract after fees (needs more history first)`);
     } else {
-      line("edge", e.edge >= cfg.minEdge, `${OUT}: wins ${pct(e.winRate)} (cautious ${pct(e.winRateLow)}) vs price ${pct(e.price)} plus fee ${pct(e.fee)} = ${(e.edge * 100).toFixed(1)} cents (need ${(cfg.minEdge * 100).toFixed(1)})`);
+      const margin = (e.winRate - e.winRateLow) * 100;
+      const result = e.edge >= 0 ? `a gain of ${(e.edge * 100).toFixed(1)} cents` : `a loss of ${Math.abs(e.edge * 100).toFixed(1)} cents`;
+      line("edge", e.edge >= cfg.minEdge, `${OUT} won ${pct(e.winRate)} of the time at this price, and it costs ${pct(e.price)}. After the ${pct(e.fee)} fee and a ${margin.toFixed(1)}-point safety margin for the number of contracts behind it, you would expect ${result} per contract (you need at least ${(cfg.minEdge * 100).toFixed(1)} cents).`);
     }
   }
 

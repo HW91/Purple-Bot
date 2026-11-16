@@ -271,7 +271,7 @@ describe("crypto entry", () => {
     const lines = checklistFor(edgeCfg, v, now, look(500, 495));
     expect(lines.find((c) => c.key === "history")).toMatchObject({ ok: true });
     expect(lines.find((c) => c.key === "edge")).toMatchObject({ ok: true });
-    expect(lines.find((c) => c.key === "edge")?.text).toMatch(/need 3\.0/);
+    expect(lines.find((c) => c.key === "edge")?.text).toMatch(/at least 3\.0 cents/);
     expect(checklistFor(edgeCfg, v, now, look(40, 40)).find((c) => c.key === "edge")?.ok).toBeNull();
     // the standard rule is untouched
     expect(evaluateEntry(cfg, ASSETS.map((a, i) => (i < 7 ? view(a, i === 0 ? 0.83 : 0.6, i === 0 ? 0.85 : 0.62, now) : view(a, 0.4, 0.42, now))), now).ok).toBe(true);
