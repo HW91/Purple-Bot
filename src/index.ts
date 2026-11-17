@@ -685,6 +685,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       } catch (e) {
         return { label: v.label, error: (e as Error).message };
       }
+      if (cfg.stopLossOn && (cfg.stopLossNotLastSec > 0 || cfg.stopLossHoldSec > 0)) return { label: v.label, error: "A stop loss that waits (no sale in the last seconds, or only after the loss lasts) cannot be backtested: the recorded prices are too far apart to measure how long a loss lasted. Use demo mode to test it on live prices." };
       if (cfg.modelEdgePts > 0 || cfg.entriesPerContract > 1) return { label: v.label, error: "A bot that uses the live-price estimate or several entries per contract cannot be backtested: the recorded history has no live price and the test makes one trade per contract. Use demo mode to test it on live prices." };
       if (cfg.comboOn) return { label: v.label, error: "A combo bot cannot be backtested: combo prices are only quoted by market makers at the moment of the trade." };
       if (cfg.minEdge > 0) return { label: v.label, error: "A bot with a minimum edge cannot be backtested yet: it learns from the same recorded history the test would replay, so the result would look better than it is. Use the Edge report on the Trades tab instead." };

@@ -383,6 +383,8 @@ function vBots(){
         field('Money time frame (minutes, 0 = whole contract)',num('flowWindowMin',1,1),'How far back the money is added up each time the bot checks.'),
         field('Required ratio (your side ÷ other side)',num('flowRatio',1,0.1),'1.5 means the money on the side being bought must be at least 1.5 times the money on the other side. Must be 1 or more.'),
         field('Stop loss ($ per position)',h('div',{class:'row'},sl,num('stopLoss'))),
+        field('Stop loss: never sell in the last (seconds, 0 = off)',num('stopLossNotLastSec',1,1),'The stop loss will not sell in the last this many seconds of the contract. The book is thinnest then, the outcome is nearly decided, and a brief drop in the bid can trigger a sale at a bad price. For example 60.'),
+        field('Stop loss: sell only if the loss lasts (seconds, 0 = sell at once)',num('stopLossHoldSec',1,1),'The stop loss sells only after the loss has stayed past your stop loss amount for this many seconds without recovering, so a brief dip does not trigger it. For example 5. It is checked every few seconds, so the wait can run a few seconds longer.'),
         field('Take profit ($ per position)',h('div',{class:'row'},tp,num('takeProfit'))),
         field('Entries per contract',num('entriesPerContract',1,1),'How many trades the bot may open in ONE 15-minute contract. 1 is the usual single trade. Above 1, each new entry needs the entry rules to pass again, and several can be open at once, up to "Max simultaneous positions" below (raise it too) and your daily limits.'),
         field('Seconds between entries in one contract',num('entryCooldownSec',1,1),'After one entry, the bot waits this long before another entry in the same contract.'),
@@ -438,7 +440,7 @@ function vBots(){
       f.appendChild(h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){
         var out={strategy:s,durationMin:cfg.durationMin};
         ['probThreshold','probMax','minEdge'].forEach(function(k){out[k]=+inp[k].value/100});
-        ['entriesPerContract','entryCooldownSec','modelEdgePts','pivotBandPct','notifyEveryTrades','agreeCount','edgeMinSamples','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
+        ['stopLossNotLastSec','stopLossHoldSec','entriesPerContract','entryCooldownSec','modelEdgePts','pivotBandPct','notifyEveryTrades','agreeCount','edgeMinSamples','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
         out.betSide=sideSel.value;
         out.flowOn=fl.checked;
         out.noTradeWindows=[].slice.call(winBox.children).map(function(r){return {start:r._s.value,end:r._e.value}}).filter(function(w){return w.start||w.end});

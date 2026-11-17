@@ -254,6 +254,30 @@ export function evaluateExit(cfg: Pick<BotConfig, "stopLossOn" | "stopLoss" | "t
   return null;
 }
 
+/**
+ * The exit decision with the two stop loss protections: the stop never fires in the last `stopLossNotLastSec` seconds of the contract (the book is
+ * thinnest then and the outcome is nearly decided), and, when `stopLossHoldSec` is above 0, only fires after the loss has lasted that many seconds
+ * without recovering. `breachSince` is when the current stretch of loss began (null when not in a loss); keep it and pass it back on the next call.
+ */
+export function evaluateExitTimed(
+  cfg: Pick<BotConfig, "stopLossOn" | "stopLoss" | "takeProfitOn" | "takeProfit" | "stopLossNotLastSec" | "stopLossHoldSec">,
+  p: OpenPos,
+  q: Pick<Quote, "yesBid" | "yesAsk">,
+  ctx: { now: number; closeTs: number; breachSince: number | null },
+): { reason: "stop_loss" | "take_profit" | null; breachSince: number | null } {
+  const pnl = unrealizedPnl(p, q);
+  const breach = cfg.stopLossOn && pnl <= -cfg.stopLoss;
+  const since = !breach ? null : (ctx.breachSince ?? ctx.now);
+  if (breach && since !== null) {
+    const secsLeft = (ctx.closeTs - ctx.now) / 1000;
+    const tooLate = cfg.stopLossNotLastSec > 0 && secsLeft <= cfg.stopLossNotLastSec;
+    const longEnough = cfg.stopLossHoldSec <= 0 || ctx.now - since >= cfg.stopLossHoldSec * 1000;
+    if (!tooLate && longEnough) return { reason: "stop_loss", breachSince: since };
+  }
+  if (cfg.takeProfitOn && pnl >= cfg.takeProfit) return { reason: "take_profit", breachSince: since };
+  return { reason: null, breachSince: since };
+}
+
 // ---------------- risk ----------------
 
 export interface RiskStats {

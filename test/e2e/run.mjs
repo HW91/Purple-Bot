@@ -617,6 +617,26 @@ try {
   await quote([T("BTC")], 0.94, 0.95);
   await api("/view", "POST", { mode: "real" });
 
+  // ---- S. stop loss that waits for the loss to last (demo): a brief dip does not sell, a lasting loss does
+  await api("/view", "POST", { mode: "demo" });
+  await quote([T("BTC")], 0.94, 0.95);
+  const holdCfg = { ...demoCfg, stopLossOn: true, stopLoss: 1, stopLossHoldSec: 8, tradeAmount: 5 };
+  const holdBot = (await api("/bots", "POST", { name: "Stop hold bot", config: holdCfg })).j.id;
+  await api(`/bots/${holdBot}/start`, "POST");
+  const holdOpen = await waitFor(async () => (await api("/positions")).j.open.find((p) => p.bot_id === holdBot), 60000);
+  await quote([T("BTC")], 0.5, 0.52); // far below the entry: past the $1 stop loss
+  await sleep(3500);
+  const stillOpen = (await api("/positions")).j.open.find((p) => p.bot_id === holdBot);
+  await quote([T("BTC")], 0.94, 0.95); // a brief dip: the price recovers inside the wait
+  await sleep(2500);
+  const afterDip = (await api("/positions")).j.open.find((p) => p.bot_id === holdBot);
+  await quote([T("BTC")], 0.5, 0.52); // now the loss lasts
+  const stopped = await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === holdBot), 60000, 1500);
+  ok("stop loss hold: a brief dip does not sell, a loss that lasts does", !!holdOpen && !!stillOpen && !!afterDip && !!stopped && stopped.close_reason === "stop_loss", JSON.stringify({ stillOpen: !!stillOpen, afterDip: !!afterDip, stopped: stopped && stopped.close_reason }));
+  await api(`/bots/${holdBot}/stop`, "POST");
+  await quote([T("BTC")], 0.94, 0.95);
+  await api("/view", "POST", { mode: "real" });
+
   // ---- J. delete rules + disconnect rules
   ok("cannot delete a bot while ON", await (async () => { await api(`/bots/${bot1}/start`, "POST"); const r = await api(`/bots/${bot1}`, "DELETE"); await api(`/bots/${bot1}/stop`, "POST"); return r.status === 409; })());
   ok("badAuth count on fake exchange only came from the deliberately wrong key", (await mockState()).badAuth === 1, String((await mockState()).badAuth));

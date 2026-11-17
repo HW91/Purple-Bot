@@ -14,7 +14,7 @@ import { etDateString, overviewEmail, runOverview } from "./analysis";
 import { checklistFor, type CheckLine } from "./checklist";
 import { FlowTracker } from "./flow";
 import { feePerContract, samplesFromCandles, weightedSamplesFromObs, type Cell, type EdgeLookup } from "./edge";
-import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExit, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
+import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExitTimed, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
 import { describeComboOffers, evaluateCombo, pickComboQuote, type ComboDecision, type ComboState } from "./combo";
 import { classicPivots, dailyPrices, levelText, pivotNear, type PivotLevel } from "./pivots";
@@ -127,6 +127,7 @@ export class Engine extends DurableObject<Env> {
   private inflight = new Set<string>();
   private closeRequests = new Map<string, string>();
   private lastExitAttempt = new Map<string, number>();
+  private stopBreach = new Map<string, number>(); // position id -> when its current stretch of loss (past the stop loss) began
   private entryAttempts = new Map<string, { n: number; last: number }>();
   private entryCounts = new Map<string, { n: number; last: number }>(); // "botId|ticker|demo" -> trades opened in that contract and when the last one opened
   private lastReason = new Map<string, { reason: string; ts: number; up: number; down: number }>();
@@ -1385,11 +1386,20 @@ export class Engine extends DurableObject<Env> {
       }
       const bot = this.bots.find((b) => b.id === p.bot_id);
       if (!bot) continue;
-      const open: OpenPos = { outcome: p.outcome, openQty: p.open_qty, avgEntry: p.avg_entry ?? 0, entryFee: p.entry_fee, exitFee: p.exit_fee, exitProceeds: p.exit_proceeds };
-      let reason: string | null = evaluateExit(bot.config, open, q);
-      if (!reason && bot.config.exitOnEdgeGone && bot.config.modelEdgePts > 0 && this.edgeGone(p, q, Date.now())) reason = "edge_gone";
-      if (reason) await this.closePosition(p, reason, q);
+      await this.evaluatePositionExit(p, bot, q);
     }
+  }
+
+  /** Stop loss (with its two protections), take profit and the edge-gone exit for one open trade, on the latest price. */
+  private async evaluatePositionExit(p: PositionRow, bot: Bot, q: Quote): Promise<void> {
+    const now = Date.now();
+    const open: OpenPos = { outcome: p.outcome, openQty: p.open_qty, avgEntry: p.avg_entry ?? 0, entryFee: p.entry_fee, exitFee: p.exit_fee, exitProceeds: p.exit_proceeds };
+    const ex = evaluateExitTimed(bot.config, open, q, { now, closeTs: p.market_close_ts, breachSince: this.stopBreach.get(p.id) ?? null });
+    if (ex.breachSince === null) this.stopBreach.delete(p.id);
+    else this.stopBreach.set(p.id, ex.breachSince);
+    let reason: string | null = ex.reason;
+    if (!reason && bot.config.exitOnEdgeGone && bot.config.modelEdgePts > 0 && this.edgeGone(p, q, now)) reason = "edge_gone";
+    if (reason) await this.closePosition(p, reason, q);
   }
 
   /** My own estimate of this trade winning is no longer above what the trade could be sold for right now: the edge it was bought for is gone. */
@@ -1400,15 +1410,21 @@ export class Engine extends DurableObject<Env> {
     return edgeIsGone(p.outcome, e.pYes, q.yesBid, q.yesAsk);
   }
 
-  /** The estimate moves every second with the live price, even when Kalshi's own price does not, so open trades are also checked on the clock. */
+  /**
+   * The estimate moves every second with the live price, and a stop loss that waits for the loss to last N seconds needs a check when no new price
+   * arrives, so open trades that use either are also checked on the clock (every few seconds).
+   */
   private async checkEdgeExits(): Promise<void> {
     const now = Date.now();
     for (const p of [...this.posCache.values()]) {
       const bot = this.bots.find((b) => b.id === p.bot_id);
-      if (!bot || !bot.config.exitOnEdgeGone || !(bot.config.modelEdgePts > 0) || this.closeRequests.has(p.id)) continue;
+      if (!bot || this.closeRequests.has(p.id)) continue;
+      const usesEstimate = bot.config.exitOnEdgeGone && bot.config.modelEdgePts > 0;
+      const waitsForLoss = bot.config.stopLossOn && bot.config.stopLossHoldSec > 0;
+      if (!usesEstimate && !waitsForLoss) continue;
       const q = this.quotes.get(p.ticker);
       if (!q || now - q.ts > 30_000) continue;
-      if (this.edgeGone(p, q, now)) await this.closePosition(p, "edge_gone", q);
+      await this.evaluatePositionExit(p, bot, q);
     }
   }
 
@@ -1500,6 +1516,7 @@ export class Engine extends DurableObject<Env> {
     this.posCache.delete(p.id);
     this.dirtyPos.delete(p.id);
     this.closeRequests.delete(p.id);
+    this.stopBreach.delete(p.id);
     await log(this.env, "info", "order", `${p.demo === 1 ? "DEMO " : ""}CLOSED ${p.asset} ${p.outcome.toUpperCase()} (${reason}): ${result.toUpperCase()} $${pnl.toFixed(2)} after fees`, p.bot_id);
     if (p.demo === 1) return; // demo trades send no emails
     const bot = this.bots.find((b) => b.id === p.bot_id);
