@@ -455,7 +455,8 @@ try {
     // bot form: the edge rule hides the fields it does not use, and the range rule hides the edge fields
     await page.click("nav >> text=Bots");
     await page.locator("button:text-is('Edit')").first().click();
-    await page.waitForSelector("label:text-is('Side to bet')", { timeout: 15000 });
+    await page.waitForSelector("label:text-is('Side to bet')", { state: "attached", timeout: 15000 });
+    await page.evaluate(() => document.querySelectorAll("details.sec").forEach((d) => (d.open = true)));
     const vis = async (t) => page.locator(`label:text-is('${t}')`).first().isVisible();
     const all = { entryRule: await page.locator("label:text-is('Entry rule')").count(), side: await vis("Side to bet"), prob: await vis("Probability range (%)"), agree: await vis("Assets that must agree (0 = do not check)"), money: await vis("Use money on each side"), edge: await vis("Minimum edge (cents per contract, after fees; 0 = off)"), samples: await vis("Contracts needed behind a win rate") };
     const sideOptions = await page.locator("label:text-is('Side to bet')").locator("..").locator("select").evaluate((sel) => [...sel.options].map((o) => o.text));
@@ -463,15 +464,28 @@ try {
     // one New bot button; any asset from a single list: metals first (A to Z), then cryptocurrencies (A to Z); agreement is a number, 0 = off
     await page.click("nav >> text=Bots");
     ok("there is one New bot button (no separate crypto and metals buttons)", (await page.locator("button:text-is('+ New bot')").count()) === 1 && (await page.locator("button:text('New crypto bot')").count()) === 0);
+    await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("pb_sec_")).forEach((k) => localStorage.removeItem(k))); // a fresh browser: no remembered open sections
     await page.click("button:text-is('+ New bot')");
     await page.waitForSelector("label:text-is('Asset to trade')", { timeout: 15000 });
+    // the form is grouped by subject: the settings used most are in "The basics", open; the rest fold away
+    const basicsVisible = await Promise.all(["Name", "Asset to trade", "Trade amount ($)", "Stop loss ($ per position)", "Take profit ($ per position)", "Max simultaneous positions"].map((t) => page.locator(`label:text-is('${t}')`).first().isVisible()));
+    const sideHiddenAtFirst = !(await page.locator("label:text-is('Side to bet')").first().isVisible());
+    const sectionTitles = await page.evaluate(() => [...document.querySelectorAll("details.sec > summary")].map((x) => x.textContent));
+    ok("the bot form starts with The basics open (name, asset, trade amount, stop loss, take profit) and the other sections folded, in order by subject", basicsVisible.every(Boolean) && sideHiddenAtFirst && JSON.stringify(sectionTitles) === JSON.stringify(["The basics", "When to enter", "Smarter entry rules", "Several trades and exits", "Limits", "Combo", "Notifications"]), JSON.stringify({ basicsVisible, sideHiddenAtFirst, sectionTitles }));
+    await page.evaluate(() => document.querySelectorAll("details.sec").forEach((d) => (d.open = true)));
     const list = await page.locator("label:text-is('Asset to trade')").locator("..").locator("select").evaluate((sel) => [...sel.querySelectorAll("optgroup")].map((g) => ({ group: g.label, options: [...g.querySelectorAll("option")].map((o) => o.value) })));
     const sorted = (a) => a.every((v, i) => i === 0 || a[i - 1] <= v);
     ok("the asset list shows Metals first and Cryptocurrencies second, each in alphabetical order", list.length === 2 && list[0].group === "Metals" && list[1].group === "Cryptocurrencies" && list[0].options.length === 5 && list[1].options.length === 12 && sorted(list[0].options) && sorted(list[1].options), JSON.stringify(list));
     const agreeVisible = await page.locator("label:text('Assets that must agree (0 = do not check)')").first().isVisible();
     const agreeValue = await page.locator("label:text('Assets that must agree (0 = do not check)')").locator("..").locator("input").inputValue();
     ok("agreement is optional for every bot: the number starts at 0 (off) for a new bot", agreeVisible && agreeValue === "0", agreeValue);
-    await page.click("button:text-is('Cancel')");
+    // the regrouped form still saves every value: change the name and the trade amount (both in The basics), save, and read the bot back
+    await page.locator("label:text-is('Name')").locator("..").locator("input").fill("Layout test bot");
+    await page.locator("label:text-is('Trade amount ($)')").locator("..").locator("input").fill("7");
+    await page.click("button:text-is('Save')");
+    const layoutBot = await waitFor(async () => (await api("/bots")).j.find((x) => x.name === "Layout test bot"), 15000);
+    ok("the regrouped bot form saves what was typed (name and trade amount)", !!layoutBot && layoutBot.config.tradeAmount === 7 && layoutBot.config.stopLossOn !== undefined, JSON.stringify(layoutBot?.config?.tradeAmount));
+    if (layoutBot) await api(`/bots/${layoutBot.id}`, "DELETE");
     // Backtest tab: every live setting can be changed in a comparison
     await page.click("nav >> text=Backtest");
     await page.waitForSelector("text=Comparison 1", { timeout: 15000 });

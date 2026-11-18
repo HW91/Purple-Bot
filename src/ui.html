@@ -363,36 +363,46 @@ function vBots(){
       var sl=chk('stopLossOn');sl.checked=cfg.stopLossOn;var tp=chk('takeProfitOn');tp.checked=cfg.takeProfitOn;
       var nt=h('select',null,['immediate','daily','off'].map(function(o){var op=h('option',{value:o,text:o});if(cfg.notify===o)op.selected=true;return op}));
       f.appendChild(h('h2',{text:(b?'Edit ':'New ')+s+' bot'}));
-      f.appendChild(h('div',{class:'grid'},
-        field('Name',name),
-        (fTrade=field('Asset to trade',tradeSel,'The only asset this bot buys. The other checked assets only confirm the direction.')),
-        field('Minimum edge (cents per contract, after fees; 0 = off)',num('minEdge',100,0.1),'When above 0, the bot buys only when the price is wrong by at least this much, judged from how contracts like this really ended in this app\'s recorded history. The Edge report on the Trades tab shows that history.'),
-        field('Contracts needed behind a win rate',num('edgeMinSamples',1,1),'The win rate is only trusted when at least this many contracts were counted at that price and time.'),
-        field('Side to bet',sideSel,'High probability buys the side the market leans toward. Low probability buys the other, cheap side. The probability range below applies to the side being bought (for example 3% to 7% for the low side).'),
-        field('Probability range (%)',h('div',{class:'row'},num('probThreshold',100,1),h('span',{class:'mute',text:'to'}),num('probMax',100,1)),'The bot only buys when the probability of the side it buys is inside this range, and skips if the price you would pay is above the top number. 0 to 100 means no limit.'),
-        (fAgree=field('Assets that must agree (0 = do not check)',num('agreeCount',1,1),'How many of the checked assets must lean the same way before the bot trades. 0 turns the check off, so the asset it trades decides on its own.')),
-        field('Time Delay after open (seconds, 0–'+((cfg.durationMin-1)*60)+')',num('timeDelaySec',1,1)),
-        field('Minimum time remaining (seconds)',num('minRemainingSec',1,1)),
-        field('Trade amount ($)',num('tradeAmount'),'The bot buys whole contracts: as many as this amount pays for at the price (fees are extra). To buy one contract, enter at least its price and less than double it, for example $0.10 for a contract at 6 cents. Below one contract price, nothing is bought. Kalshi sets no fixed largest amount; your balance and your daily limits cap it.'),
-        field('Max simultaneous positions',num('maxPositions',1,1)),
-        field('Max trades per hour',num('maxTradesPerHour',1,1)),
-        field('Daily loss limit ($)',num('dailyLossLimit')),
-        field('Daily investment limit ($)',num('dailyInvestLimit')),
-        field('Max spread allowed ($)',num('maxSpread')),
-        field('Use money on each side',fl,'When on, the bot only buys a side if the money placed on it beats the other side by the ratio below. Money is counted for the side that started each trade, the same as the volume table.'),
-        field('Money time frame (minutes, 0 = whole contract)',num('flowWindowMin',1,1),'How far back the money is added up each time the bot checks.'),
-        field('Required ratio (your side ÷ other side)',num('flowRatio',1,0.1),'1.5 means the money on the side being bought must be at least 1.5 times the money on the other side. Must be 1 or more.'),
-        field('Stop loss ($ per position)',h('div',{class:'row'},sl,num('stopLoss'))),
-        field('Stop loss: never sell in the last (seconds, 0 = off)',num('stopLossNotLastSec',1,1),'The stop loss will not sell in the last this many seconds of the contract. The book is thinnest then, the outcome is nearly decided, and a brief drop in the bid can trigger a sale at a bad price. For example 60.'),
-        field('Stop loss: sell only if the loss lasts (seconds, 0 = sell at once)',num('stopLossHoldSec',1,1),'The stop loss sells only after the loss has stayed past your stop loss amount for this many seconds without recovering, so a brief dip does not trigger it. For example 5. It is checked every few seconds, so the wait can run a few seconds longer.'),
-        field('Take profit ($ per position)',h('div',{class:'row'},tp,num('takeProfit'))),
-        field('Entries per contract',num('entriesPerContract',1,1),'How many trades the bot may open in ONE 15-minute contract. 1 is the usual single trade. Above 1, each new entry needs the entry rules to pass again, and several can be open at once, up to "Max simultaneous positions" below (raise it too) and your daily limits.'),
-        field('Seconds between entries in one contract',num('entryCooldownSec',1,1),'After one entry, the bot waits this long before another entry in the same contract.'),
-        field('Sell when my estimate no longer beats the price',exitEdgeBox,'On: a trade is sold as soon as the bot\'s own estimate of winning is no longer above the price it could be sold at (the edge it was bought for is gone). Works only with "Only enter when my estimate beats the price" above 0, on cryptocurrencies. Off: it holds until the profit target, stop loss or settlement.'),
-        field('Stay away from daily pivot levels (% either side, 0 = off)',num('pivotBandPct',1,0.01),'The bot works out the standard daily pivot, support (S1 to S3) and resistance (R1 to R3) levels from the previous trading day\'s contract prices on Kalshi, and skips a contract whose target price is within this many percent of any of them. For example 0.1 skips targets within 0.1% (about $4 on gold at $3,900). Any number from 0.01 up to 5 works.'),
-        field('Only enter when my estimate beats the price by (points, 0 = off)',num('modelEdgePts',1,0.5),'Cryptocurrencies only. The bot estimates the chance of winning from the live price, how far it is from the target, how much it has been moving and the time left, and enters only when that estimate is at least this many percentage points above the price it would pay. For example 1 means 99% estimated against a 98% price. The Trades tab shows how the estimate has compared with real results; turn this on only once it has proved itself. It needs the live price feed and a few minutes of price movement.'),
-        field('Email notifications',nt),
-        field('Email me after this many winning trades in a row (0 = off)',num('notifyEveryTrades',1,1),'Sends one email when the bot\'s last trades, this many of them, were all wins. It then waits for this many new trades that all won before it emails again. The email shows the profit, your current trade amount and your balance, so you can decide whether to change the trade size.')));
+      // every setting is built once here, then placed in a section by subject: the settings used most are first and always open, the rest fold away (each section remembers whether it was left open)
+      function section(key,title,open,kids){
+        var d=h('details',{class:'sec',style:'border-top:1px solid var(--line);margin-top:12px;padding-top:6px'},h('summary',{text:title,style:'cursor:pointer;font-weight:600;padding:6px 0'}),kids);
+        var saved=null;try{saved=localStorage.getItem('pb_sec_'+key)}catch(e){}
+        d.open=saved===null?open:saved==='1';
+        d.addEventListener('toggle',function(){try{localStorage.setItem('pb_sec_'+key,d.open?'1':'0')}catch(e){}});
+        return d;
+      }
+      var demoOn=chk('demoOn');demoOn.checked=!!cfg.demo;
+      var demoBlock=h('div',{style:'margin-top:10px'},h('label',{class:'chk',style:'font-weight:600'},demoOn,'Demo mode (no real orders)'),
+        h('small',{style:'display:block;margin:2px 0 8px',text:'The bot runs the same rules on live prices but sends nothing to Kalshi. Each entry is filled at the price it would pay, with Kalshi\'s fee formula, and exits sell at the current bid. Demo trades are saved apart from real ones and appear only when the Demo switch at the top is on. They use a pretend $1,000 balance and the limits set on this bot. The mode can only be changed while the bot is off with no open trades. Not available for combos.'}));
+      var fName=field('Name',name);
+      fTrade=field('Asset to trade',tradeSel,'The only asset this bot buys. The other checked assets only confirm the direction.');
+      var fAmount=field('Trade amount ($)',num('tradeAmount'),'The bot buys whole contracts: as many as this amount pays for at the price (fees are extra). To buy one contract, enter at least its price and less than double it, for example $0.10 for a contract at 6 cents. Below one contract price, nothing is bought. Kalshi sets no fixed largest amount; your balance and your daily limits cap it.');
+      var fStop=field('Stop loss ($ per position)',h('div',{class:'row'},sl,num('stopLoss')),'A dollar total for the whole trade (all the contracts bought together), after fees, not per contract. The bot sells when the trade is down this much.');
+      var fTake=field('Take profit ($ per position)',h('div',{class:'row'},tp,num('takeProfit')),'A dollar total for the whole trade (all the contracts bought together), after fees, not per contract. The bot sells when the trade is up this much.');
+      var fMaxPos=field('Max simultaneous positions',num('maxPositions',1,1));
+      var fSide=field('Side to bet',sideSel,'High probability buys the side the market leans toward. Low probability buys the other, cheap side. The probability range below applies to the side being bought (for example 3% to 7% for the low side).');
+      var fRange=field('Probability range (%)',h('div',{class:'row'},num('probThreshold',100,1),h('span',{class:'mute',text:'to'}),num('probMax',100,1)),'The bot only buys when the probability of the side it buys is inside this range, and skips if the price you would pay is above the top number. 0 to 100 means no limit.');
+      fAgree=field('Assets that must agree (0 = do not check)',num('agreeCount',1,1),'How many of the checked assets must lean the same way before the bot trades. 0 turns the check off, so the asset it trades decides on its own.');
+      var fDelay=field('Time Delay after open (seconds, 0–'+((cfg.durationMin-1)*60)+')',num('timeDelaySec',1,1));
+      var fMinRem=field('Minimum time remaining (seconds)',num('minRemainingSec',1,1));
+      var fSpread=field('Max spread allowed ($)',num('maxSpread'));
+      var fEdge=field('Minimum edge (cents per contract, after fees; 0 = off)',num('minEdge',100,0.1),'When above 0, the bot buys only when the price is wrong by at least this much, judged from how contracts like this really ended in this app\'s recorded history. The Edge report on the Trades tab shows that history.');
+      var fEdgeN=field('Contracts needed behind a win rate',num('edgeMinSamples',1,1),'The win rate is only trusted when at least this many contracts were counted at that price and time.');
+      var fModel=field('Only enter when my estimate beats the price by (points, 0 = off)',num('modelEdgePts',1,0.5),'Cryptocurrencies only. The bot estimates the chance of winning from the live price, how far it is from the target, how much it has been moving and the time left, and enters only when that estimate is at least this many percentage points above the price it would pay. For example 1 means 99% estimated against a 98% price. The Trades tab shows how the estimate has compared with real results; turn this on only once it has proved itself. It needs the live price feed and a few minutes of price movement.');
+      var fPivot=field('Stay away from daily pivot levels (% either side, 0 = off)',num('pivotBandPct',1,0.01),'The bot works out the standard daily pivot, support (S1 to S3) and resistance (R1 to R3) levels from the previous trading day\'s contract prices on Kalshi, and skips a contract whose target price is within this many percent of any of them. For example 0.1 skips targets within 0.1% (about $4 on gold at $3,900). Any number from 0.01 up to 5 works.');
+      var fFlow=field('Use money on each side',fl,'When on, the bot only buys a side if the money placed on it beats the other side by the ratio below. Money is counted for the side that started each trade, the same as the volume table.');
+      var fFlowWin=field('Money time frame (minutes, 0 = whole contract)',num('flowWindowMin',1,1),'How far back the money is added up each time the bot checks.');
+      var fFlowRatio=field('Required ratio (your side ÷ other side)',num('flowRatio',1,0.1),'1.5 means the money on the side being bought must be at least 1.5 times the money on the other side. Must be 1 or more.');
+      var fEntries=field('Entries per contract',num('entriesPerContract',1,1),'How many trades the bot may open in ONE 15-minute contract. 1 is the usual single trade. Above 1, each new entry needs the entry rules to pass again, and several can be open at once, up to "Max simultaneous positions" (raise it too) and your daily limits.');
+      var fCool=field('Seconds between entries in one contract',num('entryCooldownSec',1,1),'After one entry, the bot waits this long before another entry in the same contract.');
+      var fEdgeExit=field('Sell when my estimate no longer beats the price',exitEdgeBox,'On: a trade is sold as soon as the bot\'s own estimate of winning is no longer above the price it could be sold at (the edge it was bought for is gone). Works only with "Only enter when my estimate beats the price" above 0, on cryptocurrencies. Off: it holds until the profit target, stop loss or settlement.');
+      var fStopLast=field('Stop loss: never sell in the last (seconds, 0 = off)',num('stopLossNotLastSec',1,1),'The stop loss will not sell in the last this many seconds of the contract. The book is thinnest then, the outcome is nearly decided, and a brief drop in the bid can trigger a sale at a bad price. For example 60.');
+      var fStopHold=field('Stop loss: sell only if the loss lasts (seconds, 0 = sell at once)',num('stopLossHoldSec',1,1),'The stop loss sells only after the loss has stayed past your stop loss amount for this many seconds without recovering, so a brief dip does not trigger it. For example 5. It is checked every few seconds, so the wait can run a few seconds longer.');
+      var fTrades=field('Max trades per hour',num('maxTradesPerHour',1,1));
+      var fLoss=field('Daily loss limit ($)',num('dailyLossLimit'));
+      var fInvest=field('Daily investment limit ($)',num('dailyInvestLimit'));
+      var fNotify=field('Email notifications',nt);
+      var fStreak=field('Email me after this many winning trades in a row (0 = off)',num('notifyEveryTrades',1,1),'Sends one email when the bot\'s last trades, this many of them, were all wins. It then waits for this many new trades that all won before it emails again. The email shows the profit, your current trade amount and your balance, so you can decide whether to change the trade size.');
       // the first time a minimum edge is typed in, settings still at the standard defaults move to safer starting values (small trades, tight spread, hold to settlement); anything you already changed is left alone
       var edgeWas=+inp.minEdge.value>0;
       inp.minEdge.addEventListener('change',function(){
@@ -409,25 +419,6 @@ function vBots(){
         edgeWas=on;
       });
       var agreeBox=h('div',{style:'margin-top:10px'},h('label',{text:'Assets to check for agreement (tick the ones that may have to lean the same way)'}),assets);
-      f.appendChild(agreeBox);
-      // demo mode: the same rules on live prices, no real orders
-      var demoOn=chk('demoOn');demoOn.checked=!!cfg.demo;
-      f.appendChild(h('div',{style:'margin-top:14px'},h('label',{class:'chk',style:'font-weight:600'},demoOn,'Demo mode (no real orders)'),
-        h('small',{style:'display:block;margin:2px 0 8px',text:'The bot runs the same rules on live prices but sends nothing to Kalshi. Each entry is filled at the price it would pay, with Kalshi\'s fee formula, and exits sell at the current bid. Demo trades are saved apart from real ones and appear only when the Demo switch at the top is on. They use a pretend $1,000 balance and the limits set on this bot. The mode can only be changed while the bot is off with no open trades. Not available for combos.'})));
-      // combo: one Kalshi contract on several assets that pays only if every pick wins
-      var comboBoxes=[h('div',{class:'mute',text:'Metals'})].concat(METALS_AZ.map(comboBox),[h('div',{class:'mute',style:'margin-top:6px',text:'Cryptocurrencies'})],CRYPTO_AZ.map(comboBox));
-      function comboBox(a){var cb=h('input',{type:'checkbox','data-c':a});cb.checked=(cfg.comboAssets||[]).indexOf(a)>=0;return h('label',{class:'chk'},cb,a)}
-      var comboOn=chk('comboOn');comboOn.checked=!!cfg.comboOn;
-      // a combo uses only the assets ticked in the combo section, so the single-contract fields are hidden while it is on (their saved values stay as they were)
-      function showSingleFields(){var on=!comboOn.checked;[fTrade,fAgree,agreeBox].forEach(function(e){e.style.display=on?'':'none'})}
-      comboOn.addEventListener('change',showSingleFields);
-      f.appendChild(h('div',{style:'margin-top:14px'},h('label',{class:'chk',style:'font-weight:600'},comboOn,'Buy as a combo'),
-        h('small',{style:'display:block;margin:2px 0 8px',text:'Instead of one contract, the bot buys ONE Kalshi combo of the assets ticked below. It pays $1 per contract only if every pick wins, and loses the whole price if any pick fails. Each ticked asset must have been inside the probability range at some point in the last minutes of the contract (not all at once). The probability range, side to bet, trade amount and limits above apply. Stop loss and take profit do not apply: a combo is held until it settles. Until one combo has been confirmed, the bot buys a single contract.'}),
-        h('div',{class:'grid'},
-          field('Minutes at the end of the contract to watch',num('comboWindowMin',1,1),'Every ticked asset must be in range at some point in this many final minutes.'),
-          field('Highest combo cost (% of the payout)',num('comboMaxCost',100,1),'The bot only buys when a market maker offers the combo at or under this price. A combo of three assets at 98% each costs about 95% to 96%.')),
-        h('label',{text:'Assets in the combo'}),comboBoxes));
-      showSingleFields();
       // no-trade windows: times of day (US Eastern) when this bot opens no new trades; tap + to add another
       var winBox=h('div');
       function addWin(w){
@@ -436,7 +427,28 @@ function vBots(){
         row._s=s;row._e=e;winBox.appendChild(row);
       }
       (cfg.noTradeWindows||[]).forEach(addWin);
-      f.appendChild(h('div',{style:'margin-top:14px'},h('label',{text:'No-trade windows (US Eastern time)'}),h('small',{text:'The bot opens no new trades between these times, every day. Open positions are still managed. A window can run past midnight (for example 10:00 PM to 1:00 AM).',style:'display:block;margin-bottom:6px'}),winBox,h('button',{class:'btn gray',text:'+ Add window',onclick:function(){addWin(null)}})));
+      var windowsBlock=h('div',{style:'margin-top:14px'},h('label',{text:'No-trade windows (US Eastern time)'}),h('small',{text:'The bot opens no new trades between these times, every day. Open positions are still managed. A window can run past midnight (for example 10:00 PM to 1:00 AM).',style:'display:block;margin-bottom:6px'}),winBox,h('button',{class:'btn gray',text:'+ Add window',onclick:function(){addWin(null)}}));
+      // combo: one Kalshi contract on several assets that pays only if every pick wins
+      var comboBoxes=[h('div',{class:'mute',text:'Metals'})].concat(METALS_AZ.map(comboBox),[h('div',{class:'mute',style:'margin-top:6px',text:'Cryptocurrencies'})],CRYPTO_AZ.map(comboBox));
+      function comboBox(a){var cb=h('input',{type:'checkbox','data-c':a});cb.checked=(cfg.comboAssets||[]).indexOf(a)>=0;return h('label',{class:'chk'},cb,a)}
+      var comboOn=chk('comboOn');comboOn.checked=!!cfg.comboOn;
+      // a combo uses only the assets ticked in the combo section, so the single-contract fields are hidden while it is on (their saved values stay as they were)
+      function showSingleFields(){var on=!comboOn.checked;[fTrade,fAgree,agreeBox].forEach(function(e){e.style.display=on?'':'none'})}
+      comboOn.addEventListener('change',showSingleFields);
+      var comboBlock=h('div',null,h('label',{class:'chk',style:'font-weight:600'},comboOn,'Buy as a combo'),
+        h('small',{style:'display:block;margin:2px 0 8px',text:'Instead of one contract, the bot buys ONE Kalshi combo of the assets ticked below. It pays $1 per contract only if every pick wins, and loses the whole price if any pick fails. Each ticked asset must have been inside the probability range at some point in the last minutes of the contract (not all at once). The probability range, side to bet, trade amount and limits apply. Stop loss and take profit do not apply: a combo is held until it settles. Until one combo has been confirmed, the bot buys a single contract.'}),
+        h('div',{class:'grid'},
+          field('Minutes at the end of the contract to watch',num('comboWindowMin',1,1),'Every ticked asset must be in range at some point in this many final minutes.'),
+          field('Highest combo cost (% of the payout)',num('comboMaxCost',100,1),'The bot only buys when a market maker offers the combo at or under this price. A combo of three assets at 98% each costs about 95% to 96%.')),
+        h('label',{text:'Assets in the combo'}),comboBoxes);
+      f.appendChild(section('basics','The basics',true,[h('div',{class:'grid'},fName,fTrade,fAmount,fStop,fTake,fMaxPos),demoBlock]));
+      f.appendChild(section('enter','When to enter',false,[h('div',{class:'grid'},fSide,fRange,fDelay,fMinRem,fSpread,fAgree),agreeBox]));
+      f.appendChild(section('smart','Smarter entry rules',false,[h('div',{class:'grid'},fEdge,fEdgeN,fModel,fPivot,fFlow,fFlowWin,fFlowRatio),windowsBlock]));
+      f.appendChild(section('exits','Several trades and exits',false,[h('div',{class:'grid'},fEntries,fCool,fEdgeExit,fStopLast,fStopHold)]));
+      f.appendChild(section('limits','Limits',false,[h('div',{class:'grid'},fTrades,fLoss,fInvest)]));
+      f.appendChild(section('combo','Combo',false,[comboBlock]));
+      f.appendChild(section('notify','Notifications',false,[h('div',{class:'grid'},fNotify,fStreak)]));
+      showSingleFields();
       f.appendChild(h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){
         var out={strategy:s,durationMin:cfg.durationMin};
         ['probThreshold','probMax','minEdge'].forEach(function(k){out[k]=+inp[k].value/100});
