@@ -38,3 +38,16 @@ describe("several trades in one contract, and the edge-gone exit", () => {
     expect(edgeIsGone("no", 0.03, 0.01, 0.02)).toBe(true); // NO sells at 98 cents, above the 97% estimate
   });
 });
+
+import { fundsHelpHtml } from "../src/notify";
+
+describe("insufficient balance email", () => {
+  it("adds the transfer instructions only for a balance error", () => {
+    const text = fundsHelpHtml('Kalshi POST /portfolio/events/orders failed (400): {"error":{"code":"insufficient_balance","message":"insufficient balance"}}');
+    expect(text).toContain("Exchange 2");
+    expect(text).toContain("kalshi.com/account/exchange-indexes");
+    expect(text).toContain("Disable balance management");
+    expect(fundsHelpHtml("insufficient_shard_balance")).not.toBe("");
+    expect(fundsHelpHtml("Kalshi order failed (400): bad price")).toBe("");
+  });
+});

@@ -9,7 +9,7 @@ import { DurableObject } from "cloudflare:workers";
 import { KalshiAuthError, KalshiClient, KalshiHttpError, num, type ComboLegRef, type KalshiMarket } from "./kalshi";
 import { authHeaders, importSigningKey, type SigningKey } from "./kalshi-auth";
 import { demoBalance, getAccountLimits, getCreds, getSetting, isBotEnabled, loadBots, log, openPositions, setSetting, type PositionRow } from "./db";
-import { emailShell, esc, sendEmail } from "./notify";
+import { emailShell, esc, fundsHelpHtml, sendEmail } from "./notify";
 import { etDateString, overviewEmail, runOverview } from "./analysis";
 import { checklistFor, type CheckLine } from "./checklist";
 import { FlowTracker } from "./flow";
@@ -1324,7 +1324,7 @@ export class Engine extends DurableObject<Env> {
     }
     await log(this.env, "error", "order", `${kind} order FAILED on ${ticker}: ${msg}`, bot?.id ?? null);
     if (e instanceof KalshiAuthError) this.authError = msg;
-    await this.critical(`order-${kind}-${ticker}`, kind === "entry" ? "Order failed" : "Closing order failed", `${kind === "entry" ? "An entry" : "A closing"} order on ${esc(ticker)} failed: ${esc(msg)}${definite ? "" : "<br><b>The result is unclear</b>: the bot will not place new orders until it has checked your Kalshi account."}`);
+    await this.critical(`order-${kind}-${ticker}`, kind === "entry" ? "Order failed" : "Closing order failed", `${kind === "entry" ? "An entry" : "A closing"} order on ${esc(ticker)} failed: ${esc(msg)}${definite ? "" : "<br><b>The result is unclear</b>: the bot will not place new orders until it has checked your Kalshi account."}${fundsHelpHtml(msg)}`);
   }
 
   private async riskStats(bot: Bot): Promise<RiskStats> {

@@ -99,3 +99,20 @@ export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;")
 export function emailShell(title: string, bodyHtml: string): string {
   return `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto"><h2 style="color:#4c1d95">${esc(title)}</h2>${bodyHtml}<p style="color:#888;font-size:12px">Purple Bot</p></div>`;
 }
+
+/**
+ * Extra lines for the "Order failed" email when Kalshi says the balance is too small. Kalshi splits money across exchange shards: a deposit lands in
+ * the default account (Exchange 0), but gold, silver and the cryptocurrencies trade on Exchange 2 and an order from the bot can only spend what is in
+ * the shard its market lives on (docs.kalshi.com/getting_started/exchange_sharding). Empty for any other error.
+ */
+export function fundsHelpHtml(errorMessage: string): string {
+  if (!/insufficient[_ ](shard_)?balance/i.test(errorMessage)) return "";
+  return (
+    "<br><br><b>Why this happens:</b> a deposit lands in Kalshi's default account (Exchange 0). Gold, silver and the cryptocurrencies trade on Exchange 2, and the bot can only spend the money that is in Exchange 2, even if your total balance is higher." +
+    "<br><br><b>How to fix it:</b>" +
+    "<br>1. Open kalshi.com/account/exchange-indexes." +
+    "<br>2. If you do not see a way to transfer money, turn on &quot;Disable balance management&quot; on that page first (that is how the transfer controls appeared before)." +
+    "<br>3. Move money from the default account (Exchange 0) to Exchange 2: choose the amount and confirm." +
+    "<br><br>Once the money is in Exchange 2, the bot's next orders can go through."
+  );
+}
