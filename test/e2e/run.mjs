@@ -311,6 +311,8 @@ try {
     await page.click("#loginBtn");
     await page.waitForSelector("text=Account", { timeout: 15000 });
     await page.waitForSelector("text=Closed trades: profit/loss after fees", { timeout: 15000 });
+    await page.waitForSelector("button.link", { timeout: 15000 });
+    ok("the bot names on the Dashboard are underlined so they stand out as tappable", (await page.locator("button.link").first().evaluate((e) => getComputedStyle(e).textDecorationLine)).includes("underline"));
     const dashText = await page.textContent("#main");
     ok("dashboard shows the Account card with balance and profit/loss", dashText.includes("Cash balance") && dashText.includes("All time"));
     // related numbers are grouped under headings, in a sensible order
