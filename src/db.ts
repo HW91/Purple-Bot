@@ -111,9 +111,18 @@ export async function openPositions(env: Env): Promise<PositionRow[]> {
   return rs.results ?? [];
 }
 
-/** 1 when the dashboard is showing demo results, 0 for real (one switch at the top of the app; every results screen follows it). */
-export async function viewDemo(env: Env): Promise<0 | 1> {
-  return (await getSetting(env, "view_mode")) === "demo" ? 1 : 0;
+/**
+ * Whether results are demo (1) or real (0). A bot's own results follow that bot's Demo setting; anything not about one bot (the account totals, the
+ * Trades tab, the dashboard) is always real. The Demo checkbox on the bot is the only place demo is decided.
+ */
+export async function viewDemo(env: Env, botId?: string | null): Promise<0 | 1> {
+  if (!botId) return 0;
+  const r = await env.DB.prepare("SELECT config FROM bots WHERE id = ?").bind(botId).first<{ config: string }>();
+  try {
+    return (JSON.parse(r?.config ?? "{}") as { demo?: boolean }).demo ? 1 : 0;
+  } catch {
+    return 0;
+  }
 }
 
 export const DEMO_START_BALANCE = 1000;

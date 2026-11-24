@@ -86,7 +86,7 @@ async function kalshiClient(env: Env): Promise<KalshiClient | null> {
 }
 
 async function closedPositions(env: Env, botId?: string | null, limit = 2000): Promise<PositionRow[]> {
-  const dm = await viewDemo(env); // results follow the Real / Demo switch at the top of the app
+  const dm = await viewDemo(env, botId); // a bot's results follow that bot's Demo setting; the account-wide list is real only
   const sql = botId ? `SELECT * FROM positions WHERE status != 'open' AND demo = ${dm} AND bot_id = ? ORDER BY closed_ts DESC LIMIT ?` : `SELECT * FROM positions WHERE status != 'open' AND demo = ${dm} ORDER BY closed_ts DESC LIMIT ?`;
   const st = botId ? env.DB.prepare(sql).bind(botId, limit) : env.DB.prepare(sql).bind(limit);
   return (await st.all<PositionRow>()).results ?? [];
@@ -103,7 +103,7 @@ async function minuteProbs(env: Env, ticker: string, openTs: number, closeTs: nu
 
 /** Profit/loss totals (realized, after fees) from closed positions since `since`, for the whole account or one bot. */
 async function plAgg(env: Env, since: number, botId?: string): Promise<{ trades: number; wins: number; losses: number; pnl: number; fees: number; winRate: number | null }> {
-  const dm = await viewDemo(env);
+  const dm = await viewDemo(env, botId);
   const sql =
     "SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN result='win' THEN 1 ELSE 0 END),0) w, COALESCE(SUM(CASE WHEN result='loss' THEN 1 ELSE 0 END),0) l, " +
     `COALESCE(SUM(realized_pnl),0) pnl, COALESCE(SUM(entry_fee+exit_fee),0) fees FROM positions WHERE status != 'open' AND demo = ${dm} AND realized_pnl IS NOT NULL AND closed_ts >= ?` +
@@ -117,7 +117,7 @@ async function plAgg(env: Env, since: number, botId?: string): Promise<{ trades:
 async function plSummary(env: Env, botId?: string) {
   const now = Date.now();
   const day = dayStartMs(now);
-  const where = (botId ? " AND bot_id = ?" : "") + ` AND demo = ${await viewDemo(env)}`;
+  const where = (botId ? " AND bot_id = ?" : "") + ` AND demo = ${await viewDemo(env, botId)}`;
   const bind = (sql: string, ...b: unknown[]) => (botId ? env.DB.prepare(sql).bind(...b, botId) : env.DB.prepare(sql).bind(...b));
   const [today, week, all, open, invested] = await Promise.all([
     plAgg(env, day, botId),
@@ -253,22 +253,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
 
   // ---------------- live view + controls
   if (path === "/api/live" && m === "GET") {
-    const live = await engine(env).watch();
-    const dv = await viewDemo(env);
-    const positions = live.positions.filter((p) => (p.demo === 1) === !!dv); // open positions of the kind being shown only
-    if (dv) {
-      const d = await demoBalance(env); // the demo view shows the pretend account instead of the real balance
-      return json({ ...live, positions, balance: d.cash, portfolioValue: d.portfolio, demoView: true });
-    }
-    return json({ ...live, positions, demoView: false });
-  }
-  // the Real / Demo switch at the top of the app: every results screen follows it
-  if (path === "/api/view" && m === "GET") return json({ mode: (await viewDemo(env)) ? "demo" : "real", demo: await demoBalance(env) });
-  if (path === "/api/view" && m === "POST") {
-    const b = await body<{ mode?: string }>(req);
-    if (b.mode !== "real" && b.mode !== "demo") return err("Mode must be real or demo");
-    await setSetting(env, "view_mode", b.mode);
-    return json({ mode: b.mode });
+    return json(await engine(env).watch()); // open positions carry a demo flag: the dashboard hides demo ones, a demo bot's own page shows its own
   }
   if (path === "/api/emergency" && m === "POST") {
     const n = await engine(env).emergency();
@@ -279,8 +264,9 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
   // ---------------- bots
   if (path === "/api/bots" && m === "GET") {
     const bots = await loadBots(env);
-    const all = await closedPositions(env);
-    return json(bots.map((b) => ({ ...b, perf: computePerformance(all.filter((p) => p.bot_id === b.id)) })));
+    const out = [];
+    for (const b of bots) out.push({ ...b, perf: computePerformance(await closedPositions(env, b.id)) }); // each bot's own results: demo trades for a demo bot, real for a real one
+    return json(out);
   }
   if (path === "/api/bots" && m === "POST") {
     const b = await body<{ name?: string; config?: Record<string, unknown> }>(req);
@@ -363,15 +349,15 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const id = g[1];
     const row = await env.DB.prepare("SELECT id, name, strategy, config, enabled FROM bots WHERE id=?").bind(id).first<{ id: string; name: string; strategy: string; config: string; enabled: number }>();
     if (!row) return err("Bot not found", 404);
-    const closed = (await env.DB.prepare(`SELECT * FROM positions WHERE status != 'open' AND demo = ${await viewDemo(env)} AND bot_id = ? ORDER BY closed_ts DESC LIMIT 50`).bind(id).all()).results;
-    return json({ bot: rowToBot(row), ...(await plSummary(env, id)), closed });
+    const isDemo = await viewDemo(env, id); // this bot's own results: demo trades for a demo bot, real trades for a real one
+    const closed = (await env.DB.prepare(`SELECT * FROM positions WHERE status != 'open' AND demo = ${isDemo} AND bot_id = ? ORDER BY closed_ts DESC LIMIT 50`).bind(id).all()).results;
+    return json({ bot: rowToBot(row), ...(await plSummary(env, id)), closed, demoBalance: isDemo ? await demoBalance(env) : null });
   }
 
   // ---------------- trades / performance / logs
   if (path === "/api/positions" && m === "GET") {
-    const dmView = await viewDemo(env);
-    const open = (await env.DB.prepare(`SELECT * FROM positions WHERE status='open' AND demo = ${dmView} ORDER BY opened_ts DESC`).all()).results;
-    const closed = (await env.DB.prepare(`SELECT * FROM positions WHERE status!='open' AND demo = ${dmView} ORDER BY closed_ts DESC LIMIT ?`).bind(Math.min(Number(url.searchParams.get("limit") ?? 200), 1000)).all()).results;
+    const open = (await env.DB.prepare("SELECT * FROM positions WHERE status='open' AND demo = 0 ORDER BY opened_ts DESC").all()).results; // real trades only; a demo bot's trades are on that bot's own page
+    const closed = (await env.DB.prepare("SELECT * FROM positions WHERE status!='open' AND demo = 0 ORDER BY closed_ts DESC LIMIT ?").bind(Math.min(Number(url.searchParams.get("limit") ?? 200), 1000)).all()).results;
     return json({ open, closed });
   }
   if (path === "/api/orders" && m === "GET") return json((await env.DB.prepare("SELECT * FROM orders ORDER BY created_ts DESC LIMIT ?").bind(Math.min(Number(url.searchParams.get("limit") ?? 100), 500)).all()).results);
@@ -472,7 +458,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
       if (settled) h.reversed += (yesTouch && r.result === "no" ? 1 : 0) + (noTouch && r.result === "yes" ? 1 : 0);
     }
     const trades = (
-      await env.DB.prepare(`SELECT opened_ts, realized_pnl, result FROM positions WHERE status != 'open' AND demo = ${await viewDemo(env)} AND realized_pnl IS NOT NULL AND opened_ts >= ?` + (asset ? " AND asset = ?" : ""))
+      await env.DB.prepare("SELECT opened_ts, realized_pnl, result FROM positions WHERE status != 'open' AND demo = 0 AND realized_pnl IS NOT NULL AND opened_ts >= ?" + (asset ? " AND asset = ?" : ""))
         .bind(...(asset ? [since, asset] : [since]))
         .all<{ opened_ts: number; realized_pnl: number; result: string }>()
     ).results;
@@ -507,7 +493,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const asset = (url.searchParams.get("asset") ?? "").toUpperCase();
     // each contract also says whether the chosen bot traded it and how that trade ended (for the Winners / Losers / No trade filter)
     const bot = url.searchParams.get("bot");
-    const bf = (bot ? " AND p.bot_id = ?" : "") + ` AND p.demo = ${await viewDemo(env)}`;
+    const bf = (bot ? " AND p.bot_id = ?" : "") + ` AND p.demo = ${await viewDemo(env, bot)}`;
     const rows = (
       await env.DB.prepare(
         "SELECT m.ticker, m.title, m.open_ts, m.close_ts, m.result, " +
@@ -549,7 +535,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const mk = await env.DB.prepare("SELECT ticker, asset, title, open_ts, close_ts, result, strike FROM markets WHERE ticker=?").bind(ticker).first();
     if (!mk) return err("Unknown market", 404);
     const obs = (await env.DB.prepare("SELECT ts, yes_bid, yes_ask FROM observations WHERE ticker=? ORDER BY ts").bind(ticker).all<{ ts: number; yes_bid: number; yes_ask: number }>()).results;
-    const trades = (await env.DB.prepare("SELECT outcome, opened_ts, closed_ts, avg_entry, realized_pnl, close_reason FROM positions WHERE ticker=? AND demo = " + (await viewDemo(env))).bind(ticker).all()).results;
+    const trades = (await env.DB.prepare("SELECT outcome, opened_ts, closed_ts, avg_entry, realized_pnl, close_reason FROM positions WHERE ticker=? AND demo = " + (await viewDemo(env, url.searchParams.get("bot")))).bind(ticker).all()).results;
     // Why the chosen bot did not trade this contract (counts of what blocked it, after its Time Delay)
     let why: { samples: number; top: Array<{ code: string; text: string; pct: number }> } | null = null;
     let checks: unknown = null; // the latest requirement-by-requirement check (frozen when the bot entered)
@@ -707,7 +693,7 @@ async function chatContext(env: Env, botId: string | null, question: string): Pr
   // the Edge report's table is large, so it is only sent when the question is about prices, probabilities or edge
   const wantsPriceTable = /price|probab|edge|cheap|expensive|mispric|gap|calibrat|even|odds|%/i.test(question);
   const strategy = await buildDayStats(env, Date.now() - 14 * 86_400_000, Date.now(), "the last 14 days", botId);
-  const dmCtx = await viewDemo(env);
+  const dmCtx = await viewDemo(env, botId); // the AI sees real trades, or one demo bot's trades when the chat is about that bot
   const open = (await env.DB.prepare(botId ? `SELECT * FROM positions WHERE status='open' AND demo=${dmCtx} AND bot_id=?` : `SELECT * FROM positions WHERE status='open' AND demo=${dmCtx}`).bind(...(botId ? [botId] : [])).all()).results;
   const logs = (await env.DB.prepare(botId ? "SELECT ts, level, kind, message FROM logs WHERE bot_id=? ORDER BY id DESC LIMIT 40" : "SELECT ts, level, kind, message FROM logs ORDER BY id DESC LIMIT 40").bind(...(botId ? [botId] : [])).all()).results;
   const analysis = await env.DB.prepare("SELECT ts, text FROM analyses ORDER BY id DESC LIMIT 1").first();

@@ -411,13 +411,8 @@ try {
     ok("the Run overview button asks for a second tap instead of running at once", armedText === 1);
     await page.waitForTimeout(5600);
     ok("the Run overview button goes back to normal if it is not tapped a second time", (await page.locator("button:text('Run overview for today so far')").count()) === 1 && (await page.locator("button:text('Tap again to run it')").count()) === 0);
-    // the Real / Demo switch at the top: a banner and the pretend balance in Demo, the real balance back in Real
-    await page.click("#modeDemo");
-    await page.waitForSelector("#demoBar:not(.hidden)", { timeout: 15000 });
-    ok("the Demo switch shows the demo banner and the demo balance", (await page.textContent("#hBalance")).includes("Demo balance"));
-    await page.click("#modeReal");
-    await page.waitForSelector("#demoBar.hidden", { state: "attached", timeout: 15000 });
-    ok("the Real switch hides the banner and shows the real balance", !(await page.textContent("#hBalance")).includes("Demo"));
+    // demo is decided only on the bot (its Demo checkbox): there is no Real / Demo switch at the top of the app
+    ok("there is no Real / Demo switch in the header: demo is decided only by each bot's Demo checkbox", (await page.locator("#modeReal").count()) === 0 && (await page.locator("#modeDemo").count()) === 0 && (await page.locator("#demoBar").count()) === 0);
     await page.click("nav >> text=Trades");
     await page.waitForSelector("text=Edge report: price vs how often it won", { timeout: 15000 });
     // the asset choice changes the table: each asset shows only its own trades
@@ -592,73 +587,68 @@ try {
   ok("estimate report: returns its rows and an explanation", Array.isArray(mr.rows) && typeof mr.howToRead === "string" && typeof mr.contractsLogged === "number", JSON.stringify(mr).slice(0, 300));
   ok("estimate report: the AI is given it too", /modelReport/.test((await api("/chat", "POST", { message: "ECHO_DATA how is the estimate doing" })).j.answer));
 
-  // ---- P. demo mode: the same rules on live prices with no real orders, kept apart from real results by the Real / Demo switch
+  // ---- P. demo mode: the same rules on live prices with no real orders, kept apart from real results (a demo bot's trades show on its own page)
+  const botOpen = async (id) => ((await api("/live")).j.positions || []).filter((p) => p.bot_id === id); // a bot's own open trades (demo ones carry demo: 1)
+  const botClosed = async (id) => (await api(`/bots/${id}/summary`)).j.closed; // a bot's own finished trades, newest first
   await quote([T("BTC")], 0.94, 0.95);
   const demoCfg = { strategy: "crypto", assets: ["BTC"], tradeAsset: "BTC", agreeCount: 0, timeDelaySec: 0, minRemainingSec: 15, tradeAmount: 5, probThreshold: 0.5, probMax: 0.99, stopLossOn: false, takeProfitOn: false, demo: true };
   ok("a demo bot cannot be a combo bot", (await api("/bots", "POST", { name: "bad", config: { ...demoCfg, comboOn: true, comboAssets: ["BTC", "SOL"] } })).status >= 400);
   const ordersBeforeDemo = (await mockState()).orders.length;
   const demoBot = (await api("/bots", "POST", { name: "Demo bot", config: demoCfg })).j.id;
-  await api("/view", "POST", { mode: "real" });
   await api(`/bots/${demoBot}/start`, "POST");
   await waitFor(async () => (await mockState()).combo !== undefined && (await api("/logs?limit=40&kind=order")).j.find((l) => l.bot_id === demoBot && /DEMO ENTERED/.test(l.message)), 60000);
   ok("demo: the bot entered, and nothing was sent to the exchange", (await mockState()).orders.length === ordersBeforeDemo, String((await mockState()).orders.length) + " vs " + ordersBeforeDemo);
-  ok("demo: in the Real view the demo trade is not shown", !(await api("/positions")).j.open.find((p) => p.bot_id === demoBot) && !((await api("/live")).j.positions || []).find((p) => p.bot_id === demoBot));
+  ok("demo: the real Trades screen does not show the demo trade, while the live list carries it flagged as demo", !(await api("/positions")).j.open.find((p) => p.bot_id === demoBot) && ((await api("/live")).j.positions || []).some((p) => p.bot_id === demoBot && p.demo === 1));
   ok("demo: a bot's mode cannot be switched while it is on", (await api(`/bots/${demoBot}`, "PUT", { name: "Demo bot", config: { ...demoCfg, demo: false } })).status === 409);
-  await api("/view", "POST", { mode: "demo" });
-  const demoOpen = (await api("/positions")).j.open.find((p) => p.bot_id === demoBot);
+  const demoOpen = (await botOpen(demoBot))[0];
   const demoLive = (await api("/live")).j;
-  ok("demo: in the Demo view the trade shows, with the pretend balance (about $1,000 minus what it put in) instead of the real one", !!demoOpen && demoOpen.demo === 1 && demoLive.demoView === true && demoLive.balance < 1000 && demoLive.balance > 990 && demoLive.positions.some((p) => p.bot_id === demoBot), JSON.stringify({ demoOpen: demoOpen && demoOpen.demo, bal: demoLive.balance }));
+  const demoSummary = (await api(`/bots/${demoBot}/summary`)).j;
+  ok("demo: the bot's own page shows its open trade and its pretend balance (about $1,000 minus what it put in)", (await botOpen(demoBot)).length >= 1 && demoSummary.openCount >= 1 && demoSummary.demoBalance && demoSummary.demoBalance.cash < 1000 && demoSummary.demoBalance.cash > 990, JSON.stringify(demoSummary.demoBalance));
   await api(`/bots/${demoBot}/stop-close`, "POST");
-  const demoClosed = await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === demoBot), 40000);
+  const demoClosed = await waitFor(async () => (await botClosed(demoBot))[0], 40000);
   ok("demo: closing the demo trade is simulated (a profit or loss is recorded, still no real order)", !!demoClosed && typeof demoClosed.realized_pnl === "number" && (await mockState()).orders.length === ordersBeforeDemo, JSON.stringify(demoClosed));
-  ok("demo: the Demo view's performance counts the demo trade", (await api("/performance")).j.all?.trades >= 1 || (await api("/performance")).j.trades >= 1);
-  await api("/view", "POST", { mode: "real" });
-  ok("demo: switching back to Real hides the demo trade again", !(await api("/positions")).j.closed.find((p) => p.bot_id === demoBot) && (await api("/live")).j.demoView === false);
+  ok("demo: the bot's own list entry counts its demo trade, and the account totals still count real trades only", (await api("/bots")).j.find((x) => x.id === demoBot)?.perf?.trades >= 1 && !(await api("/positions")).j.closed.find((p) => p.bot_id === demoBot));
 
   // ---- Q. several trades in one contract (demo, so no real orders): up to the entries-per-contract limit, several open at once
-  await api("/view", "POST", { mode: "demo" });
   await quote([T("BTC")], 0.94, 0.95);
   const multiCfg = { ...demoCfg, entriesPerContract: 3, entryCooldownSec: 0, maxPositions: 5, tradeAmount: 5 };
   const multiBot = (await api("/bots", "POST", { name: "Multi bot", config: multiCfg })).j.id;
   await api(`/bots/${multiBot}/start`, "POST");
-  const three = await waitFor(async () => { const o = (await api("/positions")).j.open.filter((p) => p.bot_id === multiBot); return o.length >= 3 ? o : null; }, 60000);
+  const three = await waitFor(async () => { const o = (await botOpen(multiBot)); return o.length >= 3 ? o : null; }, 60000);
   await sleep(8000);
-  const multiOpen = (await api("/positions")).j.open.filter((p) => p.bot_id === multiBot);
+  const multiOpen = (await botOpen(multiBot));
   ok("several entries: the bot opens three trades in the one contract, several open at once, and stops at the limit", !!three && multiOpen.length === 3 && new Set(multiOpen.map((p) => p.ticker)).size === 1, String(multiOpen.length));
   await api(`/bots/${multiBot}/stop-close`, "POST");
-  await waitFor(async () => (await api("/positions")).j.open.filter((p) => p.bot_id === multiBot).length === 0, 40000);
+  await waitFor(async () => (await botOpen(multiBot)).length === 0, 40000);
 
   // ---- R. exit when the estimate no longer beats the price (demo): the live feed says 100.50 against a target of 100, so the estimate is 100%
   const edgeCfg = { ...demoCfg, modelEdgePts: 4, exitOnEdgeGone: true, entriesPerContract: 1 };
   const edgeExitBot = (await api("/bots", "POST", { name: "Edge exit bot", config: edgeCfg })).j.id;
   await api(`/bots/${edgeExitBot}/start`, "POST");
-  const edgeOpen = await waitFor(async () => (await api("/positions")).j.open.find((p) => p.bot_id === edgeExitBot), 200000, 3000);
+  const edgeOpen = await waitFor(async () => (await botOpen(edgeExitBot))[0], 200000, 3000);
   await quote([T("BTC")], 1.0, 1.0); // the price now equals the estimate: nothing left to gain by holding
-  const edgeClosed = await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === edgeExitBot), 60000);
+  const edgeClosed = await waitFor(async () => (await botClosed(edgeExitBot))[0], 60000);
   ok("edge-gone exit: the trade is sold when the estimate no longer beats the price it could be sold at", !!edgeOpen && !!edgeClosed && edgeClosed.close_reason === "edge_gone", JSON.stringify({ edgeOpen: !!edgeOpen, edgeClosed }));
   await api(`/bots/${edgeExitBot}/stop`, "POST");
   await quote([T("BTC")], 0.94, 0.95);
-  await api("/view", "POST", { mode: "real" });
 
   // ---- S. stop loss that waits for the loss to last (demo): a brief dip does not sell, a lasting loss does
-  await api("/view", "POST", { mode: "demo" });
   await quote([T("BTC")], 0.94, 0.95);
   const holdCfg = { ...demoCfg, stopLossOn: true, stopLoss: 1, stopLossHoldSec: 8, tradeAmount: 5 };
   const holdBot = (await api("/bots", "POST", { name: "Stop hold bot", config: holdCfg })).j.id;
   await api(`/bots/${holdBot}/start`, "POST");
-  const holdOpen = await waitFor(async () => (await api("/positions")).j.open.find((p) => p.bot_id === holdBot), 60000);
+  const holdOpen = await waitFor(async () => (await botOpen(holdBot))[0], 60000);
   await quote([T("BTC")], 0.5, 0.52); // far below the entry: past the $1 stop loss
   await sleep(3500);
-  const stillOpen = (await api("/positions")).j.open.find((p) => p.bot_id === holdBot);
+  const stillOpen = (await botOpen(holdBot))[0];
   await quote([T("BTC")], 0.94, 0.95); // a brief dip: the price recovers inside the wait
   await sleep(2500);
-  const afterDip = (await api("/positions")).j.open.find((p) => p.bot_id === holdBot);
+  const afterDip = (await botOpen(holdBot))[0];
   await quote([T("BTC")], 0.5, 0.52); // now the loss lasts
-  const stopped = await waitFor(async () => (await api("/positions")).j.closed.find((p) => p.bot_id === holdBot), 60000, 1500);
+  const stopped = await waitFor(async () => (await botClosed(holdBot))[0], 60000, 1500);
   ok("stop loss hold: a brief dip does not sell, a loss that lasts does", !!holdOpen && !!stillOpen && !!afterDip && !!stopped && stopped.close_reason === "stop_loss", JSON.stringify({ stillOpen: !!stillOpen, afterDip: !!afterDip, stopped: stopped && stopped.close_reason }));
   await api(`/bots/${holdBot}/stop`, "POST");
   await quote([T("BTC")], 0.94, 0.95);
-  await api("/view", "POST", { mode: "real" });
 
   // ---- J. delete rules + disconnect rules
   ok("cannot delete a bot while ON", await (async () => { await api(`/bots/${bot1}/start`, "POST"); const r = await api(`/bots/${bot1}`, "DELETE"); await api(`/bots/${bot1}/stop`, "POST"); return r.status === 409; })());

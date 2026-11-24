@@ -602,7 +602,7 @@ export interface DayStats {
 const hourLabel = (n: number) => `${n % 12 === 0 ? 12 : n % 12} ${n < 12 ? "AM" : "PM"}`;
 
 export async function buildDayStats(env: Env, start: number, end: number, label: string, botId?: string | null, demoMode?: 0 | 1): Promise<DayStats> {
-  const dm = demoMode ?? (await viewDemo(env)); // follows the Real / Demo switch unless told otherwise (the scheduled overview is always real)
+  const dm = demoMode ?? (await viewDemo(env, botId)); // a bot's stats follow that bot's Demo setting; everything else is real (the scheduled overview is always real)
   const bf = (col: string) => (botId ? ` AND ${col} = ?` : "");
   const bb = (...a: unknown[]) => (botId ? [...a, botId] : a);
   const closed = (await env.DB.prepare(`SELECT * FROM positions WHERE status != 'open' AND demo = ${dm} AND closed_ts >= ? AND closed_ts < ?` + bf("bot_id")).bind(...bb(start, end)).all<PositionRow>()).results ?? [];

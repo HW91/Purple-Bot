@@ -71,11 +71,9 @@ a.chatlink{color:var(--text);text-decoration:underline;font-weight:600}
   <h1>Purple Bot</h1>
   <span id="hBalance" class="pill">Balance —</span>
   <span id="hConn" class="pill">—</span>
-  <span style="display:inline-flex;gap:4px"><button class="btn" id="modeReal">Real</button><button class="btn gray" id="modeDemo">Demo</button></span>
   <span style="flex:1"></span>
   <button class="btn red" id="emergencyBtn">EMERGENCY SHUTDOWN</button>
 </header>
-<div id="demoBar" class="banner hidden" style="margin:8px 12px">DEMO: every screen shows demo results only. Demo bots send no real orders and use a pretend $1,000 balance. Switch back to Real to see your real results.</div>
 <nav id="nav"></nav>
 <main id="main"></main>
 </div>
@@ -177,10 +175,6 @@ function go(t){tab=t;try{history.replaceState(null,'','#'+encodeURIComponent(t))
   if(t!=='Dashboard')api('/live').then(function(l){live=l;updateHeader()}).catch(function(){});
 }
 
-// the Real / Demo switch: every results screen follows it
-function setMode(mode){api('/view',{method:'POST',body:{mode:mode}}).then(function(){return api('/live')}).then(function(l){live=l;updateHeader();go(tab)}).catch(function(e){toast(e.message,true)})}
-$('#modeReal').addEventListener('click',function(){if(live&&live.demoView)setMode('real')});
-$('#modeDemo').addEventListener('click',function(){if(!live||!live.demoView)setMode('demo')});
 $('#emergencyBtn').addEventListener('click',function(){
   if(!confirm('EMERGENCY SHUTDOWN: turn every bot OFF and try to close every open position now. Continue?'))return;
   act('/emergency',{method:'POST'},'Emergency shutdown started').then(function(r){toast('Closing '+r.closing+' position(s)')});
@@ -188,10 +182,7 @@ $('#emergencyBtn').addEventListener('click',function(){
 
 function updateHeader(){
   if(!live)return;
-  var dv=!!live.demoView;
-  $('#hBalance').textContent=(dv?'Demo balance ':'Balance ')+usd(live.balance)+(live.portfolioValue!=null?' · '+(dv?'Demo portfolio ':'Portfolio ')+usd(live.portfolioValue):'');
-  $('#modeReal').className=dv?'btn gray':'btn';$('#modeDemo').className=dv?'btn':'btn gray';
-  $('#demoBar').classList.toggle('hidden',!dv);
+  $('#hBalance').textContent='Balance '+usd(live.balance)+(live.portfolioValue!=null?' · Portfolio '+usd(live.portfolioValue):'');
   var c=$('#hConn');
   c.className='pill '+(live.connected?'ok':live.restFallback?'warn':'bad');
   c.textContent=live.connected?'Live feed connected':live.restFallback?'Live feed down — slow backup mode':'Live feed offline';
@@ -207,7 +198,7 @@ function vDash(){
   function drawAcct(){
     acct.textContent='';
     var a=acctData;
-    var unreal=live.positions.reduce(function(s,p){return s+(p.unrealized||0)},0);
+    var unreal=live.positions.filter(function(p){return !p.demo}).reduce(function(s,p){return s+(p.unrealized||0)},0);
     var total=(live.balance!=null&&live.portfolioValue!=null)?live.balance+live.portfolioValue:null;
     // related numbers sit together, each group under its own small heading
     var groups=[tileGroup('Account value',[tile('Cash balance',usd(live.balance)),tile('Portfolio value',usd(live.portfolioValue)),tile('Account total',usd(total))])];
@@ -271,7 +262,7 @@ function vDash(){
     else api('/bots').then(function(b){lastBots=Date.now();botsCache=b;renderBots(b)});
     // positions
     pos.textContent='';
-    pos.appendChild(h('div',{class:'card'},h('h2',{text:'Open positions'}),posTable(live.positions)));
+    pos.appendChild(h('div',{class:'card'},h('h2',{text:'Open positions'}),posTable(live.positions.filter(function(p){return !p.demo}))));
   }
   function refresh(){return api('/live').then(function(l){live=l;updateHeader();draw()}).catch(function(){})}
   refresh();pollTimer=setInterval(refresh,5000);
@@ -309,7 +300,8 @@ function openBot(id){
       body.textContent='';
       body.appendChild(h('div',{class:'card'},
         h('div',{class:'row'},h('h2',{text:b.name,style:'margin:0'}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),b.config.demo?h('span',{class:'pill warn',text:'DEMO'}):null,h('span',{class:'mute',text:cfg.strategy+' · '+(cfg.comboOn?'combo of '+cfg.comboAssets.join(' + '):'trades '+cfg.tradeAsset+' · confirmed by '+cfg.assets.join(', '))})),
-        h('div',{class:'mute',style:'margin-top:8px',text:'Signal: '+st.reason})));
+        h('div',{class:'mute',style:'margin-top:8px',text:'Signal: '+st.reason}),
+        s.demoBalance?h('div',{class:'banner',style:'margin-bottom:0'},'DEMO bot: no real orders. Pretend balance '+usd(s.demoBalance.cash)+' (portfolio '+usd(s.demoBalance.portfolio)+'). Everything on this page is this bot\'s demo trading.'):null));
       body.appendChild(h('div',{class:'card'},h('h2',{text:'Profit / loss — this bot only'}),[
         tileGroup('Open trades',[
           tile('Open now',s.openCount+' · '+usd(s.openExposure)+' put in'),
@@ -389,7 +381,7 @@ function vBots(){
       }
       var demoOn=chk('demoOn');demoOn.checked=!!cfg.demo;
       var demoBlock=h('div',{style:'margin-top:10px'},h('label',{class:'chk',style:'font-weight:600'},demoOn,'Demo mode (no real orders)'),
-        h('small',{style:'display:block;margin:2px 0 8px',text:'The bot runs the same rules on live prices but sends nothing to Kalshi. Each entry is filled at the price it would pay, with Kalshi\'s fee formula, and exits sell at the current bid. Demo trades are saved apart from real ones and appear only when the Demo switch at the top is on. They use a pretend $1,000 balance and the limits set on this bot. The mode can only be changed while the bot is off with no open trades. Not available for combos.'}));
+        h('small',{style:'display:block;margin:2px 0 8px',text:'The bot runs the same rules on live prices but sends nothing to Kalshi. Each entry is filled at the price it would pay, with Kalshi\'s fee formula, and exits sell at the current bid. Demo trades are saved apart from real ones: you see them on this bot\'s own page and its chart, never in the account totals, the dashboard or the Trades tab. They use a pretend $1,000 balance and the limits set on this bot. Demo and real bots can run at the same time. The mode can only be changed while the bot is off with no open trades. Not available for combos.'}));
       var fName=field('Name',name);
       fTrade=field('Asset to trade',tradeSel,'The only asset this bot buys. The other checked assets only confirm the direction.');
       var fAmount=field('Trade amount ($)',num('tradeAmount'),'The bot buys whole contracts: as many as this amount pays for at the price (fees are extra). To buy one contract, enter at least its price and less than double it, for example $0.10 for a contract at 6 cents. Below one contract price, nothing is bought. Kalshi sets no fixed largest amount; your balance and your daily limits cap it.');

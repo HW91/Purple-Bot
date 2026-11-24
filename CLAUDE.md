@@ -20,6 +20,11 @@ Read `README.md` first — it lists the design, the definitions, and what was NO
   applies to API orders anyway.
 
 ## How to work with this owner
+- **Answer the question BEFORE changing anything that was not decided.** When the owner asks a question, asks "what's the
+  easiest solution", or says "discuss before code", reply with the answer or the plan and WAIT for a yes. Do not edit files "to
+  save time". Past failure, 11/2026: asked what the easiest way was to keep demo in one place, started rewriting the bot form,
+  results queries and tests instead of answering; the owner interrupted. Anything already edited without a yes stays uncommitted
+  until the owner says to continue.
 - **If the owner does not need it to act or decide, do not say it.** No internal details (how counts are pooled, how tests were run,
   invented labels like "fake" or "test copy"). Say what was done, what they should do next, and nothing else.
 - **Answer in the first sentence, in plain words, then stop.** Do not add background, caveats or tables unless asked. If the owner
