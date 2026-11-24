@@ -481,6 +481,15 @@ try {
     ok("agreement is optional for every bot: the number starts at 0 (off) for a new bot", agreeVisible && agreeValue === "0", agreeValue);
     // the regrouped form still saves every value: change the name and the trade amount (both in The basics), save, and read the bot back
     await page.locator("label:text-is('Name')").locator("..").locator("input").fill("Layout test bot");
+    // an error while saving shows in a pop-up in the middle of the screen and stays until it is closed
+    await page.locator("label:text-is('Trade amount ($)')").locator("..").locator("input").fill("0");
+    await page.click("button:text-is('Save')");
+    await page.waitForSelector("#errBox", { timeout: 15000 });
+    await page.waitForTimeout(10500); // the old red box disappeared after 9 seconds
+    const errGeo = await page.evaluate(() => { const r = document.querySelector("#errBox > div")?.getBoundingClientRect(); return r ? { cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: innerWidth, h: innerHeight } : null; });
+    ok("a save error shows as a pop-up in the middle of the screen and is still there after 10 seconds", !!errGeo && Math.abs(errGeo.cx - errGeo.w / 2) < errGeo.w * 0.1 && Math.abs(errGeo.cy - errGeo.h / 2) < errGeo.h * 0.15, JSON.stringify(errGeo));
+    await page.click("#errBox button:text-is('Close')");
+    ok("the error pop-up closes only when Close is clicked", (await page.locator("#errBox").count()) === 0);
     await page.locator("label:text-is('Trade amount ($)')").locator("..").locator("input").fill("7");
     await page.click("button:text-is('Save')");
     const layoutBot = await waitFor(async () => (await api("/bots")).j.find((x) => x.name === "Layout test bot"), 15000);

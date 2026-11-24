@@ -117,7 +117,23 @@ function when(ts){return ts?new Date(ts).toLocaleString():'—'}
 function hm(ts){return ts?new Date(ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—'}
 function dur(ms){if(ms==null)return '—';var s=Math.max(0,Math.round(ms/1000));return Math.floor(s/60)+'m '+('0'+(s%60)).slice(-2)+'s'}
 function pnlCls(x){return x>0?'g':x<0?'r':''}
-function toast(msg,bad){var d=h('div',{class:'banner'+(bad?' bad':''),text:msg});var m=$('#main');m.insertBefore(d,m.firstChild);setTimeout(function(){d.remove()},bad?9000:4000)}
+function toast(msg,bad){
+  if(bad){showError(msg);return}
+  var d=h('div',{class:'banner',text:msg});var m=$('#main');m.insertBefore(d,m.firstChild);setTimeout(function(){d.remove()},4000);
+}
+// an error stays in the middle of the screen until the person closes it (a message at the top of a long page is easy to miss, and it used to vanish after a few seconds)
+function showError(msg){
+  var open=document.getElementById('errBox');
+  if(open){open.querySelector('.errMsgs').appendChild(h('p',{text:msg,style:'margin:0 0 8px'}));return}
+  var closeBtn=h('button',{class:'btn',text:'Close',onclick:function(){ov.remove()}});
+  var ov=h('div',{id:'errBox',role:'alertdialog','aria-modal':'true',style:'position:fixed;top:0;left:0;right:0;bottom:0;z-index:1000;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px'},
+    h('div',{style:'background:var(--card);color:var(--text);border:2px solid var(--red);border-radius:12px;max-width:520px;width:100%;padding:18px 20px;box-shadow:0 10px 40px rgba(0,0,0,.5)'},
+      h('h2',{text:'Something went wrong',style:'margin:0 0 10px;color:var(--red)'}),
+      h('div',{class:'errMsgs',style:'max-height:50vh;overflow:auto'},h('p',{text:msg,style:'margin:0 0 8px'})),
+      h('div',{style:'text-align:right;margin-top:12px'},closeBtn)));
+  document.body.appendChild(ov);
+  closeBtn.focus();
+}
 function act(p,opts,okMsg){return api(p,opts).then(function(r){if(okMsg)toast(okMsg);return r}).catch(function(e){toast(e.message,true);throw e})}
 
 var TABS=['Dashboard','Bots','Trades','Charts','AI','Backtest','Settings','Logs'];
@@ -463,7 +479,7 @@ function vBots(){
         out.stopLossOn=sl.checked;out.takeProfitOn=tp.checked;out.notify=nt.value;
         out.assets=[].slice.call(f.querySelectorAll('[data-a]')).filter(function(x){return x.checked}).map(function(x){return x.getAttribute('data-a')});
         if(out.assets.indexOf(tradeSel.value)<0)out.assets.push(tradeSel.value); // the asset it trades is always one of the checked assets
-        act(b?'/bots/'+b.id:'/bots',{method:b?'PUT':'POST',body:{name:name.value,config:out}},'Saved').then(function(){form.textContent='';load()});
+        act(b?'/bots/'+b.id:'/bots',{method:b?'PUT':'POST',body:{name:name.value,config:out}},'Saved').then(function(){form.textContent='';load()}).catch(function(){}); // a failed save has already shown its error pop-up
       }}),' ',h('button',{class:'btn gray',text:'Cancel',onclick:function(){form.textContent=''}})));
       form.textContent='';form.appendChild(f);f.scrollIntoView();
     }
