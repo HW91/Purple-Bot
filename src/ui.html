@@ -343,12 +343,14 @@ function vBots(){
   var list=h('div'),form=h('div');
   root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn',text:'+ New bot',onclick:function(){editBot(null)}})));
   root.appendChild(form);root.appendChild(list);
-  function load(){api('/bots').then(function(bots){botsCache=bots;list.textContent='';bots.forEach(function(b){
+  function load(){api('/bots').then(function(bots){botsCache=bots;list.textContent='';bots.forEach(function(b,idx){
     list.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),b.config.demo?h('span',{class:'pill warn',text:'DEMO'}):null,h('span',{class:'mute',text:(b.config.comboOn?'combo of '+b.config.comboAssets.join(' + '):'trades '+b.config.tradeAsset+' · confirmed by '+b.config.assets.join(', '))})),
       h('div',{class:'row',style:'margin-top:10px'},
       h('button',{class:'btn gray',text:'Edit',onclick:function(){editBot(b)}}),
       h('button',{class:'btn gray',text:'Duplicate',onclick:function(){act('/bots/'+b.id+'/duplicate',{method:'POST'},'Duplicated (OFF)').then(load)}}),
-      h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}})),
+      h('button',{class:'btn gray',text:'Delete',onclick:function(){if(confirm('Delete '+b.name+'? Trade history is kept.'))act('/bots/'+b.id,{method:'DELETE'},'Deleted').then(load)}}),
+      h('button',{class:'btn gray',text:'▲',title:'Move this bot up the list',disabled:idx===0,onclick:function(){act('/bots/'+b.id+'/move',{method:'POST',body:{direction:'up'}}).then(load)}}),
+      h('button',{class:'btn gray',text:'▼',title:'Move this bot down the list',disabled:idx===bots.length-1,onclick:function(){act('/bots/'+b.id+'/move',{method:'POST',body:{direction:'down'}}).then(load)}})),
       h('div',{class:'row',style:'margin-top:10px'},botButtons(b,load)),
       h('div',{class:'mute',text:(b.config.minEdge>0?'Min edge '+(b.config.minEdge*100).toFixed(1)+'¢, '+b.config.edgeMinSamples+' contracts needed · ':'')+(b.config.betSide==='underdog'?'Low probability · ':b.config.betSide==='either'?'Either side · ':'High probability · ')+'Range '+Math.round(b.config.probThreshold*100)+'% to '+Math.round(b.config.probMax*100)+'%'+' · delay '+(b.config.timeDelaySec/60)+' min · $'+b.config.tradeAmount+'/trade · stop loss '+(b.config.stopLossOn?usd(b.config.stopLoss):'off')+' · take profit '+(b.config.takeProfitOn?usd(b.config.takeProfit):'off')+(b.config.noTradeWindows&&b.config.noTradeWindows.length?' · '+b.config.noTradeWindows.length+' no-trade window(s)':'')+(b.config.flowOn?' · money ratio ≥ '+b.config.flowRatio+' ('+(b.config.flowWindowMin>0?'last '+b.config.flowWindowMin+' min':'whole contract')+')':'')})));
   })})}

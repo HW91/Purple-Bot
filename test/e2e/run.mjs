@@ -458,6 +458,8 @@ try {
     ok("every setting is on the one bot form: no Entry rule choice, the Edge settings sit beside the Probability ones, and Side to bet has High, Low and Either", all.entryRule === 0 && all.side && all.prob && all.agree && all.money && all.edge && all.samples && sideOptions.length === 3 && sideOptions[0] === "High probability" && sideOptions[1] === "Low probability" && /^Either/.test(sideOptions[2]), JSON.stringify({ all, sideOptions }));
     // one New bot button; any asset from a single list: metals first (A to Z), then cryptocurrencies (A to Z); agreement is a number, 0 = off
     await page.click("nav >> text=Bots");
+    await page.waitForSelector("button:text-is('▲')", { timeout: 15000 });
+    ok("each bot has Move up and Move down arrows, and the first bot's up arrow is greyed out", (await page.locator("button:text-is('▲')").count()) >= 1 && (await page.locator("button:text-is('▲')").first().isDisabled()) && (await page.locator("button:text-is('▼')").count()) === (await page.locator("button:text-is('▲')").count()));
     ok("there is one New bot button (no separate crypto and metals buttons)", (await page.locator("button:text-is('+ New bot')").count()) === 1 && (await page.locator("button:text('New crypto bot')").count()) === 0);
     await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("pb_sec_")).forEach((k) => localStorage.removeItem(k))); // a fresh browser: no remembered open sections
     await page.click("button:text-is('+ New bot')");
@@ -649,6 +651,21 @@ try {
   ok("stop loss hold: a brief dip does not sell, a loss that lasts does", !!holdOpen && !!stillOpen && !!afterDip && !!stopped && stopped.close_reason === "stop_loss", JSON.stringify({ stillOpen: !!stillOpen, afterDip: !!afterDip, stopped: stopped && stopped.close_reason }));
   await api(`/bots/${holdBot}/stop`, "POST");
   await quote([T("BTC")], 0.94, 0.95);
+
+  // ---- T. the order of the bot list: a new bot goes to the bottom and can be moved up or down
+  const ordA = (await api("/bots", "POST", { name: "Order A", config: { strategy: "crypto" } })).j.id;
+  const ordB = (await api("/bots", "POST", { name: "Order B", config: { strategy: "crypto" } })).j.id;
+  const botNames = async () => (await api("/bots")).j.map((b) => b.name);
+  const ordN0 = await botNames();
+  ok("a new bot goes to the bottom of the list", ordN0[ordN0.length - 2] === "Order A" && ordN0[ordN0.length - 1] === "Order B", JSON.stringify(ordN0.slice(-3)));
+  await api(`/bots/${ordB}/move`, "POST", { direction: "up" });
+  const ordN1 = await botNames();
+  ok("moving a bot up swaps it with the bot above", ordN1[ordN1.length - 2] === "Order B" && ordN1[ordN1.length - 1] === "Order A", JSON.stringify(ordN1.slice(-3)));
+  await api(`/bots/${ordA}/move`, "POST", { direction: "down" }); // already last: nothing changes
+  const ordN2 = await botNames();
+  ok("moving the last bot down changes nothing, and moving up again restores the order", JSON.stringify(ordN2) === JSON.stringify(ordN1) && (await api(`/bots/${ordA}/move`, "POST", { direction: "up" })).status === 200 && (await botNames()).slice(-2).join() === "Order A,Order B");
+  await api(`/bots/${ordA}`, "DELETE");
+  await api(`/bots/${ordB}`, "DELETE");
 
   // ---- J. delete rules + disconnect rules
   ok("cannot delete a bot while ON", await (async () => { await api(`/bots/${bot1}/start`, "POST"); const r = await api(`/bots/${bot1}`, "DELETE"); await api(`/bots/${bot1}/stop`, "POST"); return r.status === 409; })());

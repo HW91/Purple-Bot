@@ -274,7 +274,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const name = (b.name ?? "").trim() || "New bot";
     const id = uid();
     const now = Date.now();
-    await env.DB.prepare("INSERT INTO bots (id, name, strategy, config, enabled, created_ts, updated_ts) VALUES (?,?,?,?,0,?,?)").bind(id, name, cfg.strategy, JSON.stringify(cfg), now, now).run();
+    await env.DB.prepare("INSERT INTO bots (id, name, strategy, config, enabled, created_ts, updated_ts, sort_order) VALUES (?,?,?,?,0,?,?,(SELECT COALESCE(MAX(sort_order),0)+1 FROM bots))").bind(id, name, cfg.strategy, JSON.stringify(cfg), now, now).run(); // a new bot goes to the bottom of the list
     await log(env, "info", "control", `Bot created (OFF): ${name}`, id);
     return json({ id });
   }
@@ -319,7 +319,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     if (action === "duplicate") {
       const nid = uid();
       const now = Date.now();
-      await env.DB.prepare("INSERT INTO bots (id, name, strategy, config, enabled, created_ts, updated_ts) VALUES (?,?,?,?,0,?,?)").bind(nid, `${row.name} (copy)`, row.strategy, row.config, now, now).run();
+      await env.DB.prepare("INSERT INTO bots (id, name, strategy, config, enabled, created_ts, updated_ts, sort_order) VALUES (?,?,?,?,0,?,?,(SELECT COALESCE(MAX(sort_order),0)+1 FROM bots))").bind(nid, `${row.name} (copy)`, row.strategy, row.config, now, now).run();
       await log(env, "info", "control", "Bot duplicated (OFF)", nid);
       return json({ id: nid });
     }
@@ -345,6 +345,20 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
 
   // ---------------- profit / loss summaries
   if (path === "/api/account" && m === "GET") return json({ ...(await plSummary(env)), limits: await getAccountLimits(env) });
+  // move a bot up or down in the list (the order is kept for every screen that lists the bots)
+  if ((g = path.match(/^\/api\/bots\/([\w-]+)\/move$/)) && m === "POST") {
+    const b = await body<{ direction?: string }>(req);
+    if (b.direction !== "up" && b.direction !== "down") return err("Direction must be up or down");
+    const rows = (await env.DB.prepare("SELECT id FROM bots ORDER BY sort_order, created_ts").all<{ id: string }>()).results ?? [];
+    const i = rows.findIndex((r) => r.id === g![1]);
+    if (i < 0) return err("Bot not found", 404);
+    const j = b.direction === "up" ? i - 1 : i + 1;
+    if (j >= 0 && j < rows.length) {
+      [rows[i], rows[j]] = [rows[j], rows[i]];
+      await env.DB.batch(rows.map((r, k) => env.DB.prepare("UPDATE bots SET sort_order=? WHERE id=?").bind(k, r.id)));
+    }
+    return json({ ok: true });
+  }
   if ((g = path.match(/^\/api\/bots\/([\w-]+)\/summary$/)) && m === "GET") {
     const id = g[1];
     const row = await env.DB.prepare("SELECT id, name, strategy, config, enabled FROM bots WHERE id=?").bind(id).first<{ id: string; name: string; strategy: string; config: string; enabled: number }>();

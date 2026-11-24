@@ -66,7 +66,7 @@ export function rowToBot(r: BotRow): Bot {
 }
 
 export async function loadBots(env: Env): Promise<Bot[]> {
-  const rs = await env.DB.prepare("SELECT id, name, strategy, config, enabled FROM bots ORDER BY created_ts").all<BotRow>();
+  const rs = await env.DB.prepare("SELECT id, name, strategy, config, enabled FROM bots ORDER BY sort_order, created_ts").all<BotRow>();
   return (rs.results ?? []).map(rowToBot);
 }
 
