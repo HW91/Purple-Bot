@@ -250,7 +250,7 @@ function vDash(){
       bots.forEach(function(b){
         var st=live.bots.find(function(x){return x.id===b.id})||{reason:'',up:0,down:0};
         bt.appendChild(h('div',{class:'card'},
-          h('div',{class:'row'},h('button',{class:'link',style:'text-decoration:underline;text-underline-offset:3px',text:b.name+' ›',title:'See this bot\'s profit/loss',onclick:function(){openBot(b.id)}}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),h('span',{class:'mute',text:'trades '+b.config.tradeAsset}),
+          h('div',{class:'row'},h('button',{class:'link',style:'text-decoration:underline;text-underline-offset:3px',text:b.name+' ›',title:'See this bot\'s profit/loss',onclick:function(){openBot(b.id)}}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),b.config.demo?h('span',{class:'pill warn',text:'DEMO'}):null,h('span',{class:'mute',text:'trades '+b.config.tradeAsset}),
             ),
           h('div',{class:'mute',text:'Signal: '+st.reason+(b.config.agreeCount>0?'  (up '+st.up+' / down '+st.down+', need '+b.config.agreeCount+')':'')}),
           h('div',{class:'mute',text:'Tap the bot name to see its profit/loss.'})));

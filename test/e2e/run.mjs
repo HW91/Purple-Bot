@@ -313,6 +313,12 @@ try {
     await page.waitForSelector("text=Closed trades: profit/loss after fees", { timeout: 15000 });
     await page.waitForSelector("button.link", { timeout: 15000 });
     ok("the bot names on the Dashboard are underlined so they stand out as tappable", (await page.locator("button.link").first().evaluate((e) => getComputedStyle(e).textDecorationLine)).includes("underline"));
+    const tagBot = (await api("/bots", "POST", { name: "Tag demo bot", config: { strategy: "crypto", demo: true } })).j.id;
+    await page.reload();
+    await page.waitForSelector("button.link:text('Tag demo bot')", { timeout: 20000 });
+    const tagRow = await page.locator("button.link:text('Tag demo bot')").locator("xpath=..").textContent();
+    ok("a demo bot's row on the Dashboard shows a DEMO tag, and no bot is tagged REAL", tagRow.includes("DEMO") && !(await page.locator("#main").textContent()).includes("REAL"), tagRow);
+    await api(`/bots/${tagBot}`, "DELETE");
     const dashText = await page.textContent("#main");
     ok("dashboard shows the Account card with balance and profit/loss", dashText.includes("Cash balance") && dashText.includes("All time"));
     // related numbers are grouped under headings, in a sensible order
