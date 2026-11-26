@@ -364,7 +364,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     const row = await env.DB.prepare("SELECT id, name, strategy, config, enabled FROM bots WHERE id=?").bind(id).first<{ id: string; name: string; strategy: string; config: string; enabled: number }>();
     if (!row) return err("Bot not found", 404);
     const isDemo = await viewDemo(env, id); // this bot's own results: demo trades for a demo bot, real trades for a real one
-    const closed = (await env.DB.prepare(`SELECT * FROM positions WHERE status != 'open' AND demo = ${isDemo} AND bot_id = ? ORDER BY closed_ts DESC LIMIT 50`).bind(id).all()).results;
+    const closed = (await env.DB.prepare(`SELECT * FROM positions WHERE status != 'open' AND demo = ${isDemo} AND bot_id = ? ORDER BY closed_ts DESC LIMIT 100`).bind(id).all()).results;
     return json({ bot: rowToBot(row), ...(await plSummary(env, id)), closed, demoBalance: isDemo ? await demoBalance(env) : null });
   }
 

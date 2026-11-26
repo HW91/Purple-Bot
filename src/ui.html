@@ -319,7 +319,7 @@ function openBot(id){
           tile('Loss today',usd(lossToday)+' of '+usd(cfg.dailyLossLimit))]),
         h('small',{text:'After fees, from this bot\'s own trades.'})]));
       body.appendChild(h('div',{class:'card'},h('h2',{text:'Open positions'}),posTable(mine)));
-      body.appendChild(h('div',{class:'card'},h('h2',{text:'Completed trades (latest 50)'}),closedTable(s.closed)));
+      body.appendChild(h('div',{class:'card'},h('h2',{text:'Completed trades (latest 100)'}),closedTable(s.closed)));
     }).catch(function(e){body.textContent='';body.appendChild(h('div',{class:'banner bad',text:e.message}))});
   }
   load();pollTimer=setInterval(load,10000);
