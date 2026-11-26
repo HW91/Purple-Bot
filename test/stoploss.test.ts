@@ -40,3 +40,38 @@ describe("stop loss protections", () => {
     expect(() => validateBotConfig({ stopLossHoldSec: 61 })).toThrow(/0 to 60/);
   });
 });
+
+import { moneyReversal } from "../src/flow";
+
+describe("stop loss only when the money reverses", () => {
+  const before3 = { yes: 270_000, no: 30_000 }; // three minutes averaging $100,000 in total
+  it("a reversal needs the opposing money to reach the set percent of the recent average", () => {
+    expect(moneyReversal({ yes: 5_000, no: 49_000 }, before3, 3, "yes", 50).active).toBe(false);
+    expect(moneyReversal({ yes: 5_000, no: 50_000 }, before3, 3, "yes", 50).active).toBe(true);
+  });
+  it("small orders do not count: $1,000 on NO against $100 on YES is not a reversal when minutes usually carry $100,000", () => {
+    expect(moneyReversal({ yes: 100, no: 1_000 }, before3, 3, "yes", 50).active).toBe(false);
+  });
+  it("works for a NO trade: the opposing money is the YES money", () => {
+    expect(moneyReversal({ yes: 60_000, no: 1_000 }, before3, 3, "no", 50).active).toBe(true);
+    expect(moneyReversal({ yes: 20_000, no: 1_000 }, before3, 3, "no", 50).active).toBe(false);
+  });
+  it("with no money in the earlier minutes there is nothing to compare with, so the normal stop loss applies", () => {
+    const r = moneyReversal({ yes: 0, no: 100 }, { yes: 0, no: 0 }, 3, "yes", 50);
+    expect(r.known).toBe(false);
+    expect(r.active).toBe(true);
+  });
+  it("the contract you showed: previous minutes of $28.8k, $32.8k and $25.5k and only $9,987 on NO in the last minute is not a reversal at 50%", () => {
+    const r = moneyReversal({ yes: 84_385, no: 9_987 }, { yes: 27_236 + 31_887 + 24_745, no: 1_538 + 927 + 730 }, 3, "yes", 50);
+    expect(r.active).toBe(false);
+    expect(Math.round(r.avgTotal)).toBe(29_021);
+    expect(Math.round(r.needed)).toBe(14_511);
+  });
+  it("settings are off by default and limited", () => {
+    expect(validateBotConfig({}).stopLossMoneyFilter).toBe(false);
+    expect(validateBotConfig({}).stopLossMoneyPct).toBe(50);
+    expect(validateBotConfig({}).stopLossMoneyMinutes).toBe(3);
+    expect(() => validateBotConfig({ stopLossMoneyPct: 0 })).toThrow(/above 0/);
+    expect(() => validateBotConfig({ stopLossMoneyMinutes: 11 })).toThrow(/1 to 10/);
+  });
+});

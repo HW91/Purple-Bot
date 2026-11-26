@@ -12,7 +12,7 @@ import { demoBalance, getAccountLimits, getCreds, getSetting, isBotEnabled, load
 import { emailShell, esc, fundsHelpHtml, sendEmail } from "./notify";
 import { etDateString, overviewEmail, runOverview } from "./analysis";
 import { checklistFor, type CheckLine } from "./checklist";
-import { FlowTracker } from "./flow";
+import { FlowTracker, moneyReversal } from "./flow";
 import { feePerContract, samplesFromCandles, weightedSamplesFromObs, type Cell, type EdgeLookup } from "./edge";
 import { checkRisk, dayStartMs, directionOf, evaluateEntry, evaluateExitTimed, favorableProb, yesProb, type AssetView, type EntryDecision, type OpenPos, type RiskStats, unrealizedPnl } from "./strategy";
 import { CRYPTO_ASSETS, METAL_ASSETS, type Bot, type Env, type MarketInfo, type Quote } from "./types";
@@ -127,6 +127,7 @@ export class Engine extends DurableObject<Env> {
   private inflight = new Set<string>();
   private closeRequests = new Map<string, string>();
   private lastExitAttempt = new Map<string, number>();
+  private heldLog = new Map<string, number>(); // position id -> when "stop loss held back" was last written to the log
   private stopBreach = new Map<string, number>(); // position id -> when its current stretch of loss (past the stop loss) began
   private entryAttempts = new Map<string, { n: number; last: number }>();
   private entryCounts = new Map<string, { n: number; last: number }>(); // "botId|ticker|demo" -> trades opened in that contract and when the last one opened
@@ -1398,8 +1399,28 @@ export class Engine extends DurableObject<Env> {
     if (ex.breachSince === null) this.stopBreach.delete(p.id);
     else this.stopBreach.set(p.id, ex.breachSince);
     let reason: string | null = ex.reason;
+    if (reason === "stop_loss" && bot.config.stopLossMoneyFilter && this.stopHeldByMoney(p, bot, now)) reason = null; // the money still backs the trade: no reversal, so the stop loss does not sell
     if (!reason && bot.config.exitOnEdgeGone && bot.config.modelEdgePts > 0 && this.edgeGone(p, q, now)) reason = "edge_gone";
     if (reason) await this.closePosition(p, reason, q);
+  }
+
+  /**
+   * The stop loss wants to sell: is the money reversing against this trade? The latest minute's money on the OTHER side is compared with the average
+   * total money per minute over the minutes before it. True = no reversal, so the stop is held back. No money data at all: false (the normal stop loss).
+   */
+  private stopHeldByMoney(p: PositionRow, bot: Bot, now: number): boolean {
+    if (!this.flow.isReady(p.ticker)) return false;
+    const mins = bot.config.stopLossMoneyMinutes;
+    const latest = this.flow.totals(p.ticker, now - 60_000, now);
+    const before = this.flow.totals(p.ticker, now - 60_000 - mins * 60_000, now - 60_001);
+    const r = moneyReversal(latest, before, mins, p.outcome, bot.config.stopLossMoneyPct);
+    if (r.active) return false;
+    if (now - (this.heldLog.get(p.id) ?? 0) > 30_000) {
+      this.heldLog.set(p.id, now);
+      const usd = (x: number) => "$" + Math.round(x).toLocaleString("en-US");
+      this.ctx.waitUntil(log(this.env, "info", "order", `Stop loss held back on ${p.asset} ${p.outcome.toUpperCase()}: the money still backs the trade (opposing money in the last minute ${usd(r.other)}; a reversal needs ${usd(r.needed)}, ${bot.config.stopLossMoneyPct}% of the average ${usd(r.avgTotal)} per minute over the previous ${mins} minutes)`, p.bot_id));
+    }
+    return true;
   }
 
   /** My own estimate of this trade winning is no longer above what the trade could be sold for right now: the edge it was bought for is gone. */
@@ -1517,6 +1538,7 @@ export class Engine extends DurableObject<Env> {
     this.dirtyPos.delete(p.id);
     this.closeRequests.delete(p.id);
     this.stopBreach.delete(p.id);
+    this.heldLog.delete(p.id);
     await log(this.env, "info", "order", `${p.demo === 1 ? "DEMO " : ""}CLOSED ${p.asset} ${p.outcome.toUpperCase()} (${reason}): ${result.toUpperCase()} $${pnl.toFixed(2)} after fees`, p.bot_id);
     if (p.demo === 1) return; // demo trades send no emails
     const bot = this.bots.find((b) => b.id === p.bot_id);

@@ -368,6 +368,7 @@ function vBots(){
       var sideSel=h('select',null,[['favorite','High probability'],['underdog','Low probability'],['either','Either (needs a minimum edge)']].map(function(o){var op=h('option',{value:o[0],text:o[1]});if((cfg.betSide||'favorite')===o[0])op.selected=true;return op}));
       var tradeSel=h('select',null,assetGroups(cfg.tradeAsset));
       var fTrade,fAgree;
+      var stopMoneyBox=chk('stopLossMoneyFilter');stopMoneyBox.checked=!!cfg.stopLossMoneyFilter;
       var exitEdgeBox=chk('exitOnEdgeGone');exitEdgeBox.checked=!!cfg.exitOnEdgeGone;
       var fl=chk('flowOn');fl.checked=!!cfg.flowOn;
       var sl=chk('stopLossOn');sl.checked=cfg.stopLossOn;var tp=chk('takeProfitOn');tp.checked=cfg.takeProfitOn;
@@ -408,6 +409,9 @@ function vBots(){
       var fEdgeExit=field('Sell when my estimate no longer beats the price',exitEdgeBox,'On: a trade is sold as soon as the bot\'s own estimate of winning is no longer above the price it could be sold at (the edge it was bought for is gone). Works only with "Only enter when my estimate beats the price" above 0, on cryptocurrencies. Off: it holds until the profit target, stop loss or settlement.');
       var fStopLast=field('Stop loss: never sell in the last (seconds, 0 = off)',num('stopLossNotLastSec',1,1),'The stop loss will not sell in the last this many seconds of the contract. The book is thinnest then, the outcome is nearly decided, and a brief drop in the bid can trigger a sale at a bad price. For example 60.');
       var fStopHold=field('Stop loss: sell only if the loss lasts (seconds, 0 = sell at once)',num('stopLossHoldSec',1,1),'The stop loss sells only after the loss has stayed past your stop loss amount for this many seconds without recovering, so a brief dip does not trigger it. For example 5. It is checked every few seconds, so the wait can run a few seconds longer.');
+      var fStopMoney=field('Stop loss: sell only when the money reverses',stopMoneyBox,'On: the stop loss sells only while the money is turning against the trade. The bot compares the money on the OTHER side in the latest minute with the average total money (YES plus NO) per minute over the minutes before it. If the opposing money is at least the percent below of that average, the stop loss works as normal. Otherwise the money still backs your trade and the stop loss is ignored, even if the loss is past your stop amount. Needs the live trade feed; without money data the normal stop loss applies.');
+      var fStopMoneyPct=field('Reversal: opposing money in the latest minute is at least this % of the recent average',num('stopLossMoneyPct',1,1),'For example 50: if the previous minutes averaged $100,000 in total, $50,000 or more on the other side in the latest minute is a reversal.');
+      var fStopMoneyMin=field('Reversal: average the previous (minutes)',num('stopLossMoneyMinutes',1,1),'How many minutes before the latest minute are averaged, 1 to 10. For example 3.');
       var fTrades=field('Max trades per hour',num('maxTradesPerHour',1,1));
       var fLoss=field('Daily loss limit ($)',num('dailyLossLimit'));
       var fInvest=field('Daily investment limit ($)',num('dailyInvestLimit'));
@@ -454,7 +458,7 @@ function vBots(){
       f.appendChild(section('basics','The basics',true,[h('div',{class:'grid'},fName,fTrade,fAmount,fStop,fTake,fMaxPos),demoBlock]));
       f.appendChild(section('enter','When to enter',false,[h('div',{class:'grid'},fSide,fRange,fDelay,fMinRem,fSpread,fAgree),agreeBox]));
       f.appendChild(section('smart','Smarter entry rules',false,[h('div',{class:'grid'},fEdge,fEdgeN,fModel,fPivot,fFlow,fFlowWin,fFlowRatio),windowsBlock]));
-      f.appendChild(section('exits','Several trades and exits',false,[h('div',{class:'grid'},fEntries,fCool,fEdgeExit,fStopLast,fStopHold)]));
+      f.appendChild(section('exits','Several trades and exits',false,[h('div',{class:'grid'},fEntries,fCool,fEdgeExit,fStopLast,fStopHold,fStopMoney,fStopMoneyPct,fStopMoneyMin)]));
       f.appendChild(section('limits','Limits',false,[h('div',{class:'grid'},fTrades,fLoss,fInvest)]));
       f.appendChild(section('combo','Combo',false,[comboBlock]));
       f.appendChild(section('notify','Notifications',false,[h('div',{class:'grid'},fNotify,fStreak)]));
@@ -462,12 +466,12 @@ function vBots(){
       f.appendChild(h('p',null,h('button',{class:'btn',text:'Save',onclick:function(){
         var out={strategy:s,durationMin:cfg.durationMin};
         ['probThreshold','probMax','minEdge'].forEach(function(k){out[k]=+inp[k].value/100});
-        ['stopLossNotLastSec','stopLossHoldSec','entriesPerContract','entryCooldownSec','modelEdgePts','pivotBandPct','notifyEveryTrades','agreeCount','edgeMinSamples','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
+        ['stopLossMoneyPct','stopLossMoneyMinutes','stopLossNotLastSec','stopLossHoldSec','entriesPerContract','entryCooldownSec','modelEdgePts','pivotBandPct','notifyEveryTrades','agreeCount','edgeMinSamples','timeDelaySec','minRemainingSec','tradeAmount','maxPositions','maxTradesPerHour','dailyLossLimit','dailyInvestLimit','maxSpread','stopLoss','takeProfit','flowWindowMin','flowRatio'].forEach(function(k){if(inp[k])out[k]=+inp[k].value});
         out.betSide=sideSel.value;
         out.flowOn=fl.checked;
         out.noTradeWindows=[].slice.call(winBox.children).map(function(r){return {start:r._s.value,end:r._e.value}}).filter(function(w){return w.start||w.end});
         out.tradeAsset=tradeSel.value;
-        out.demo=demoOn.checked;out.exitOnEdgeGone=exitEdgeBox.checked;
+        out.demo=demoOn.checked;out.exitOnEdgeGone=exitEdgeBox.checked;out.stopLossMoneyFilter=stopMoneyBox.checked;
         out.comboOn=comboOn.checked;out.comboWindowMin=+inp.comboWindowMin.value;out.comboMaxCost=+inp.comboMaxCost.value/100;
         out.comboAssets=[].slice.call(f.querySelectorAll('[data-c]')).filter(function(x){return x.checked}).map(function(x){return x.getAttribute('data-c')});
         out.stopLossOn=sl.checked;out.takeProfitOn=tp.checked;out.notify=nt.value;

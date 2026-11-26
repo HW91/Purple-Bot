@@ -38,7 +38,7 @@ export function startMock(port) {
       if (url.pathname === "/_quote") { for (const t of b.tickers) { state.quotes.set(t, { bid: b.bid, ask: b.ask, bidSize: b.size ?? 100, askSize: b.size ?? 100 }); tick(t); } return send(200, {}); }
       if (url.pathname === "/_trade") { // a public trade on the live trade channel: { tickers, side, count, yes }
         for (const t of b.tickers) {
-          const msg = JSON.stringify({ type: "trade", sid: 2, seq: 1, msg: { trade_id: "t" + Math.random().toString(36).slice(2), market_ticker: t, yes_price_dollars: Number(b.yes).toFixed(4), no_price_dollars: (1 - Number(b.yes)).toFixed(4), count_fp: Number(b.count).toFixed(2), taker_side: b.side, taker_outcome_side: b.side, taker_book_side: b.side === "yes" ? "bid" : "ask", is_block_trade: false, ts: Math.floor(Date.now() / 1000), ts_ms: Date.now() } });
+          const msg = JSON.stringify({ type: "trade", sid: 2, seq: 1, msg: { trade_id: "t" + Math.random().toString(36).slice(2), market_ticker: t, yes_price_dollars: Number(b.yes).toFixed(4), no_price_dollars: (1 - Number(b.yes)).toFixed(4), count_fp: Number(b.count).toFixed(2), taker_side: b.side, taker_outcome_side: b.side, taker_book_side: b.side === "yes" ? "bid" : "ask", is_block_trade: false, ts: Math.floor(Date.now() / 1000), ts_ms: Date.now() - Number(b.ageSec ?? 0) * 1000 } });
           for (const c of clients) if (c.tradeTickers?.has(t) && c.readyState === 1) c.send(msg);
         }
         return send(200, {});

@@ -675,6 +675,25 @@ try {
   await api(`/bots/${ordA}`, "DELETE");
   await api(`/bots/${ordB}`, "DELETE");
 
+  // ---- U. stop loss that sells only when the money reverses (demo): held while the money backs the trade, sells once the opposing money surges
+  await quote([T("BTC")], 0.94, 0.95);
+  const tradeMsg = (side, count, yes, ageSec) => fetch(`http://127.0.0.1:${KP}/_trade`, { method: "POST", body: JSON.stringify({ tickers: [T("BTC")], side, count, yes, ageSec }) });
+  const moneyCfg = { ...demoCfg, stopLossOn: true, stopLoss: 1, stopLossMoneyFilter: true, stopLossMoneyPct: 50, stopLossMoneyMinutes: 3, tradeAmount: 5 };
+  const moneyBot = (await api("/bots", "POST", { name: "Money stop bot", config: moneyCfg })).j.id;
+  await api(`/bots/${moneyBot}/start`, "POST");
+  const moneyOpen = await waitFor(async () => (await botOpen(moneyBot))[0], 60000);
+  for (const age of [80, 140, 200]) await tradeMsg("yes", 20000, 0.5, age); // $10,000 of YES money in each of the previous three minutes
+  await sleep(1500);
+  await quote([T("BTC")], 0.5, 0.52); // the loss is now far past the $1 stop loss
+  await sleep(6000);
+  const heldByMoney = (await botOpen(moneyBot))[0];
+  await tradeMsg("no", 10000, 0.4, 0); // $6,000 on NO in the latest minute: at least 50% of the $10,000 per-minute average
+  const sold = await waitFor(async () => (await botClosed(moneyBot))[0], 60000, 1500);
+  const heldLogged = (await api("/logs?limit=80&kind=order")).j.some((l) => l.bot_id === moneyBot && /Stop loss held back/.test(l.message));
+  ok("money-reversal stop loss: held while the money backs the trade (and logged), sold once the opposing money surges", !!moneyOpen && !!heldByMoney && heldLogged && !!sold && sold.close_reason === "stop_loss", JSON.stringify({ held: !!heldByMoney, heldLogged, sold: sold && sold.close_reason }));
+  await api(`/bots/${moneyBot}/stop`, "POST");
+  await quote([T("BTC")], 0.94, 0.95);
+
   // ---- J. delete rules + disconnect rules
   ok("cannot delete a bot while ON", await (async () => { await api(`/bots/${bot1}/start`, "POST"); const r = await api(`/bots/${bot1}`, "DELETE"); await api(`/bots/${bot1}/stop`, "POST"); return r.status === 409; })());
   ok("badAuth count on fake exchange only came from the deliberately wrong key", (await mockState()).badAuth === 1, String((await mockState()).badAuth));

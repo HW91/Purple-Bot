@@ -134,3 +134,16 @@ export function flowRatioText(mine: number, other: number): string {
   if (!(other > 0)) return mine > 0 ? "no money on the other side" : "no trades";
   return `${(mine / other).toFixed(2)}x`;
 }
+
+/**
+ * A reversal against a trade: the money on the OTHER side in the latest minute is at least `pct` percent of the average total money (YES plus NO) per
+ * minute over the `minutes` minutes before it. Judged against what is normal for that contract, so a small order cannot trigger it and a surge can.
+ * With no money in the earlier minutes there is nothing to compare with (known: false), and the caller keeps the normal stop loss.
+ */
+export function moneyReversal(latest: { yes: number; no: number }, before: { yes: number; no: number }, minutes: number, outcome: "yes" | "no", pct: number): { active: boolean; known: boolean; other: number; needed: number; avgTotal: number } {
+  const other = outcome === "yes" ? latest.no : latest.yes;
+  const avgTotal = (before.yes + before.no) / Math.max(1, minutes);
+  if (!(avgTotal > 0)) return { active: true, known: false, other, needed: 0, avgTotal };
+  const needed = (avgTotal * pct) / 100;
+  return { active: other >= needed, known: true, other, needed, avgTotal };
+}

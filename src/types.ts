@@ -57,6 +57,9 @@ export interface BotConfig {
   comboWindowMin: number; // every combo asset must have been inside the probability range at some point in the last this many minutes of the contract
   comboMaxCost: number; // highest price per $1 of payout the bot will accept for the combo (0.96 = 96 cents)
   pivotBandPct: number; // skip a contract whose target price is within this many percent of a daily pivot level (0 = off)
+  stopLossMoneyFilter: boolean; // the stop loss only sells while the money is reversing against the trade (see stopLossMoneyPct)
+  stopLossMoneyPct: number; // a reversal = the opposing side's money in the latest minute is at least this percent of the average total money per minute before it
+  stopLossMoneyMinutes: number; // how many minutes before the latest one are averaged
   stopLossNotLastSec: number; // the stop loss never sells in the last this many seconds of the contract (0 = off)
   stopLossHoldSec: number; // the stop loss sells only after the loss has lasted this many seconds (0 = off, sells at once)
   entriesPerContract: number; // how many trades the bot may open in ONE 15-minute contract (1 = the old behavior); several can be open at once up to "max simultaneous positions"
@@ -151,6 +154,9 @@ export function defaultBotConfig(strategy: Strategy): BotConfig {
     pivotBandPct: 0,
     modelEdgePts: 0,
     demo: false,
+    stopLossMoneyFilter: false,
+    stopLossMoneyPct: 50,
+    stopLossMoneyMinutes: 3,
     stopLossNotLastSec: 0,
     stopLossHoldSec: 0,
     entriesPerContract: 1,
@@ -224,12 +230,17 @@ export function validateBotConfig(input: Partial<BotConfig>): BotConfig {
     pivotBandPct: num(input.pivotBandPct, d.pivotBandPct),
     modelEdgePts: num(input.modelEdgePts, d.modelEdgePts),
     demo: bool(input.demo, d.demo),
+    stopLossMoneyFilter: bool(input.stopLossMoneyFilter, d.stopLossMoneyFilter),
+    stopLossMoneyPct: num(input.stopLossMoneyPct, d.stopLossMoneyPct),
+    stopLossMoneyMinutes: Math.round(num(input.stopLossMoneyMinutes, d.stopLossMoneyMinutes)),
     stopLossNotLastSec: Math.round(num(input.stopLossNotLastSec, d.stopLossNotLastSec)),
     stopLossHoldSec: Math.round(num(input.stopLossHoldSec, d.stopLossHoldSec)),
     entriesPerContract: Math.round(num(input.entriesPerContract, d.entriesPerContract)),
     entryCooldownSec: Math.round(num(input.entryCooldownSec, d.entryCooldownSec)),
     exitOnEdgeGone: bool(input.exitOnEdgeGone, d.exitOnEdgeGone),
   };
+  if (!(cfg.stopLossMoneyPct > 0 && cfg.stopLossMoneyPct <= 1000)) throw new Error("Reversal percent must be above 0 and at most 1000");
+  if (!(cfg.stopLossMoneyMinutes >= 1 && cfg.stopLossMoneyMinutes <= 10)) throw new Error("Reversal minutes must be from 1 to 10");
   if (!(cfg.stopLossNotLastSec >= 0 && cfg.stopLossNotLastSec <= 300)) throw new Error("Seconds before the close with no stop loss must be from 0 to 300");
   if (!(cfg.stopLossHoldSec >= 0 && cfg.stopLossHoldSec <= 60)) throw new Error("Seconds the loss must last before the stop loss sells must be from 0 to 60");
   if (!(cfg.entriesPerContract >= 1 && cfg.entriesPerContract <= 10)) throw new Error("Entries per contract must be a whole number from 1 to 10");
