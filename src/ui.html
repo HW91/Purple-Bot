@@ -132,6 +132,8 @@ function showError(msg){
   document.body.appendChild(ov);
   closeBtn.focus();
 }
+// run a redraw without losing the scroll position (the page briefly shrinks while its tables are emptied and refilled)
+function kept(fn){return function(){var y=window.scrollY;var r=fn.apply(this,arguments);if(Math.abs(window.scrollY-y)>1)window.scrollTo(0,y);return r}}
 function act(p,opts,okMsg){return api(p,opts).then(function(r){if(okMsg)toast(okMsg);return r}).catch(function(e){toast(e.message,true);throw e})}
 
 var TABS=['Dashboard','Bots','Trades','Charts','AI','Backtest','Settings','Logs'];
@@ -225,8 +227,8 @@ function vDash(){
   }
   function draw(){
     if(!live)return;
-    drawAcct();
-    if(!acctData||Date.now()-lastAcct>30000){lastAcct=Date.now();api('/account').then(function(a){acctData=a;drawAcct()}).catch(function(){})}
+    kept(drawAcct)();
+    if(!acctData||Date.now()-lastAcct>30000){lastAcct=Date.now();api('/account').then(function(a){acctData=a;kept(drawAcct)()}).catch(function(){})}
     banner.textContent='';
     if(!live.credentialsOk)banner.appendChild(h('div',{class:'banner bad',text:'Kalshi is not connected (or the key was rejected'+(live.authError?': '+live.authError:'')+'). Go to Settings.'}));
     if(live.reconcileProblem)banner.appendChild(h('div',{class:'banner bad'},['New orders are blocked: '+live.reconcileProblem+' ',h('button',{class:'btn gray',text:'Reconcile now',onclick:function(){act('/reconcile',{method:'POST'},'Checked')}})]));
@@ -258,13 +260,13 @@ function vDash(){
       if(!bots.length)bt.appendChild(h('div',{class:'card mute',text:'No bots yet — open the Bots tab to create one (bots always start OFF).'}));
     }
     // the bot list (with its performance math) only needs a fresh fetch every 30s or after you press something
-    if(botsCache.length&&Date.now()-lastBots<30000)renderBots(botsCache);
-    else api('/bots').then(function(b){lastBots=Date.now();botsCache=b;renderBots(b)});
+    if(botsCache.length&&Date.now()-lastBots<30000)kept(renderBots)(botsCache);
+    else api('/bots').then(function(b){lastBots=Date.now();botsCache=b;kept(renderBots)(b)});
     // positions
     pos.textContent='';
     pos.appendChild(h('div',{class:'card'},h('h2',{text:'Open positions'}),posTable(live.positions.filter(function(p){return !p.demo}))));
   }
-  function refresh(){return api('/live').then(function(l){live=l;updateHeader();draw()}).catch(function(){})}
+  function refresh(){return api('/live').then(function(l){live=l;updateHeader();kept(draw)()}).catch(function(){})}
   refresh();pollTimer=setInterval(refresh,5000);
 }
 function tileGroup(title,tiles){return h('div',{style:'margin-top:12px'},h('div',{class:'mute',style:'font-weight:600;margin-bottom:6px',text:title}),h('div',{class:'grid'},tiles))}
@@ -297,6 +299,7 @@ function openBot(id){
       var unreal=mine.reduce(function(t,p){return t+(p.unrealized||0)},0);
       var st=live.bots.find(function(x){return x.id===id})||{reason:''};
       var lossToday=Math.max(0,-s.today.pnl);
+      var y0=window.scrollY; // the whole page is rebuilt below: come back to where the scroll was
       body.textContent='';
       body.appendChild(h('div',{class:'card'},
         h('div',{class:'row'},h('h2',{text:b.name,style:'margin:0'}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),b.config.demo?h('span',{class:'pill warn',text:'DEMO'}):null,h('span',{class:'mute',text:cfg.strategy+' · '+(cfg.comboOn?'combo of '+cfg.comboAssets.join(' + '):'trades '+cfg.tradeAsset+' · confirmed by '+cfg.assets.join(', '))})),
@@ -320,6 +323,7 @@ function openBot(id){
         h('small',{text:'After fees, from this bot\'s own trades.'})]));
       body.appendChild(h('div',{class:'card'},h('h2',{text:'Open positions'}),posTable(mine)));
       body.appendChild(h('div',{class:'card'},h('h2',{text:'Completed trades (latest 100)'}),closedTable(s.closed)));
+      window.scrollTo(0,y0);
     }).catch(function(e){body.textContent='';body.appendChild(h('div',{class:'banner bad',text:e.message}))});
   }
   load();pollTimer=setInterval(load,10000);
@@ -343,7 +347,7 @@ function vBots(){
   var list=h('div'),form=h('div');
   root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn',text:'+ New bot',onclick:function(){editBot(null)}})));
   root.appendChild(form);root.appendChild(list);
-  function load(){api('/bots').then(function(bots){botsCache=bots;list.textContent='';bots.forEach(function(b,idx){
+  function load(){return api('/bots').then(function(bots){botsCache=bots;list.textContent='';bots.forEach(function(b,idx){
     list.appendChild(h('div',{class:'card'},h('div',{class:'row'},h('b',{text:b.name}),h('span',{class:'pill '+(b.enabled?'ok':''),text:b.enabled?'ON':'OFF'}),b.config.demo?h('span',{class:'pill warn',text:'DEMO'}):null,h('span',{class:'mute',text:(b.config.comboOn?'combo of '+b.config.comboAssets.join(' + '):'trades '+b.config.tradeAsset+' · confirmed by '+b.config.assets.join(', '))})),
       h('div',{class:'row',style:'margin-top:10px'},
       h('button',{class:'btn gray',text:'Edit',onclick:function(){editBot(b)}}),
@@ -356,6 +360,7 @@ function vBots(){
   })})}
   function field(label,input,hint){return h('div',null,h('label',{text:label}),input,hint?h('small',{text:hint,style:'display:block;margin-top:2px'}):null)}
   function editBot(b,strategy){
+    var y0=window.scrollY; // where the page was before the editor opened
     var s=b?b.strategy:'crypto';var c=b?b.config:settings&&settings.defaults?settings.defaults.bot:null; // every bot can use any asset; a new one starts on Bitcoin with agreement off
     function go2(){
       var cfg=c;var f=h('div',{class:'card'});
@@ -477,8 +482,8 @@ function vBots(){
         out.stopLossOn=sl.checked;out.takeProfitOn=tp.checked;out.notify=nt.value;
         out.assets=[].slice.call(f.querySelectorAll('[data-a]')).filter(function(x){return x.checked}).map(function(x){return x.getAttribute('data-a')});
         if(out.assets.indexOf(tradeSel.value)<0)out.assets.push(tradeSel.value); // the asset it trades is always one of the checked assets
-        act(b?'/bots/'+b.id:'/bots',{method:b?'PUT':'POST',body:{name:name.value,config:out}},'Saved').then(function(){form.textContent='';load()}).catch(function(){}); // a failed save has already shown its error pop-up
-      }}),' ',h('button',{class:'btn gray',text:'Cancel',onclick:function(){form.textContent=''}})));
+        act(b?'/bots/'+b.id:'/bots',{method:b?'PUT':'POST',body:{name:name.value,config:out}},'Saved').then(function(){form.textContent='';return load()}).then(function(){window.scrollTo(0,y0)}).catch(function(){}); // a failed save has already shown its error pop-up
+      }}),' ',h('button',{class:'btn gray',text:'Cancel',onclick:function(){form.textContent='';window.scrollTo(0,y0)}})));
       form.textContent='';form.appendChild(f);f.scrollIntoView();
     }
     if(!c){api('/settings').then(function(st){settings=st;c=st.defaults[s];go2()})}else go2();
@@ -713,9 +718,9 @@ function vCharts(){
     if(t===lastVolTicker&&(!running||Date.now()-lastVolTs<30000))return;
     if(t!==lastVolTicker)volEl.textContent='Loading volume…';
     lastVolTicker=t;lastVolTs=Date.now();
-    api('/chart/volume?ticker='+encodeURIComponent(t)).then(function(v){if(period.value!==t)return;volEl.textContent='';volRows(v).forEach(function(x){volEl.appendChild(x)})}).catch(function(e){if(period.value===t){volEl.textContent='';volEl.appendChild(h('small',{text:'Volume is not available: '+e.message}))}});
+    api('/chart/volume?ticker='+encodeURIComponent(t)).then(function(v){if(period.value!==t)return;kept(function(){volEl.textContent='';volRows(v).forEach(function(x){volEl.appendChild(x)})})()}).catch(function(e){if(period.value===t){volEl.textContent='';volEl.appendChild(h('small',{text:'Volume is not available: '+e.message}))}});
   }
-  function loadChart(){if(!period.value){data=null;draw();showWhy();loadVolume();return}api('/chart?ticker='+encodeURIComponent(period.value)+(botSel.value?'&bot='+encodeURIComponent(botSel.value):'')).then(function(d){data=d;data.skew=(d.serverNow||Date.now())-Date.now();draw();showWhy();loadVolume()})}
+  function loadChart(){if(!period.value){data=null;draw();showWhy();loadVolume();return}api('/chart?ticker='+encodeURIComponent(period.value)+(botSel.value?'&bot='+encodeURIComponent(botSel.value):'')).then(function(d){data=d;data.skew=(d.serverNow||Date.now())-Date.now();kept(function(){draw();showWhy();loadVolume()})()})}
   function geom(){var dpr=window.devicePixelRatio||1;var w=canvas.clientWidth,hh=canvas.clientHeight;canvas.width=w*dpr;canvas.height=hh*dpr;var c=canvas.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);return{c:c,w:w,h:hh,l:44,r:10,t:10,b:24}}
   function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n)}
   function draw(hoverTs){

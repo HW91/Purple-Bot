@@ -313,6 +313,12 @@ try {
     await page.waitForSelector("text=Closed trades: profit/loss after fees", { timeout: 15000 });
     await page.waitForSelector("button.link", { timeout: 15000 });
     ok("the bot names on the Dashboard are underlined so they stand out as tappable", (await page.locator("button.link").first().evaluate((e) => getComputedStyle(e).textDecorationLine)).includes("underline"));
+    // the Dashboard redraws its tables every 5 seconds: the scroll position must survive that
+    await page.evaluate(() => window.scrollTo(0, 250));
+    const dashY0 = await page.evaluate(() => window.scrollY);
+    await page.waitForTimeout(11000);
+    const dashY1 = await page.evaluate(() => window.scrollY);
+    ok("the Dashboard keeps its scroll position through its automatic redraws", dashY0 > 100 && Math.abs(dashY1 - dashY0) <= 3, JSON.stringify({ dashY0, dashY1 }));
     const tagBot = (await api("/bots", "POST", { name: "Tag demo bot", config: { strategy: "crypto", demo: true } })).j.id;
     await page.reload();
     await page.waitForSelector("button.link:text('Tag demo bot')", { timeout: 20000 });
@@ -500,6 +506,17 @@ try {
     const layoutBot = await waitFor(async () => (await api("/bots")).j.find((x) => x.name === "Layout test bot"), 15000);
     ok("the regrouped bot form saves what was typed (name and trade amount)", !!layoutBot && layoutBot.config.tradeAmount === 7 && layoutBot.config.stopLossOn !== undefined, JSON.stringify(layoutBot?.config?.tradeAmount));
     if (layoutBot) await api(`/bots/${layoutBot.id}`, "DELETE");
+    // saving an edited bot returns the page to where it was when the editor was opened (it used to jump to the bottom)
+    await page.waitForSelector("button:text-is('Edit')", { timeout: 15000 });
+    await page.evaluate(() => window.scrollTo(0, 300));
+    const scrollBefore = await page.evaluate(() => window.scrollY);
+    await page.locator("button:text-is('Edit')").nth(1).evaluate((el) => el.click()); // a click that does not scroll by itself
+    await page.waitForSelector("details.sec", { state: "attached", timeout: 15000 });
+    await page.click("button:text-is('Save')");
+    await page.waitForSelector("details.sec", { state: "detached", timeout: 15000 });
+    await page.waitForTimeout(800);
+    const scrollAfter = await page.evaluate(() => window.scrollY);
+    ok("after saving an edited bot the page is back where it was before the editor opened", scrollBefore > 100 && Math.abs(scrollAfter - scrollBefore) <= 3, JSON.stringify({ scrollBefore, scrollAfter }));
     // Backtest tab: every live setting can be changed in a comparison
     await page.click("nav >> text=Backtest");
     await page.waitForSelector("text=Comparison 1", { timeout: 15000 });
