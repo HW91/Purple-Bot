@@ -102,19 +102,33 @@ async function minuteProbs(env: Env, ticker: string, openTs: number, closeTs: nu
 }
 
 /** Profit/loss totals (realized, after fees) from closed positions since `since`, for the whole account or one bot. */
-async function plAgg(env: Env, since: number, botId?: string): Promise<{ trades: number; wins: number; losses: number; pnl: number; fees: number; winRate: number | null }> {
+async function plAgg(env: Env, since: number, botId?: string, until?: number): Promise<{ trades: number; wins: number; losses: number; pnl: number; fees: number; winRate: number | null }> {
   const dm = await viewDemo(env, botId);
   const sql =
     "SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN result='win' THEN 1 ELSE 0 END),0) w, COALESCE(SUM(CASE WHEN result='loss' THEN 1 ELSE 0 END),0) l, " +
     `COALESCE(SUM(realized_pnl),0) pnl, COALESCE(SUM(entry_fee+exit_fee),0) fees FROM positions WHERE status != 'open' AND demo = ${dm} AND realized_pnl IS NOT NULL AND closed_ts >= ?` +
+    (until !== undefined ? " AND closed_ts < ?" : "") +
     (botId ? " AND bot_id = ?" : "");
-  const r = await (botId ? env.DB.prepare(sql).bind(since, botId) : env.DB.prepare(sql).bind(since)).first<{ n: number; w: number; l: number; pnl: number; fees: number }>();
+  const binds: unknown[] = until !== undefined ? [since, until] : [since];
+  if (botId) binds.push(botId);
+  const r = await env.DB.prepare(sql).bind(...binds).first<{ n: number; w: number; l: number; pnl: number; fees: number }>();
   const w = r?.w ?? 0;
   const l = r?.l ?? 0;
   return { trades: r?.n ?? 0, wins: w, losses: l, pnl: Math.round((r?.pnl ?? 0) * 100) / 100, fees: Math.round((r?.fees ?? 0) * 100) / 100, winRate: w + l ? w / (w + l) : null };
 }
 
-async function plSummary(env: Env, botId?: string) {
+/** A date range from ?from=YYYY-MM-DD&to=YYYY-MM-DD (days are midnight to midnight US Eastern, the To day included), or null when absent or not valid. */
+function parseRange(url: URL): { from: number; to: number } | null {
+  const f = url.searchParams.get("from") ?? "";
+  const t = url.searchParams.get("to") ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t) || f > t) return null;
+  const noon = (d: string) => Date.parse(`${d}T12:00:00Z`); // noon UTC is always inside that same US Eastern day
+  const from = dayStartMs(noon(f));
+  const to = dayStartMs(noon(t) + 86_400_000); // the start of the day after the To day
+  return Number.isFinite(from) && Number.isFinite(to) ? { from, to } : null;
+}
+
+async function plSummary(env: Env, botId?: string, range?: { from: number; to: number } | null) {
   const now = Date.now();
   const day = dayStartMs(now);
   const where = (botId ? " AND bot_id = ?" : "") + ` AND demo = ${await viewDemo(env, botId)}`;
@@ -126,7 +140,8 @@ async function plSummary(env: Env, botId?: string) {
     bind("SELECT COUNT(*) c, COALESCE(SUM(entry_cost),0) cost FROM positions WHERE status='open'" + where).first<{ c: number; cost: number }>(),
     bind("SELECT COALESCE(SUM(entry_cost+entry_fee),0) c FROM positions WHERE opened_ts >= ?" + where, day).first<{ c: number }>(),
   ]);
-  return { today, week, all, openCount: open?.c ?? 0, openExposure: Math.round((open?.cost ?? 0) * 100) / 100, investedToday: Math.round((invested?.c ?? 0) * 100) / 100 };
+  const custom = range ? await plAgg(env, range.from, botId, range.to) : null;
+  return { range: custom, today, week, all, openCount: open?.c ?? 0, openExposure: Math.round((open?.cost ?? 0) * 100) / 100, investedToday: Math.round((invested?.c ?? 0) * 100) / 100 };
 }
 
 // ------------------------------------------------------------------ router
@@ -344,7 +359,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
   }
 
   // ---------------- profit / loss summaries
-  if (path === "/api/account" && m === "GET") return json({ ...(await plSummary(env)), limits: await getAccountLimits(env) });
+  if (path === "/api/account" && m === "GET") return json({ ...(await plSummary(env, undefined, parseRange(url))), limits: await getAccountLimits(env) });
   // move a bot up or down in the list (the order is kept for every screen that lists the bots)
   if ((g = path.match(/^\/api\/bots\/([\w-]+)\/move$/)) && m === "POST") {
     const b = await body<{ direction?: string }>(req);
@@ -365,7 +380,7 @@ async function route(req: Request, env: Env, url: URL, path: string): Promise<Re
     if (!row) return err("Bot not found", 404);
     const isDemo = await viewDemo(env, id); // this bot's own results: demo trades for a demo bot, real trades for a real one
     const closed = (await env.DB.prepare(`SELECT * FROM positions WHERE status != 'open' AND demo = ${isDemo} AND bot_id = ? ORDER BY closed_ts DESC LIMIT 100`).bind(id).all()).results;
-    return json({ bot: rowToBot(row), ...(await plSummary(env, id)), closed, demoBalance: isDemo ? await demoBalance(env) : null });
+    return json({ bot: rowToBot(row), ...(await plSummary(env, id, parseRange(url))), closed, demoBalance: isDemo ? await demoBalance(env) : null });
   }
 
   // ---------------- trades / performance / logs

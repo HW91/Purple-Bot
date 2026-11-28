@@ -134,6 +134,29 @@ function showError(msg){
 }
 // run a redraw without losing the scroll position (the page briefly shrinks while its tables are emptied and refilled)
 function kept(fn){return function(){var y=window.scrollY;var r=fn.apply(this,arguments);if(Math.abs(window.scrollY-y)>1)window.scrollTo(0,y);return r}}
+// a From / To date picker with the profit/loss of that time frame under it. Days run midnight to midnight US Eastern, the To day included.
+function rangePicker(title,onChange){
+  var from=h('input',{type:'date',style:'width:150px'}),to=h('input',{type:'date',style:'width:150px'});
+  try{from.value=localStorage.getItem('pb_range_from')||'';to.value=localStorage.getItem('pb_range_to')||''}catch(e){}
+  var out=h('div');
+  function changed(){try{localStorage.setItem('pb_range_from',from.value);localStorage.setItem('pb_range_to',to.value)}catch(e){}show(null);onChange()}
+  from.addEventListener('change',changed);to.addEventListener('change',changed);
+  var clear=h('button',{class:'btn gray',text:'Clear',onclick:function(){from.value='';to.value='';changed()}});
+  function show(r){
+    out.textContent='';
+    if(!from.value||!to.value){out.appendChild(h('small',{class:'mute',text:'Pick a From date and a To date to see the profit or loss for that time frame.'}));return}
+    if(from.value>to.value){out.appendChild(h('small',{class:'mute',text:'The From date must be on or before the To date.'}));return}
+    if(!r){out.appendChild(h('small',{class:'mute',text:'Loading…'}));return}
+    out.appendChild(tileGroup(from.value+' to '+to.value+': closed trades, after fees',[
+      tile('Profit/loss',usd(r.pnl),pnlCls(r.pnl)),
+      tile('Trades',r.trades),
+      tile('Wins / losses',r.wins+'W / '+r.losses+'L'),
+      tile('Win rate',r.winRate==null?'—':(r.winRate*100).toFixed(0)+'%'),
+      tile('Fees paid',usd(r.fees))]));
+  }
+  show(null);
+  return {el:h('div',{class:'card'},h('h2',{text:title}),h('div',{class:'row'},h('div',null,h('label',{text:'From'}),from),h('div',null,h('label',{text:'To'}),to),clear),out),query:function(){return from.value&&to.value&&from.value<=to.value?'?from='+from.value+'&to='+to.value:''},show:show};
+}
 function act(p,opts,okMsg){return api(p,opts).then(function(r){if(okMsg)toast(okMsg);return r}).catch(function(e){toast(e.message,true);throw e})}
 
 var TABS=['Dashboard','Bots','Trades','Charts','AI','Backtest','Settings','Logs'];
@@ -196,7 +219,8 @@ function vDash(){
   var lastBots=0,lastAcct=0,acctData=null;
   var banner=h('div'),acct=h('div'),mk=h('div'),bt=h('div'),pos=h('div');
   // top to bottom: money picture, what is open right now, the bots that trade it, then the live market table
-  root.appendChild(banner);root.appendChild(acct);root.appendChild(pos);root.appendChild(bt);root.appendChild(mk);
+  var rangeP=rangePicker('Profit / loss for any dates',function(){loadAcct()});
+  root.appendChild(banner);root.appendChild(acct);root.appendChild(rangeP.el);root.appendChild(pos);root.appendChild(bt);root.appendChild(mk);
   function drawAcct(){
     acct.textContent='';
     var a=acctData;
@@ -225,10 +249,11 @@ function vDash(){
     }
     acct.appendChild(h('div',{class:'card'},h('h2',{text:'Account'}),groups,h('small',{text:'Balance and portfolio come straight from Kalshi. Profit/loss is from this bot\'s own trades, after fees. The daily limits are the account-wide limits from Settings. Each bot has its own limits, shown on its page: tap a bot below.'})));
   }
+  function loadAcct(){return api('/account'+rangeP.query()).then(function(a){acctData=a;lastAcct=Date.now();kept(drawAcct)();rangeP.show(a.range)}).catch(function(){})}
   function draw(){
     if(!live)return;
     kept(drawAcct)();
-    if(!acctData||Date.now()-lastAcct>30000){lastAcct=Date.now();api('/account').then(function(a){acctData=a;kept(drawAcct)()}).catch(function(){})}
+    if(!acctData||Date.now()-lastAcct>30000){lastAcct=Date.now();loadAcct()}
     banner.textContent='';
     if(!live.credentialsOk)banner.appendChild(h('div',{class:'banner bad',text:'Kalshi is not connected (or the key was rejected'+(live.authError?': '+live.authError:'')+'). Go to Settings.'}));
     if(live.reconcileProblem)banner.appendChild(h('div',{class:'banner bad'},['New orders are blocked: '+live.reconcileProblem+' ',h('button',{class:'btn gray',text:'Reconcile now',onclick:function(){act('/reconcile',{method:'POST'},'Checked')}})]));
@@ -290,9 +315,10 @@ function openBot(id){
   try{history.replaceState(null,'','#Bot/'+encodeURIComponent(id))}catch(e){}
   var root=$('#main');root.textContent='';
   root.appendChild(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn gray',text:'← Back to Dashboard',onclick:function(){go('Dashboard')}})));
-  var body=h('div');root.appendChild(body);
+  var rangeP=rangePicker('Profit / loss for any dates',function(){load()});
+  var body=h('div');root.appendChild(rangeP.el);root.appendChild(body);
   function load(){
-    Promise.all([api('/bots/'+id+'/summary'),api('/live')]).then(function(r){
+    Promise.all([api('/bots/'+id+'/summary'+rangeP.query()),api('/live')]).then(function(r){
       var s=r[0];live=r[1];updateHeader();
       var b=s.bot,cfg=b.config;
       var mine=live.positions.filter(function(p){return p.bot_id===id});
@@ -323,6 +349,7 @@ function openBot(id){
         h('small',{text:'After fees, from this bot\'s own trades.'})]));
       body.appendChild(h('div',{class:'card'},h('h2',{text:'Open positions'}),posTable(mine)));
       body.appendChild(h('div',{class:'card'},h('h2',{text:'Completed trades (latest 100)'}),closedTable(s.closed)));
+      rangeP.show(s.range);
       window.scrollTo(0,y0);
     }).catch(function(e){body.textContent='';body.appendChild(h('div',{class:'banner bad',text:e.message}))});
   }

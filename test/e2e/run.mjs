@@ -294,6 +294,14 @@ try {
   ok("account summary: all-time P/L and trade count match the performance numbers", acctSum.all.trades === perfAll.trades && Math.abs(acctSum.all.pnl - perfAll.pnl) < 0.011 && acctSum.limits.dailyLossLimit > 0, JSON.stringify(acctSum).slice(0, 300));
   const botSum = (await api(`/bots/${bot1}/summary`)).j;
   ok("per-bot summary returns that bot's own numbers and trades", botSum.bot?.id === bot1 && botSum.all.trades >= 1 && botSum.closed.every((p) => p.bot_id === bot1), JSON.stringify(botSum).slice(0, 300));
+  const etToday = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const rToday = (await api(`/account?from=${etToday}&to=${etToday}`)).j;
+  ok("a custom date range for today gives the same numbers as Today", !!rToday.range && rToday.range.trades === rToday.today.trades && Math.abs(rToday.range.pnl - rToday.today.pnl) < 0.011, JSON.stringify({ range: rToday.range, today: rToday.today }));
+  const rWide = (await api("/account?from=2000-01-01&to=2100-01-01")).j;
+  ok("a range covering every day gives the same numbers as All time", !!rWide.range && rWide.range.trades === rWide.all.trades && Math.abs(rWide.range.pnl - rWide.all.pnl) < 0.011);
+  ok("a range in the past with no trades shows zero, and a From after the To is ignored", (await api("/account?from=2000-01-01&to=2000-01-31")).j.range?.trades === 0 && (await api(`/account?from=${etToday}&to=2000-01-01`)).j.range === null && (await api("/account")).j.range === null);
+  const botRange = (await api(`/bots/${bot1}/summary?from=2000-01-01&to=2100-01-01`)).j;
+  ok("a bot's own page takes the date range too (its own trades only)", !!botRange.range && botRange.range.trades === botSum.all.trades, JSON.stringify(botRange.range));
   ok("per-bot totals add up to the account total", Math.abs(((await api("/bots")).j.reduce((s, b) => s + b.perf.pnl, 0)) - acctSum.all.pnl) < 0.011);
 
   // ---- I3. the real dashboard page in a real browser: account card, tap into a bot
@@ -313,6 +321,14 @@ try {
     await page.waitForSelector("text=Closed trades: profit/loss after fees", { timeout: 15000 });
     await page.waitForSelector("button.link", { timeout: 15000 });
     ok("the bot names on the Dashboard are underlined so they stand out as tappable", (await page.locator("button.link").first().evaluate((e) => getComputedStyle(e).textDecorationLine)).includes("underline"));
+    // the date picker: choose From and To and the profit/loss for those days appears under it
+    await page.locator("input[type=date]").nth(0).fill("2000-01-01");
+    await page.locator("input[type=date]").nth(1).fill("2100-01-01");
+    await page.waitForSelector("text=2000-01-01 to 2100-01-01", { timeout: 15000 });
+    const rangeText = await page.locator("#main").textContent();
+    ok("the Dashboard date picker shows the profit/loss, trades, wins and losses and win rate for the chosen days", ["Profit/loss", "Trades", "Wins / losses", "Win rate"].every((t) => rangeText.includes(t)));
+    await page.click("button:text-is('Clear')");
+    ok("clearing the dates goes back to asking for them", (await page.locator("#main").textContent()).includes("Pick a From date and a To date"));
     // the Dashboard redraws its tables every 5 seconds: the scroll position must survive that
     await page.evaluate(() => window.scrollTo(0, 250));
     const dashY0 = await page.evaluate(() => window.scrollY);
