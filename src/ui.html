@@ -150,7 +150,7 @@ function rangePicker(title,onChange){
     out.appendChild(tileGroup(from.value+' to '+to.value+': closed trades, after fees',[
       tile('Profit/loss',usd(r.pnl),pnlCls(r.pnl)),
       tile('Trades',r.trades),
-      tile('Wins / losses',r.wins+'W / '+r.losses+'L'),
+      tile('Wins / losses',r.wins+' / '+r.losses),
       tile('Win rate',r.winRate==null?'—':(r.winRate*100).toFixed(0)+'%'),
       tile('Fees paid',usd(r.fees))]));
   }
